@@ -1,0 +1,19 @@
+{
+  "name": "ai-office-widget",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.9.3",
+    "vite": "^7.0.6",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,0 +1,120 @@
+package repository
+
+import (
+	"context"
+	"errors"
+
+	"ai-office-backend/internal/core/domain"
+	"ai-office-backend/internal/core/port"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+const officeCollection = "ai_offices"
+
+type officeRepo struct {
+	col *mongo.Collection
+}
+
+// NewOfficeRepository สร้าง index ที่จำเป็นให้เลย
+//
+// public_key ต้อง unique เพราะเป็นตัวที่ใช้หา office จาก snippet
+// ถ้าซ้ำได้จะเกิดกรณีที่ key เดียวชี้ไปหลาย office
+func NewOfficeRepository(ctx context.Context, db *mongo.Database) (port.OfficeRepository, error) {
+	col := db.Collection(officeCollection)
+	_, err := col.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "public_key", Value: 1}},
+		Options: options.Index().SetUnique(true).SetName("uniq_public_key"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &officeRepo{col: col}, nil
+}
+
+func (r *officeRepo) List(ctx context.Context) ([]domain.Office, error) {
+	cur, err := r.col.Find(ctx, bson.M{}, options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	out := []domain.Office{}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *officeRepo) Get(ctx context.Context, id string) (domain.Office, error) {
+	return r.one(ctx, bson.M{"_id": id})
+}
+
+func (r *officeRepo) GetByPublicKey(ctx context.Context, key string) (domain.Office, error) {
+	if key == "" {
+		return domain.Office{}, domain.ErrNotFound
+	}
+	return r.one(ctx, bson.M{"public_key": key})
+}
+
+func (r *officeRepo) one(ctx context.Context, filter bson.M) (domain.Office, error) {
+	var o domain.Office
+	err := r.col.FindOne(ctx, filter).Decode(&o)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return domain.Office{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Office{}, err
+	}
+	return o, nil
+}
+
+func (r *officeRepo) Save(ctx context.Context, o domain.Office) error {
+	_, err := r.col.ReplaceOne(ctx, bson.M{"_id": o.ID}, o, options.Replace().SetUpsert(true))
+	if mongo.IsDuplicateKeyError(err) {
+		return domain.ErrConflict
+	}
+	return err
+}
+
+func (r *officeRepo) Delete(ctx context.Context, id string) error {
+	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id})
+	if err != nil {
+		return err
+	}
+	if res.DeletedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+// AllOrigins ดึงเฉพาะ field ที่ต้องใช้ ไม่โหลดทั้ง document
+// เพราะถูกเรียกทุก request ผ่าน CORS middleware
+func (r *officeRepo) AllOrigins(ctx context.Context) ([]string, error) {
+	cur, err := r.col.Find(ctx, bson.M{}, options.Find().SetProjection(bson.M{"allowed_origins": 1}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var rows []struct {
+		AllowedOrigins []string `bson:"allowed_origins"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+
+	seen := map[string]bool{}
+	out := []string{}
+	for _, row := range rows {
+		for _, o := range row.AllowedOrigins {
+			if !seen[o] {
+				seen[o] = true
+				out = append(out, o)
+			}
+		}
+	}
+	return out, nil
+}
