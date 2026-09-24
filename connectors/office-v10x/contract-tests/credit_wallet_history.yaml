@@ -1,0 +1,39 @@
+# response ตาม controller/credit.go GetCreditRealWalletList (ไม่มีตัวกรอง username ฝั่ง server)
+tool: credit_wallet_history
+cases:
+  - name: กรองยูสจากรายการที่ดึงมา
+    input: {username: user01}
+    responses:
+      w:
+        body:
+          code: 0
+          message: Success
+          count: 3
+          summary: 1300
+          data:
+            - {datetime: "2026-09-24T13:00:00+07:00", username: user01, amount: 1000, before_credit: 0, after_credit: 1000, operator_name: admin_a}
+            - {datetime: "2026-09-24T12:00:00+07:00", username: user02, amount: 200, before_credit: 0, after_credit: 200, operator_name: admin_a}
+            - {datetime: "2026-09-24T11:00:00+07:00", username: USER01, amount: 100, before_credit: 50, after_credit: 150, operator_name: admin_b}
+    expect:
+      status: ok
+      calls:
+        w: {path: /get-credit-real-wallet-list/DEMO-SVC, query: {range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "50", page: "1"}}
+      fields: {ทั้งช่วงวัน (ทุกยูส): "3 รายการ", แสดงในการ์ด: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 13:00", user01, "1,000.00", "0.00", "1,000.00", admin_a]
+      model_context: {filtered_partially: false}
+      link: /transection/managecredit?menu=credit
+  - name: ยูสนี้ไม่มีรายการ · ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    input: {username: user01}
+    responses:
+      w: {body: {code: 0, count: 1, summary: 5, data: [{datetime: "2026-09-25T00:01:00+07:00", username: user02, amount: 5}]}}
+    expect:
+      status: not_found
+      calls:
+        w: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: binding ผิด (code 1)
+    responses:
+      w: {body: {code: 1, message: "Key: 'Body.Order' Error", data: null}}
+    expect: {status: error, error_code: schema_mismatch}

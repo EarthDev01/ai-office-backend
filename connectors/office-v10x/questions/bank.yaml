@@ -1,0 +1,93 @@
+# GET /api/GetBankConfigDeposit/:service · GET /api/GetBankConfigWithdraw/:service (controller/bank.go)
+#   frontend: api-service/bank/index.ts getBankConfigDeposit / getBankConfigWithdraw · ManagebankView.vue แท็บ จัดการบัญชีฝาก / จัดการบัญชีถอน
+#   query ที่ UI ส่ง: sort=created_at · order=-1 · limit · page · อ่าน OFFICE bank_config กรอง service ของ path (ฝากตัด PAYMENT/UMPAY)
+#   ⚠️ response ของ OFFICE-X ยังมี access_token / refresh_token / device_id / secret_token / citizen_id / birthdate (ล้างแค่ pin/password)
+#      → ขึ้นการ์ดเฉพาะ ธนาคาร สถานะ การแสดง ยอดเงิน (ไม่แสดงเลขบัญชี/ชื่อบัญชี) · แต่ body ทั้งก้อนผ่าน relay ของ backend (NOTES.md §5)
+#   DB error → code 0 + data [] (กลืน error) · count เพดานตาม CountStatementLimitV2
+questions: [BQ-10]
+tools:
+  - name: bank_accounts_deposit
+    description: >-
+      บัญชีธนาคารฝากของเว็บ แยกตามธนาคาร: จำนวนบัญชีทั้งหมด ที่เปิดใช้งาน ที่แสดงหน้าเว็บ และเงินในบัญชีรวมของบัญชีที่เปิดใช้งาน
+      · ใช้เมื่อถามว่าบัญชีฝากไหนเปิดอยู่ มีกี่บัญชีแต่ละธนาคาร
+    questions: [BQ-10]
+    permission: bank_deposit
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /GetBankConfigDeposit/{service}
+        query: &bq {sort: created_at, order: "-1", limit: "200", page: "1"}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema: &bschema
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [bank_code, status, is_show]
+            properties:
+              bank_code: {type: string}
+              status: {type: integer}
+              is_show: {type: integer}
+              balance: {type: number}
+              open_time: {type: string}
+              close_time: {type: string}
+    values:
+      - {name: all_rows, from: b, path: ""}
+      - {name: total, from: b, path: "", agg: count}
+      - {name: active_count, from: b, path: "", filter: "item.status == 1", agg: count}
+      - {name: shown_count, from: b, path: "", filter: "item.status == 1 && item.is_show == 1", agg: count}
+      - {name: by_bank, from: b, path: "", filter: "item.status == 1", group_by: bank_code, field: balance, sort_by: count, order: desc}
+    not_found: {when: "empty(all_rows)", message: ยังไม่มีบัญชีฝากของเว็บนี้ในระบบ}
+    card:
+      title: บัญชีฝากที่เปิดใช้งาน แยกตามธนาคาร
+      fields:
+        - {label: บัญชีฝากทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: active_count, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งานและแสดงหน้าเว็บ, value: shown_count, format: int, suffix: " บัญชี"}
+      table:
+        rows: by_bank
+        columns: &bcols
+          - {label: ธนาคาร, field: key}
+          - {label: บัญชีที่เปิดใช้งาน, field: count, format: int, suffix: " บัญชี"}
+          - {label: เงินในบัญชีรวม, field: sum, format: money}
+      note: เงินในบัญชีคือยอดล่าสุดที่ระบบอ่านจากธนาคาร อาจไม่ใช่ยอดปัจจุบัน · ไม่แสดงเลขบัญชีและชื่อบัญชี ดูได้ที่หน้าจัดการบัญชีธนาคาร
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: /statement/managebank}
+    model_context:
+      - {name: has_active, type: bool, expr: "active_count > 0"}
+      - {name: some_hidden, type: bool, expr: "active_count > shown_count"}
+
+  - name: bank_accounts_withdraw
+    description: >-
+      บัญชีธนาคารถอนของเว็บ แยกตามธนาคาร: จำนวนบัญชีทั้งหมด ที่เปิดใช้งาน และเงินในบัญชีรวมของบัญชีที่เปิดใช้งาน
+      · ใช้เมื่อถามว่าบัญชีถอนไหนเปิดอยู่
+    questions: [BQ-10]
+    permission: bank_withdraw
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /GetBankConfigWithdraw/{service}
+        query: *bq
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema: *bschema
+    values:
+      - {name: all_rows, from: b, path: ""}
+      - {name: total, from: b, path: "", agg: count}
+      - {name: active_count, from: b, path: "", filter: "item.status == 1", agg: count}
+      - {name: by_bank, from: b, path: "", filter: "item.status == 1", group_by: bank_code, field: balance, sort_by: count, order: desc}
+    not_found: {when: "empty(all_rows)", message: ยังไม่มีบัญชีถอนของเว็บนี้ในระบบ}
+    card:
+      title: บัญชีถอนที่เปิดใช้งาน แยกตามธนาคาร
+      fields:
+        - {label: บัญชีถอนทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: active_count, format: int, suffix: " บัญชี"}
+      table:
+        rows: by_bank
+        columns: *bcols
+      note: เงินในบัญชีคือยอดล่าสุดที่ระบบอ่านจากธนาคาร อาจไม่ใช่ยอดปัจจุบัน · ไม่แสดงเลขบัญชีและชื่อบัญชี ดูได้ที่หน้าจัดการบัญชีธนาคาร
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: /statement/managebank}
+    model_context:
+      - {name: has_active, type: bool, expr: "active_count > 0"}

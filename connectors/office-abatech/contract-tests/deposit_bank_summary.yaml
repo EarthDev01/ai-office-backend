@@ -1,0 +1,53 @@
+tool: deposit_bank_summary
+cases:
+  - name: สองบัญชี มีตกค้าง
+    service: K11S
+    responses:
+      bank:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {id: "000000000000000000000000", bank_id: 0, balance: 152340.5, code: KBANK, deposit: 98000, count: 57, full_name: "บจก. ตัวอย่าง", number: "1234567890", remain: 1500, update_date: "2026-09-24T09:12:03Z", status: 1, is_show: 0, max_deposit: 2000000, today_deposit: 98000, deposit_remain: 1902000, insert_count: 2, insert_deposit: 1000}
+            - {id: "000000000000000000000000", bank_id: 0, balance: 50000, code: SCB, deposit: 120000, count: 80, full_name: "บจก. สอง", number: "9990001112", remain: 0, update_date: "2026-09-24T09:10:00Z", status: 1, is_show: 0, max_deposit: 0, today_deposit: 120000, deposit_remain: 0, insert_count: 0, insert_deposit: 0}
+    expect:
+      status: ok
+      calls:
+        bank: {path: /DepositBankSummaryV2/K11S, query: {date: "2026-09-24", start_date: "2026-09-24 00:00:00", end_date: "2026-09-24 23:59:00", deposit_type: open}}
+      fields:
+        ยอดฝากทั้งหมด (รวมตกค้าง): "219,500.00 บาท"
+        ยอดฝากที่เข้าระบบแล้ว: "218,000.00 บาท"
+        ยอดตกค้าง: "1,500.00 บาท"
+        จำนวนรายการเงินเข้า: "137 รายการ"
+        บัญชีฝากที่เปิดใช้: "2 บัญชี"
+      table_rows: 2
+      table_cells:
+        - [SCB, "บจก. สอง", "120,000.00", "0.00", "80", "50,000.00"]
+        - [KBANK, "บจก. ตัวอย่าง", "98,000.00", "1,500.00", "57", "152,340.50"]
+      model_context: {has_remain: true, has_deposit: true}
+      link: "/Deposit?service=SzExUw==&web=K11S"
+  - name: ระบุวันที่ย้อนหลัง
+    service: K11S
+    input: {date: "2026-09-20"}
+    responses:
+      bank: {body: {code: 0, msg: "", payload: [{code: KBANK, deposit: 1000, remain: 0, count: 1, balance: 0, status: 1}]}}
+    expect:
+      status: ok
+      calls: {bank: {query: {date: "2026-09-20", start_date: "2026-09-20 00:00:00", end_date: "2026-09-20 23:59:00"}}}
+      fields: {วันที่: "20/09/2026", ยอดตกค้าง: "0.00 บาท"}
+      model_context: {has_remain: false}
+  - name: หลังเที่ยงคืน วันใหม่
+    now: "2026-09-25T00:02:00+07:00"
+    responses:
+      bank: {body: {code: 0, msg: "", payload: [{code: KBANK, deposit: 0, remain: 0, count: 0, balance: 10, status: 1}]}}
+    expect:
+      status: ok
+      calls: {bank: {query: {date: "2026-09-25", start_date: "2026-09-25 00:00:00"}}}
+  - name: ไม่มีบัญชีฝากที่เปิด (payload null)
+    responses:
+      bank: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}
+  - name: host ตอบ code 1
+    responses:
+      bank: {body: {code: 1, msg: "mongo error", payload: null}}
+    expect: {status: error, error_code: host_error}

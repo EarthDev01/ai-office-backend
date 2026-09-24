@@ -1,0 +1,32 @@
+tool: promotions_active
+cases:
+  - name: โปรเปิด 2 ปิด 1
+    service: K11S
+    responses:
+      bl:
+        body:
+          code: 0
+          msg: ""
+          is_deposit: 1
+          payload:
+            - {id: "650f00000000000000000010", bonus_id: 901, bonus_name: "ฝากแรก 10%", bonus_start_time: "00:00:00", bonus_end_time: "23:59:59", start_date: "2026-08-31T17:00:00Z", end_date: "2026-09-29T17:00:00Z", status: 1, is_show: true, type: "", type_system: DEPOSIT, order: 2, withdraw_fix: 5, fix_withdraw: 0}
+            - {id: "650f00000000000000000011", bonus_id: 902, bonus_name: "โปรเก่า", bonus_start_time: "00:00:00", bonus_end_time: "23:59:59", start_date: "2026-07-31T17:00:00Z", end_date: "2026-08-30T17:00:00Z", status: 0, is_show: false, type: "", type_system: DEPOSIT, order: 1}
+            - {id: "650f00000000000000000012", bonus_id: 903, bonus_name: "คืนยอดเสีย", bonus_start_time: "00:00:00", bonus_end_time: "23:59:59", start_date: "2026-09-09T17:00:00Z", end_date: "2026-12-30T17:00:00Z", status: 1, is_show: false, type: bonus_free, type_system: CASHBACK, order: 1}
+    expect:
+      status: ok
+      calls: {bl: {path: /Bonuslist/K11S}}
+      fields: {โปรที่เปิดใช้งาน: "2 รายการ", แสดงบนหน้าเว็บ: "1 รายการ", โปรทั้งหมดในระบบ: "3 รายการ"}
+      table_rows: 2
+      table_cells:
+        - [คืนยอดเสีย, CASHBACK, "10/09/2026", "31/12/2026", ไม่ใช่]
+        - ["ฝากแรก 10%", DEPOSIT, "01/09/2026", "30/09/2026", ใช่]
+      model_context: {has_active: true}
+      link: "/Bonus?service=SzExUw==&web=K11S"
+  - name: ไม่มีโปรเปิด (payload null)
+    responses:
+      bl: {body: {code: 0, msg: "", is_deposit: 0, payload: null}}
+    expect: {status: not_found}
+  - name: host ตอบ code 1
+    responses:
+      bl: {body: {code: 1, msg: "err", is_deposit: 0, payload: null}}
+    expect: {status: error, error_code: host_error}

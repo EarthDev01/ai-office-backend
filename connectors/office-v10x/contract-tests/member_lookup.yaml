@@ -1,0 +1,72 @@
+# response ตาม controller/member.go GetMemberListV3 (data[] model.GetMemberData · bank_list[].Status ไม่มี json tag = ตัวใหญ่)
+tool: member_lookup
+cases:
+  - name: พบสมาชิก (regex คืนหลายยูส → เลือกตัวที่ตรง)
+    input: {username: user01}
+    responses:
+      l:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          data:
+            - {id: 66f2a1b2c3d4e5f60123aa01, username: user011, phone_number: "08xxxxxx12", full_name: คนอื่น, active: 1, topup_status: 1, date_regis: "2026-09-01T10:00:00+07:00", bank_list: [], time: {}, count_online: 0}
+            - id: 66f2a1b2c3d4e5f60123aa02
+              username: user01
+              phone_number: "08xxxxxx34"
+              full_name: สมชาย ใจดี
+              active: 0
+              topup_status: 0
+              date_regis: "2026-09-20T18:30:00+07:00"
+              time: {"2026-09-24": 1}
+              count_online: 1
+              bank_list:
+                - {bank_code: KBANK, bank_name: สมชาย ใจดี, bank_number: "1234567890", Status: 0, active: 1, verify_status: PENDING}
+                - {bank_code: SCB, bank_name: สมชาย ใจดี, bank_number: "5556667778", Status: 1, active: 1, verify_status: SUCCESS}
+    expect:
+      status: ok
+      calls:
+        l: {path: /get-member-list-v3/DEMO-SVC, query: {search: user01, username: username, sort: date_regis, order: "-1", limit: "10", page: "1"}}
+      fields:
+        Username: user01
+        ชื่อ: สมชาย ใจดี
+        วันที่สมัคร: "20/09/2026 18:30"
+        สถานะ: ยังไม่ยืนยันตัวตน
+        สถานะฝากเงิน: ไม่ฝาก
+        บัญชีธนาคาร: "2 บัญชี"
+      table_rows: 2
+      table_cells:
+        - [KBANK, สมชาย ใจดี, รออนุมัติ]
+        - [SCB, สมชาย ใจดี, อนุมัติแล้ว]
+      model_context: {verified: false, blocked: false, has_deposited: false, has_bank_account: true}
+      link: /member/user01
+  - name: สมาชิกถูกปิดกั้น ไม่มีบัญชี
+    input: {username: user99}
+    responses:
+      l: {body: {code: 0, count: 1, data: [{username: user99, full_name: "", active: 99, topup_status: 1, date_regis: "2026-01-02T08:00:00+07:00", bank_list: null}]}}
+    expect:
+      status: ok
+      fields: {สถานะ: ปิดกั้นการใช้งาน, สถานะฝากเงิน: ฝาก, บัญชีธนาคาร: "0 บัญชี"}
+      no_fields: [ชื่อ]
+      table_rows: 0
+      model_context: {blocked: true, has_deposited: true, has_bank_account: false}
+  - name: ไม่พบสมาชิก (มีแต่ยูสที่ขึ้นต้นคล้ายกัน)
+    input: {username: user0}
+    responses:
+      l: {body: {code: 0, count: 1, data: [{username: user01, active: 1, topup_status: 1, date_regis: "2026-09-01T10:00:00+07:00"}]}}
+    expect: {status: not_found}
+  - name: ไม่พบสมาชิก (ผลว่าง)
+    input: {username: nobody}
+    responses:
+      l: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect: {status: not_found}
+  - name: rate limit ของหลังบ้าน (HTTP 401 code 1)
+    input: {username: user01}
+    responses:
+      l: {status: 401, body: {code: 1, message: rate limit error}}
+    expect: {status: error, error_code: unauthorized}
+  - name: หลังบ้านค้นไม่สำเร็จ (code 1)
+    input: {username: user01}
+    responses:
+      l: {body: {code: 1, message: "cannot get member data[3]", data: null}}
+    expect: {status: error, error_code: host_error}

@@ -1,0 +1,31 @@
+tool: bills_outstanding
+cases:
+  - name: มีบิลรอจ่ายและค้างชำระ (body ของระบบบิล)
+    service: K11S
+    responses:
+      bl:
+        body:
+          status: {code: 200}
+          data:
+            - {id: "65f000000000000000000001", billpayment_id: INV-0012, datetime: "2026-09-01T03:00:00Z", title: ค่าบริการระบบ, billpayment_name: "ก.ย. 2026", to_name: DEMOSLOT, total: 15000, end_date: "2026-09-30T00:00:00Z", status: 3}
+            - {id: "65f000000000000000000002", billpayment_id: INV-0009, datetime: "2026-08-01T03:00:00Z", title: ค่าบริการระบบ, billpayment_name: "ส.ค. 2026", to_name: DEMOSLOT, total: 12000, end_date: "2026-08-31T00:00:00Z", status: 5}
+            - {id: "65f000000000000000000003", billpayment_id: INV-0005, datetime: "2026-07-01T03:00:00Z", title: ค่าบริการระบบ, billpayment_name: "ก.ค. 2026", to_name: DEMOSLOT, total: 12000, end_date: "2026-07-31T00:00:00Z", status: 6}
+    expect:
+      status: ok
+      calls: {bl: {path: /GetBillPayment}}
+      fields: {บิลค้างชำระ: "2 ใบ", ยอดรวมที่ต้องชำระ: "27,000.00 บาท", เลยกำหนดแล้ว: "1 ใบ"}
+      no_fields: ["ระบบบิลตอบกลับผิดปกติ (ตรวจในหน้าจริง)"]
+      table_rows: 2
+      table_cells:
+        - [INV-0009, "ส.ค. 2026", DEMOSLOT, "12,000.00", "31/08/2026", ค้างชำระ]
+        - [INV-0012, "ก.ย. 2026", DEMOSLOT, "15,000.00", "30/09/2026", รอจ่าย]
+      model_context: {has_outstanding: true, has_overdue: true, statuses: [ค้างชำระ, รอจ่าย]}
+      link: /BillPayment
+  - name: ไม่มีบิลค้าง
+    responses:
+      bl: {body: {status: {code: 200}, data: [{billpayment_id: INV-0005, total: 12000, status: 6}]}}
+    expect: {status: not_found}
+  - name: host ติดต่อระบบบิลไม่ได้ (code 1 payload null)
+    responses:
+      bl: {body: {code: 1, msg: "dial tcp: timeout", payload: null}}
+    expect: {status: error, error_code: schema_mismatch}

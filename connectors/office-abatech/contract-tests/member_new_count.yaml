@@ -1,0 +1,21 @@
+tool: member_new_count
+cases:
+  - name: สมาชิกใหม่วันนี้
+    service: K11S
+    responses:
+      cnt: {body: {code: 0, msg: "", payload: {all: 48213, current: 57}}}
+    expect:
+      status: ok
+      calls: {cnt: {path: /GetMemberCount/K11S}}
+      fields: {สมาชิกใหม่วันนี้: "57 คน", สมาชิกทั้งหมด: "48,213 คน"}
+      model_context: {has_new_members: true}
+      link: "/Member?service=SzExUw==&web=K11S"
+  - name: หลังเที่ยงคืนยังไม่มีสมัคร
+    now: "2026-09-25T00:01:00+07:00"
+    responses:
+      cnt: {body: {code: 0, msg: "", payload: {all: 48213, current: 0}}}
+    expect: {status: ok, fields: {สมาชิกใหม่วันนี้: "0 คน"}, model_context: {has_new_members: false}}
+  - name: host ตอบ code 1
+    responses:
+      cnt: {body: {code: 1, msg: "", payload: {all: 0, current: 0}}}
+    expect: {status: error, error_code: host_error}

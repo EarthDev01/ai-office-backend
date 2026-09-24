@@ -17,21 +17,34 @@ import (
 )
 
 type Client struct {
-	c sdk.Client
+	c     sdk.Client
+	model string // ถ้าตั้ง = ใช้แทนโมเดลใน settings (ทดสอบกับ endpoint ที่เข้ากับ Anthropic เช่น GLM)
 }
 
 // New · apiKey ว่าง = ให้ SDK หาเอง (ANTHROPIC_API_KEY)
-func New(apiKey string) *Client {
+func New(apiKey string) *Client { return NewWith(apiKey, "", "") }
+
+// NewWith · baseURL ว่าง = api.anthropic.com · model ว่าง = ตาม settings
+//
+// ██ baseURL/model อื่นมีไว้ทดสอบเท่านั้น (spec: ตัวจริงใช้ Claude)
+func NewWith(apiKey, baseURL, model string) *Client {
 	opts := []option.RequestOption{option.WithMaxRetries(1)}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
-	return &Client{c: sdk.NewClient(opts...)}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	return &Client{c: sdk.NewClient(opts...), model: model}
 }
 
 func (c *Client) params(req port.LLMRequest) sdk.MessageNewParams {
+	model := req.Model
+	if c.model != "" {
+		model = c.model
+	}
 	p := sdk.MessageNewParams{
-		Model:     sdk.Model(req.Model),
+		Model:     sdk.Model(model),
 		MaxTokens: int64(req.MaxTokens),
 		// prompt cache: system + tools คงที่ต่อ kind/service → อ่านจาก cache ได้ทุกคำถาม
 		System: []sdk.TextBlockParam{{Text: req.System, CacheControl: sdk.NewCacheControlEphemeralParam()}},
@@ -129,7 +142,11 @@ func wrap(err error) error {
 	}
 	var apiErr *sdk.Error
 	if errors.As(err, &apiErr) {
-		return fmt.Errorf("%w: status %d", port.ErrLLMUnavailable, apiErr.StatusCode)
+		msg := apiErr.RawJSON()
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return fmt.Errorf("%w: status %d %s", port.ErrLLMUnavailable, apiErr.StatusCode, msg)
 	}
 	return fmt.Errorf("%w: %v", port.ErrLLMUnavailable, err)
 }

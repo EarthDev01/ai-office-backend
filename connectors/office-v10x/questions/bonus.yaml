@@ -1,0 +1,71 @@
+# GET /api/bonus-list/:service (controller/bonus.go GetBonusList)
+#   frontend: api-service/setting/bonus.ts GetBonusList · BonusList.vue ส่ง sort=order · order=1 · limit · page (ส่งแบบเดียวกัน แล้วกรอง status ใน values)
+#   คอลัมน์ UI: ชื่อโบนัส (bonus_name) · ฝากขั้นต่ำ (fix_deposit) · % (bonus_percent) · โบนัสสูงสุด (bonus_limit) · เทิร์น(เท่า) (fix_multiple) · อั้นถอน (fix_withdraw)
+#   วันที่กิจกรรม (start_date · end_date) · status 1 เปิดใช้งาน / 0 ปิดใช้งาน
+#   ⚠️ DB error เขียน JSON สองก้อน (ไม่มี return) → bad_json = "ดึงไม่ได้" · end_date ที่ไม่ได้ตั้ง = ปีแรกสุด (ไม่ใช่ null)
+questions: [BQ-11]
+tools:
+  - name: promotions_open
+    description: >-
+      โปรโมชั่น/โบนัสที่สถานะเปิดใช้งานของเว็บ พร้อมฝากขั้นต่ำ เปอร์เซ็นต์ โบนัสสูงสุด เทิร์น อั้นถอน และวันที่กิจกรรม
+      · ใช้เมื่อถามว่าตอนนี้เปิดโปรอะไรอยู่ · ผู้ช่วยตัดโปรที่พ้นวันสิ้นสุดให้ไม่ได้ ให้ดูคอลัมน์วันที่สิ้นสุด
+    questions: [BQ-11]
+    permission: bonus
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /bonus-list/{service}
+        query: {sort: order, order: "1", limit: "200", page: "1"}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [code, data, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [bonus_name, status]
+                properties:
+                  bonus_name: {type: string}
+                  fix_deposit: {type: number}
+                  bonus_percent: {type: number}
+                  bonus_limit: {type: number}
+                  fix_multiple: {type: number}
+                  fix_withdraw: {type: number}
+                  start_date: {type: string}
+                  end_date: {type: string}
+                  status: {type: integer}
+    values:
+      - {name: rows, from: b, path: data, filter: "item.status == 1"}
+      - {name: open_count, expr: "len(rows)"}
+      - {name: fetched_count, from: b, path: data, agg: count}
+      - {name: server_count, from: b, path: count}
+    not_found: {when: "empty(rows)", message: ตอนนี้ไม่มีโปรโมชั่นที่เปิดใช้งาน}
+    card:
+      title: โปรโมชั่นที่เปิดใช้งาน
+      fields:
+        - {label: เปิดใช้งาน, value: open_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 50
+        columns:
+          - {label: ชื่อโบนัส, field: bonus_name}
+          - {label: ฝากขั้นต่ำ, field: fix_deposit, format: money}
+          - {label: "%", field: bonus_percent, format: number}
+          - {label: โบนัสสูงสุด, field: bonus_limit, format: money}
+          - {label: เทิร์น(เท่า), field: fix_multiple, format: number}
+          - {label: อั้นถอน, field: fix_withdraw, format: money}
+          - {label: วันที่เริ่มกิจกรรม, field: start_date, format: date}
+          - {label: วันที่สิ้นสุดกิจกรรม, field: end_date, format: date}
+      note: แสดงตามสถานะเปิดใช้งาน ยังไม่ได้ตัดโปรที่พ้นวันสิ้นสุด · เรียงตามลำดับที่ตั้งไว้ในหน้าโบนัส
+      link: {label: เปิดหน้าโบนัส/โปรโมชั่น, path: /setting/bonus}
+    model_context:
+      - {name: has_open, type: bool, expr: "open_count > 0"}
+      - {name: may_have_more, type: bool, expr: "server_count > fetched_count"}

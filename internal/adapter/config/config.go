@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -58,8 +59,16 @@ type Ticket struct {
 	Secret string // ██ secret
 }
 
+// LLM = โมเดลที่ใช้ตอบ — ไม่ผูกค่าย (port.LLM) · เลือกด้วย LLM_PROVIDER
+//
+//	anthropic (ค่าเริ่มต้น) : Anthropic Messages API หรือ endpoint ที่เข้ากับ Anthropic
+//	openai                   : OpenAI Chat Completions API — local model (Ollama/vLLM/LM Studio) และบริการที่เข้ากันได้
 type LLM struct {
-	APIKey string // ██ secret
+	Provider  string         // LLM_PROVIDER
+	APIKey    string         // LLM_API_KEY (หรือ ANTHROPIC_API_KEY) ██ secret · local model ว่างได้
+	BaseURL   string         // LLM_BASE_URL (หรือ ANTHROPIC_BASE_URL) · ว่าง = ค่าเริ่มต้นของ provider
+	Model     string         // LLM_MODEL — ว่าง = ตาม settings
+	ExtraBody map[string]any // LLM_EXTRA_BODY (JSON) — field เพิ่มตามผู้ให้บริการ เช่น {"thinking":{"type":"disabled"}}
 }
 
 type Redis struct {
@@ -95,7 +104,7 @@ func New() (*Container, error) {
 		},
 		Console:   &Console{JWTSecret: env("CONSOLE_JWT_SECRET", "dev-console-jwt-secret")},
 		Ticket:    &Ticket{Secret: env("TICKET_SECRET", devTicketSecret)},
-		LLM:       &LLM{APIKey: os.Getenv("ANTHROPIC_API_KEY")},
+		LLM:       newLLM(),
 		Redis:     &Redis{URL: os.Getenv("REDIS_URL")},
 		Connector: &Connector{Dir: env("CONNECTORS_DIR", "./connectors")},
 		Notify:    &Notify{TelegramToken: os.Getenv("TELEGRAM_BOT_TOKEN")},
@@ -122,6 +131,15 @@ func (c *Container) validate() error {
 	if c.Redis.URL == "" {
 		errs = append(errs, "production ต้องตั้ง REDIS_URL (ตัวนับ/ลิมิตต้องอยู่ Redis — P-14)")
 	}
+	switch c.LLM.Provider {
+	case "anthropic":
+	case "openai":
+		if c.LLM.BaseURL == "" || c.LLM.Model == "" {
+			errs = append(errs, "LLM_PROVIDER=openai ต้องตั้ง LLM_BASE_URL และ LLM_MODEL")
+		}
+	default:
+		errs = append(errs, "LLM_PROVIDER ต้องเป็น anthropic หรือ openai")
+	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, " · "))
 	}
@@ -133,4 +151,17 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func newLLM() *LLM {
+	l := &LLM{
+		Provider: strings.ToLower(env("LLM_PROVIDER", "anthropic")),
+		APIKey:   env("LLM_API_KEY", os.Getenv("ANTHROPIC_API_KEY")),
+		BaseURL:  env("LLM_BASE_URL", os.Getenv("ANTHROPIC_BASE_URL")),
+		Model:    os.Getenv("LLM_MODEL"),
+	}
+	if raw := strings.TrimSpace(os.Getenv("LLM_EXTRA_BODY")); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &l.ExtraBody)
+	}
+	return l
 }

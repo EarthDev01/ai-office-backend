@@ -1,6 +1,6 @@
 import type { Api, Result } from './api'
 import type { HostFetcher } from './hostfetch'
-import { decodeJwtPayload, mapUser, tokenFingerprint } from './identity'
+import { decodeJwtPayload, identityProblem, mapUser, tokenFingerprint } from './identity'
 import { hostSessionURL, type HostReader } from './pageauth'
 import type { PageAuth } from './types'
 
@@ -88,7 +88,7 @@ export class SessionManager {
     const token = this.reader.readToken(this.pa)
     if (!token) return { ok: false, why: 'login', code: 'NO_TOKEN', reason: '' }
     const r = this.browser ? await this.browserSession(token) : await this.api.hostSession(hostSessionURL(this.pa, this.service, this.hostBase), this.pa.auth_scheme || 'Bearer', token)
-    if (!r) return { ok: false, why: 'login', code: 'NO_IDENTITY', reason: '' }
+    if (!r) return { ok: false, why: 'login', code: 'NO_IDENTITY', reason: identityProblem }
     if (r.ok && r.data?.ticket) {
       const exp = typeof r.data.expires_at === 'number' && r.data.expires_at > 0 ? r.data.expires_at : now() + 300
       this.cur = { ticket: r.data.ticket, exp }

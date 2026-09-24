@@ -1,0 +1,35 @@
+tool: deposit_bank_accounts
+cases:
+  - name: บัญชีเปิด/ปิด แยกธนาคาร
+    service: K11S
+    responses:
+      acc:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {code: KBANK, full_name: "บจก. หนึ่ง", number: "1234567890", status: 1, deposit: 0, remain: 0, count: 0}
+            - {code: KBANK, full_name: "บจก. สอง", number: "1234567891", status: 1, deposit: 0, remain: 0, count: 0}
+            - {code: SCB, full_name: "บจก. สาม", number: "1234567892", status: 1, deposit: 0, remain: 0, count: 0}
+            - {code: KTB, full_name: "บจก. สี่", number: "1234567893", status: 0, deposit: 0, remain: 0, count: 0}
+    expect:
+      status: ok
+      calls: {acc: {path: /DepositBankSummaryV2/K11S, query: {deposit_type: all, start_date: "2026-09-24 00:00:00", end_date: "2026-09-24 23:59:00"}}}
+      fields: {บัญชีฝากที่เปิดใช้งาน: "3 บัญชี", บัญชีฝากที่ปิดอยู่: "1 บัญชี"}
+      table_rows: 2
+      table_cells: [[KBANK, "2 บัญชี"], [SCB, "1 บัญชี"]]
+      model_context: {has_open_account: true, has_closed_account: true}
+      link: "/Statement?service=SzExUw==&web=K11S"
+  - name: ไม่มีบัญชีฝาก
+    responses:
+      acc: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}
+  - name: ผิดรูป (ไม่มี status)
+    responses:
+      acc: {body: {code: 0, msg: "", payload: [{code: KBANK}]}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: หลังเที่ยงคืน (ช่วงวันที่ส่งเป็นวันใหม่)
+    now: "2026-09-25T00:02:00+07:00"
+    responses:
+      acc: {body: {code: 0, msg: "", payload: [{code: KBANK, status: 1}]}}
+    expect: {status: ok, calls: {acc: {query: {date: "2026-09-25", start_date: "2026-09-25 00:00:00"}}}, fields: {บัญชีฝากที่เปิดใช้งาน: "1 บัญชี"}}

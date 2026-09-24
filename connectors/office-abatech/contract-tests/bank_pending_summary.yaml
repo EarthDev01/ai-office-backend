@@ -1,0 +1,30 @@
+tool: bank_pending_summary
+cases:
+  - name: มีบัญชีรอตรวจ (envelope code 200)
+    service: K11S
+    responses:
+      all: {body: {code: 200, msg: Success, count: 17, payload: [{username: abc123, bank_code: KBANK, bank_name: "นาย ก", bank_number: "1234567890", status: 0, verify_tier: 1, verify_desc: "", verify_status: PENDING, date_regis: "2026-09-20T03:00:00Z"}]}}
+      pending: {body: {code: 200, msg: Success, count: 12, payload: [{username: abc123, bank_code: KBANK, verify_status: PENDING}]}}
+    expect:
+      status: ok
+      calls:
+        all: {path: /GetMemberBankPendingSummary/K11S, query: {page: "1", limit: "1", sort: date_regis, order: "1"}}
+        pending: {query: {status: PENDING}}
+      fields: {บัญชีที่ยังไม่อนุมัติทั้งหมด: "17 รายการ", ผลตรวจ รอตรวจ: "12 รายการ", "ผลตรวจอื่น (ไม่พบธนาคาร / ผิดพลาด / ชื่อบัญชีซ้ำ / ยังไม่ตรวจ)": "5 รายการ"}
+      model_context: {has_pending: true}
+      link: "/Member/BankPending?service=SzExUw==&web=K11S"
+  - name: ไม่มีบัญชีรอตรวจ (payload null)
+    responses:
+      all: {body: {code: 200, msg: Success, count: 0, payload: null}}
+      pending: {body: {code: 200, msg: Success, count: 0, payload: null}}
+    expect: {status: not_found}
+  - name: ไม่มีสิทธิ์ P061 ที่ host (code 401 ไม่มี count)
+    responses:
+      all: {body: {code: 401, msg: "ไม่มีสิทธิ์การใช้งานฟังชั่นนี้"}}
+      pending: {body: {code: 401, msg: "ไม่มีสิทธิ์การใช้งานฟังชั่นนี้"}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: aggregate ล้ม HTTP 400
+    responses:
+      all: {status: 400, body: {code: 1, msg: "err", payload: null}}
+      pending: {status: 400, body: {code: 1, msg: "err", payload: null}}
+    expect: {status: error, error_code: http_error}

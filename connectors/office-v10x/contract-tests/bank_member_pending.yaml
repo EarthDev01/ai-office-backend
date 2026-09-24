@@ -1,0 +1,21 @@
+# check-approve → data = int (และ count = ค่าเดียวกัน)
+tool: bank_member_pending
+cases:
+  - name: มีบัญชีรออนุมัติ
+    responses:
+      b: {body: {code: 0, message: Success, data: 6, count: 6}}
+    expect:
+      status: ok
+      calls:
+        b: {path: /bank-member/check-approve/DEMO-SVC}
+      fields: {รออนุมัติ: "6 บัญชี"}
+      model_context: {has_pending: true}
+      link: /member/approvebank
+  - name: ไม่มีบัญชีรออนุมัติ
+    responses:
+      b: {body: {code: 0, message: Success, data: 0, count: 0}}
+    expect: {status: not_found}
+  - name: token หมดอายุ
+    responses:
+      b: {body: {code: 4011, message: "ip not allowed"}}
+    expect: {status: error, error_code: host_error}

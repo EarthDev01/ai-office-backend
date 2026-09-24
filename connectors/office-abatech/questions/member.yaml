@@ -1,0 +1,209 @@
+# BQ-05 / BQ-07 / BQ-09 / BQ-47
+# API เดิม:
+#   GET  /api/GetMemberByUsername/:service?username= (member/route.go:30,309-341 · repository.go:405-440)
+#        E1 · ไม่พบ = code 1 + payload ว่าง · ⚠️ payload มี password / otp_code / token / session_id / เบอร์ / ชื่อ / เลขบัญชี
+#        → ไม่ประกาศใน values (ไม่ขึ้นการ์ด ไม่ถึงโมเดล) และ cache_ttl 0 (ไม่เก็บก้อนดิบไว้ในแคชของ backend)
+#        frontend components/Member/MemberInfo.vue:729-734
+#   POST /api/CheckCredit/:service {username, asset_code} (credit/route.go:18,77-106 · repository.go:150-193)
+#        ยิงระบบเกมสด + ✍️ เขียน working_log "เช็คเครดิต" ทุกครั้ง (side-effect ที่ D-89 ยอมรับ) · frontend components/Credit/CheckCredit.vue:66-73
+#        code 1 = ไม่พบยูส หรือ ระบบเกมผิดพลาด (แยกกันไม่ได้) · payload = JSON ดิบของระบบเกม (currentCredit)
+#   GET  /api/GetMemberCount/:service (member/route.go:29,124-141) · payload {all, current} · current = สมัครวันนี้เท่านั้น
+#   GET  /api/GetMemberBankPendingSummary/:service?page=1&limit=1&sort=date_regis&order=1&status= (member/route.go:92 · backend เช็ค P061)
+#        helper.ResponseV2 → {code:200, msg:"Success", payload, count} (code 200 ไม่ใช่ 0) → envelope: raw
+questions: [BQ-05]
+tools:
+  - name: member_info
+    description: >-
+      ข้อมูลสมาชิกรายคนจากยูสเซอร์เนม (ตรงตัว): วันสมัคร สถานะยืนยันตัวตน ฝากเงินแล้วหรือยัง ฝากล่าสุด รับโบนัส แต้ม
+      และธนาคารของบัญชีที่ผูกไว้ (ไม่มีเครดิต — ถามเครดิตให้ใช้ member_credit · ไม่มีเวลาออนไลน์ล่าสุด)
+    questions: [BQ-05]
+    permission: member
+    freshness: summary
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก (ตรงตัว), pattern: "^[A-Za-z0-9_.@-]{2,64}$"}
+    calls:
+      - id: m
+        method: GET
+        path: /GetMemberByUsername/{service}
+        query: {username: "{input.username}"}
+        cache_ttl: 0
+        not_found_codes: [1]
+        schema:
+          type: object
+          required: [username, date_regis, active, topup_status, is_bonus]
+          properties:
+            username: {type: string}
+            date_regis: {type: string}
+            active: {type: integer}
+            topup_status: {type: integer}
+            user_type: {type: string}
+            rank: {type: integer}
+            is_bonus: {type: integer}
+            point: {type: number}
+            last_deposit: {type: string}
+            bank_list:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [bank_code]
+                properties: {bank_code: {type: string}, Status: {type: integer}, active: {type: integer}, verify_status: {type: string}}
+    values:
+      - {name: user, from: m, path: username}
+      - {name: regis, from: m, path: date_regis}
+      - {name: acc_status, from: m, path: active}
+      - {name: topup, from: m, path: topup_status}
+      - {name: last_dep, from: m, path: last_deposit}
+      - {name: has_last_dep, expr: "last_dep != null && !contains(last_dep, '0001-01-01')"}
+      - {name: bonus_on, from: m, path: is_bonus}
+      - {name: points, from: m, path: point}
+      - {name: rank_no, from: m, path: rank}
+      - {name: banks, from: m, path: bank_list, default: []}
+      - {name: bank_total, expr: "count(banks)"}
+      - {name: bank_ok, from: m, path: bank_list, filter: "item.Status == 1", agg: count}
+    card:
+      title: ข้อมูลสมาชิก
+      fields:
+        - {label: ยูสเซอร์เนม, value: user}
+        - {label: วันที่สมัคร, value: regis, format: datetime}
+        - {label: สถานะ, value: acc_status, format: "status:member_active"}
+        - {label: ลูกค้าฝากเงินแล้ว, value: topup, format: bool}
+        - {label: ฝากล่าสุด, value: last_dep, format: datetime, when: "has_last_dep"}
+        - {label: รับโบนัส, value: bonus_on, format: bool}
+        - {label: แต้ม, value: points, format: number}
+        - {label: ระดับ (rank), value: rank_no, format: int}
+        - {label: บัญชีธนาคาร, value: bank_total, format: int, suffix: " บัญชี"}
+        - {label: บัญชีที่อนุมัติแล้ว, value: bank_ok, format: int, suffix: " บัญชี"}
+      table:
+        rows: banks
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: อนุมัติแล้ว, field: Status, format: bool}
+          - {label: บัญชีหลัก, field: active, format: bool}
+          - {label: ผลตรวจบัญชี, field: verify_status}
+      note: ข้อมูลนี้ไม่มีเครดิตคงเหลือและเวลาออนไลน์ล่าสุด · ไม่แสดงเบอร์โทร ชื่อ และเลขบัญชี · ค้นด้วยยูสเซอร์เนมตรงตัวเท่านั้น
+      link: {label: เปิดรายการสมาชิก, path: "/Member?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_deposited, type: bool, expr: "topup != 0"}
+      - {name: is_blocked, type: bool, expr: "acc_status == 99"}
+      - {name: is_verified, type: bool, expr: "acc_status == 1"}
+      - {name: has_pending_bank, type: bool, expr: "bank_ok < bank_total"}
+
+  - name: member_credit
+    description: >-
+      เครดิตคงเหลือของสมาชิกรายคน ดึงสดจากระบบเกม (ไม่แคช) ค้นด้วยยูสเซอร์เนมหรือเบอร์โทรที่ใช้สมัคร — เครดิตเกม หรือกระเป๋าเงินสด
+      ทุกครั้งที่เช็คจะถูกบันทึกในรายงานการทำงานของพนักงานว่า เช็คเครดิต ในชื่อผู้ใช้ เหมือนกดเช็คเครดิตเอง
+    questions: [BQ-47]
+    permission: member
+    freshness: live
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนม หรือ เบอร์โทรที่ใช้สมัคร (ตรงตัว), pattern: "^[A-Za-z0-9_.@-]{2,64}$"}
+      wallet: {type: string, description: "ชนิดเครดิต: 1001 = เครดิตเกม (ค่าเริ่มต้น) · 1003 = กระเป๋าเงินสด", enum: ["1001", "1003"]}
+    calls:
+      - id: cr
+        method: POST
+        path: /CheckCredit/{service}
+        body: {username: "{input.username}", asset_code: "{input.wallet}"}
+        cache_ttl: 0
+        timeout_ms: 15000
+        not_found_codes: [1]
+        schema:
+          type: object
+          properties:
+            currentCredit: {type: [number, "null"]}
+            data: {type: [object, "null"]}
+    values:
+      - {name: credit, from: cr, path: currentCredit}
+      - {name: w_wallet, from: cr, path: data.WALLET}
+      - {name: w_abatech, from: cr, path: data.ABATECH}
+      - {name: w_ufabet, from: cr, path: data.UFABET}
+      - {name: is_cash, expr: "input.wallet == '1003'"}
+    not_found:
+      when: "credit == null && w_wallet == null && w_abatech == null && w_ufabet == null"
+      message: ระบบเกมไม่ส่งยอดเครดิตของยูสนี้มา ให้ตรวจที่แท็บเช็คเครดิตในหน้าจริง
+    card:
+      title: เครดิตสมาชิก (ดึงสด)
+      fields:
+        - {label: ชนิดเครดิต, value: is_cash, format: bool, prefix: "กระเป๋าเงินสด: "}
+        - {label: เครดิตคงเหลือ, value: credit, format: money, suffix: " เครดิต", when: "credit != null"}
+        - {label: กระเป๋า WALLET, value: w_wallet, format: money, suffix: " เครดิต", when: "w_wallet != null"}
+        - {label: กระเป๋า ABATECH, value: w_abatech, format: money, suffix: " เครดิต", when: "w_abatech != null"}
+        - {label: กระเป๋า UFABET, value: w_ufabet, format: money, suffix: " เครดิต", when: "w_ufabet != null"}
+      note: ดึงสดจากระบบเกม · การเช็คนี้ถูกบันทึกในรายงานการทำงานของพนักงานว่า เช็คเครดิต ในชื่อของคุณ
+      link: {label: เปิดระบบจัดการเครดิตสมาชิก (แท็บเช็คเครดิต), path: "/Credit?service={service_b64}&web={service}"}
+    model_context:
+      - {name: credit_known, type: bool, expr: "credit != null"}
+      - {name: is_cash_wallet, type: bool, expr: "is_cash == true"}
+      - {name: note, type: text, text: ยอดเครดิตแสดงในการ์ดแล้ว ห้ามพิมพ์ยอดเอง ถ้าไม่พบให้บอกว่าอาจไม่พบยูสหรือระบบเกมไม่ตอบ}
+
+  - name: member_new_count
+    description: จำนวนสมาชิกที่สมัครวันนี้ และจำนวนสมาชิกทั้งหมด (หน้าเดิมนับได้เฉพาะวันนี้ ถามวันอื่นให้ตอบว่ายังดูไม่ได้)
+    questions: [BQ-07]
+    permission: member
+    freshness: summary
+    calls:
+      - id: cnt
+        method: GET
+        path: /GetMemberCount/{service}
+        cache_ttl: 60
+        schema:
+          type: object
+          required: [all, current]
+          properties: {all: {type: integer}, current: {type: integer}}
+    values:
+      - {name: new_count, from: cnt, path: current}
+      - {name: all_count, from: cnt, path: all}
+    card:
+      title: สมาชิกใหม่วันนี้
+      fields:
+        - {label: สมาชิกใหม่วันนี้, value: new_count, format: int, suffix: " คน"}
+        - {label: สมาชิกทั้งหมด, value: all_count, format: int, suffix: " คน"}
+      note: ตามการ์ดบนหน้ารายการสมาชิก · นับตามวันสมัครของวันนี้เท่านั้น · ไม่ใช่จำนวนคนออนไลน์
+      link: {label: เปิดรายการสมาชิก, path: "/Member?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_new_members, type: bool, expr: "new_count > 0"}
+      - {name: note, type: text, text: ถ้าผู้ใช้ถามสมาชิกใหม่ของวันอื่น ให้ตอบว่าระบบนับให้ได้เฉพาะวันนี้}
+
+  - name: bank_pending_summary
+    description: จำนวนบัญชีธนาคารของสมาชิกที่ยังไม่อนุมัติ (เหมือนหน้า รายการสมาชิกที่รอตรวจสอบ) รวมทั้งหมด และเฉพาะที่ผลตรวจเป็น รอตรวจ
+    questions: [BQ-09]
+    permission: bank_pending
+    freshness: summary
+    calls:
+      - id: all
+        method: GET
+        path: /GetMemberBankPendingSummary/{service}
+        query: {page: "1", limit: "1", sort: date_regis, order: "1"}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema: &bp
+          type: object
+          required: [code, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload: {type: [array, "null"]}
+      - id: pending
+        method: GET
+        path: /GetMemberBankPendingSummary/{service}
+        query: {page: "1", limit: "1", sort: date_regis, order: "1", status: PENDING}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema: *bp
+    values:
+      - {name: acc_total, from: all, path: count}
+      - {name: acc_pending, from: pending, path: count}
+      - {name: acc_other, expr: "acc_total - acc_pending"}
+    not_found: {when: "acc_total == 0", message: ไม่มีบัญชีธนาคารของสมาชิกที่รอตรวจสอบ}
+    card:
+      title: บัญชีสมาชิกที่รอตรวจสอบ
+      fields:
+        - {label: บัญชีที่ยังไม่อนุมัติทั้งหมด, value: acc_total, format: int, suffix: " รายการ"}
+        - {label: ผลตรวจ รอตรวจ, value: acc_pending, format: int, suffix: " รายการ"}
+        - {label: ผลตรวจอื่น (ไม่พบธนาคาร / ผิดพลาด / ชื่อบัญชีซ้ำ / ยังไม่ตรวจ), value: acc_other, format: int, suffix: " รายการ"}
+      note: นับเป็นจำนวนบัญชี ไม่ใช่จำนวนคน · ไม่รวมสมาชิกที่ถูกปิดกั้น
+      link: {label: เปิดรายการสมาชิกที่รอตรวจสอบ, path: "/Member/BankPending?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "acc_total > 0"}

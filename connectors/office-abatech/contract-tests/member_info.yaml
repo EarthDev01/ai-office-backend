@@ -1,0 +1,71 @@
+tool: member_info
+cases:
+  - name: พบสมาชิก — ข้อมูลลับในก้อนไม่ขึ้นการ์ด
+    service: K11S
+    input: {username: abc123}
+    responses:
+      m:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            id: "650f00000000000000000001"
+            rows: 0
+            username: abc123
+            date_regis: "2026-09-01T10:15:00+07:00"
+            phone_number: "0812345678"
+            password: "plainpass"
+            full_name: "นาย ทดสอบ"
+            bank_list:
+              - {bank_code: KBANK, bank_name: "นาย ทดสอบ", bank_number: "1234567890", Status: 1, active: 1, verify_status: "", verify_tier: 0, verify_desc: "", update_by: "", update_at: "0001-01-01T00:00:00Z"}
+              - {bank_code: SCB, bank_name: "นาย ทดสอบ", bank_number: "9999999999", Status: 0, active: 0, verify_status: PENDING, verify_tier: 1, verify_desc: "", update_by: "", update_at: "0001-01-01T00:00:00Z"}
+            point: 12
+            otp_code: "123456"
+            ip: "1.2.3.4"
+            active: 1
+            session_id: "sess"
+            user_type: member
+            is_bonus: 1
+            rank: 2
+            topup_status: 1
+            last_deposit: "2026-09-23T05:00:00Z"
+            tags: null
+            token: "tok"
+            withdraw_status: 0
+            exp_deposit: 1500
+    expect:
+      status: ok
+      calls: {m: {path: /GetMemberByUsername/K11S, query: {username: abc123}}}
+      fields:
+        ยูสเซอร์เนม: abc123
+        วันที่สมัคร: "01/09/2026 10:15"
+        สถานะ: ยืนยันแล้ว
+        ลูกค้าฝากเงินแล้ว: ใช่
+        ฝากล่าสุด: "23/09/2026 12:00"
+        รับโบนัส: ใช่
+        แต้ม: "12"
+        บัญชีธนาคาร: "2 บัญชี"
+        บัญชีที่อนุมัติแล้ว: "1 บัญชี"
+      table_rows: 2
+      table_cells: [[KBANK, ใช่, ใช่, ""], [SCB, ไม่ใช่, ไม่ใช่, PENDING]]
+      model_context: {has_deposited: true, is_blocked: false, is_verified: true, has_pending_bank: true}
+      link: "/Member?service=SzExUw==&web=K11S"
+  - name: ยังไม่เคยฝาก (last_deposit เป็นค่าว่างของระบบ)
+    input: {username: newbie}
+    responses:
+      m: {body: {code: 0, msg: "", payload: {username: newbie, date_regis: "2026-09-24T09:00:00+07:00", active: 0, topup_status: 0, is_bonus: 0, point: 0, rank: 0, last_deposit: "0001-01-01T00:00:00Z", bank_list: null}}}
+    expect:
+      status: ok
+      fields: {สถานะ: ยังไม่ยืนยันตัวตน, ลูกค้าฝากเงินแล้ว: ไม่ใช่, บัญชีธนาคาร: "0 บัญชี"}
+      no_fields: [ฝากล่าสุด]
+      model_context: {has_deposited: false, is_verified: false, has_pending_bank: false}
+  - name: ไม่พบสมาชิก (host code 1)
+    input: {username: nobody}
+    responses:
+      m: {body: {code: 1, msg: "", payload: {username: "", date_regis: "1970-01-01T07:00:00+07:00", active: 0, topup_status: 0, is_bonus: 0}}}
+    expect: {status: not_found}
+  - name: token หมดอายุ
+    input: {username: abc123}
+    responses:
+      m: {body: {code: 401, msg: "AuthenHeader Fail !!"}}
+    expect: {status: error, error_code: host_error}

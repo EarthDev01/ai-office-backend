@@ -1,0 +1,47 @@
+tool: member_credit
+cases:
+  - name: เครดิตเกม (ค่าเริ่มต้น)
+    service: K11S
+    input: {username: abc123}
+    responses:
+      cr: {body: {code: 0, msg: "", payload: {currentCredit: 152.5}}}
+    expect:
+      status: ok
+      calls: {cr: {path: /CheckCredit/K11S, body: {username: abc123, asset_code: null}}}
+      fields: {เครดิตคงเหลือ: "152.50 เครดิต", ชนิดเครดิต: "กระเป๋าเงินสด: ไม่ใช่"}
+      no_fields: [กระเป๋า WALLET]
+      model_context: {credit_known: true, is_cash_wallet: false}
+      link: "/Credit?service=SzExUw==&web=K11S"
+  - name: กระเป๋าเงินสด
+    input: {username: "0812345678", wallet: "1003"}
+    responses:
+      cr: {body: {code: 0, msg: "", payload: {currentCredit: 0}}}
+    expect:
+      status: ok
+      calls: {cr: {body: {username: "0812345678", asset_code: "1003"}}}
+      fields: {เครดิตคงเหลือ: "0.00 เครดิต", ชนิดเครดิต: "กระเป๋าเงินสด: ใช่"}
+      model_context: {is_cash_wallet: true}
+  - name: ธีมหลายกระเป๋า
+    input: {username: abc123}
+    responses:
+      cr: {body: {code: 0, msg: "", payload: {data: {WALLET: 10, ABATECH: 20.5, UFABET: 0}}}}
+    expect:
+      status: ok
+      fields: {กระเป๋า WALLET: "10.00 เครดิต", กระเป๋า ABATECH: "20.50 เครดิต", กระเป๋า UFABET: "0.00 เครดิต"}
+      no_fields: [เครดิตคงเหลือ]
+      model_context: {credit_known: false}
+  - name: ไม่พบยูส หรือระบบเกมผิดพลาด (host code 1)
+    input: {username: nobody}
+    responses:
+      cr: {body: {code: 1, msg: "ไม่พบข้อมูล ยูสน์นี้ในระบบ", payload: null}}
+    expect: {status: not_found}
+  - name: ระบบเกมตอบแต่ไม่มียอด
+    input: {username: abc123}
+    responses:
+      cr: {body: {code: 0, msg: "", payload: {status: {code: 500}}}}
+    expect: {status: not_found}
+  - name: หมดเวลา
+    input: {username: abc123}
+    responses:
+      cr: {error: timeout}
+    expect: {status: error, error_code: timeout}

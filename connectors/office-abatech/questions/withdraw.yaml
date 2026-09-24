@@ -1,0 +1,306 @@
+# BQ-03 / BQ-04 / BQ-06 (ถอน)
+# API เดิม (หน้า /Withdraw › แท็บ แสดงรายการถอน · components/Withdraw/WithdrawStatementV2.vue:1519-1573):
+#   GET /api/GetWithdrawStatementListByFilter/:service?date=&banknumber=&sort=&order=&limit=&page=&search=&status=
+#     controller/withdraw.go:60-109 · route/deposit.go:16 (⚠️ host ไม่มี auth — สิทธิ์บังคับที่ connector)
+#     status ฐานสิบ: 0 = ทุกสถานะ · N ≤ 90 = สถานะนั้น · N > 90 = มากกว่าสาม (UI ใช้ 99) · ว่าง = status 0 → ต้องส่งเสมอ
+#     วันเดียว (date → 00:00 ถึงวันถัดไปตาม time.Local ของ pod) · limit ตันสองพัน · count ตันห้าพัน
+#     response {code, msg, payload:[WithdrawModel], count} — count อยู่นอก payload → ใช้ envelope: raw + schema
+#   GET /api/GetWithdrawP2PRemainCount/:service?date=&banknumber= → {code:0, count} (controller/withdraw.go:111-134)
+#   GET /api/WithdrawByID/:service?id=<hex> → E1 · ไม่พบ = code 1 "ไม่พบข้อมูล" (withdraw/route.go:144-172)
+# payload มีเบอร์โทร/เลขบัญชี — ไม่ประกาศใน values จึงไม่ขึ้นการ์ดและไม่ถึงโมเดล · cache_ttl ต่ำ
+questions: [BQ-03]
+tools:
+  - name: withdraw_pending_by_status
+    description: >-
+      จำนวนรายการถอนที่ยังไม่สำเร็จของวันที่เลือก (ค่าเริ่มต้นวันนี้) แยกตามสถานะหลัก รอโอน กำลังตรวจสอบ และสถานะอื่นที่ยังไม่จบ
+      พร้อมจำนวนที่ยกเลิก/ซ่อน และถอน PeerToPeer ที่ยังมียอดเหลือ ใช้เมื่อถามว่ามีถอนค้างกี่รายการ ค้างสถานะอะไร
+    questions: [BQ-03]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: s2
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "2", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: &wl_count
+          type: object
+          required: [code, count, payload]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload: {type: array}
+      - id: s3
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "3", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *wl_count
+      - id: s99
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "99", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *wl_count
+      - id: s4
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "4", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *wl_count
+      - id: s11
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "11", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *wl_count
+      - id: p2p
+        method: GET
+        path: /GetWithdrawP2PRemainCount/{service}
+        query: {date: "{date:input.date|date:today}"}
+        envelope: raw
+        cache_ttl: 30
+        schema: {type: object, required: [count], properties: {code: {type: integer}, count: {type: integer}}}
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: c2, from: s2, path: count}
+      - {name: c3, from: s3, path: count}
+      - {name: c_gt3, from: s99, path: count}
+      - {name: c4, from: s4, path: count}
+      - {name: c11, from: s11, path: count}
+      - {name: c_other, expr: "c_gt3 - c4 - c11"}
+      - {name: open_total, expr: "c2 + c3 + c_other"}
+      - {name: p2p_left, from: p2p, path: count}
+    not_found: {when: "open_total == 0 && c4 == 0 && c11 == 0 && p2p_left == 0", message: ไม่มีรายการถอนที่ยังไม่สำเร็จในวันที่เลือก}
+    card:
+      title: รายการถอนที่ยังไม่สำเร็จ
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: ยังไม่จบ (ต้องติดตาม), value: open_total, format: int, suffix: " รายการ"}
+        - {label: รอโอน, value: c2, format: int, suffix: " รายการ"}
+        - {label: กำลังตรวจสอบ, value: c3, format: int, suffix: " รายการ"}
+        - {label: สถานะอื่นที่ยังไม่จบ (OTP / ระบบธนาคาร / ผิดพลาด / รอยืนยัน), value: c_other, format: int, suffix: " รายการ"}
+        - {label: ยกเลิก, value: c4, format: int, suffix: " รายการ"}
+        - {label: ถูกซ่อน, value: c11, format: int, suffix: " รายการ"}
+        - {label: ถอน PeerToPeer ที่ยังมียอดเหลือต้องจัดการ, value: p2p_left, format: int, suffix: " รายการ", when: "p2p_left > 0"}
+      note: >-
+        ไม่ระบุวันที่ = วันนี้ · นับได้ทีละวันตามหน้ารายการถอน · สถานะอื่นที่ยังไม่จบ = ทำรายการอีกครั้ง ขั้นตอน OTP ตรวจสอบยอดธนาคาร
+        เกิดข้อผิดพลาด ตัดเครดิตไม่สำเร็จ และรอยืนยันจากระบบ Payment · ยอดเงินรายรายการดูในหน้ารายการถอน
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_open, type: bool, expr: "open_total > 0"}
+      - {name: has_waiting_transfer, type: bool, expr: "c2 > 0"}
+      - {name: has_waiting_check, type: bool, expr: "c3 > 0"}
+      - {name: has_other_open, type: bool, expr: "c_other > 0"}
+      - {name: has_p2p_remainder, type: bool, expr: "p2p_left > 0"}
+      - {name: note, type: text, text: จำนวนแต่ละสถานะแสดงในการ์ดแล้ว ถ้าผู้ใช้ถามว่าต้องทำอะไรต่อให้ใช้ตารางสถานะรายการถอน}
+
+  - name: withdraw_oldest_pending
+    description: >-
+      รายการถอนที่ค้างนานที่สุดของวันที่เลือก (ค่าเริ่มต้นวันนี้) — ยังไม่สำเร็จ ไม่ถูกยกเลิก ไม่ถูกซ่อน เรียงจากเก่าสุด
+      หน้ารายการถอนดูได้ทีละวัน ถ้าต้องการวันก่อนหน้าให้ระบุวันที่
+    questions: [BQ-04]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: old
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        # เรียงเก่าสุดก่อน (order=1 = {datetime:1}) · สามร้อยรายการแรกของวัน แล้วคัดรายการที่ยังไม่จบใน connector
+        query: {date: "{date:input.date|date:today}", status: "0", sort: datetime, order: "1", limit: "300", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [code, count, payload]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload:
+              type: array
+              items: &wd_item
+                type: object
+                required: [id, datetime, username, amount, status]
+                properties:
+                  id: {type: string}
+                  datetime: {type: string}
+                  update_time: {type: string}
+                  username: {type: string}
+                  amount: {type: number}
+                  status: {type: integer}
+                  operator_name: {type: string}
+                  comment: {type: string}
+                  channel: {type: string}
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: rows, from: old, path: payload, filter: "!in(item.status, 1, 4, 11)", limit: 10}
+      - {name: known_rows, from: old, path: payload, filter: "!in(item.status, 1, 4, 11) && item.status >= 1 && item.status <= 16", limit: 10}
+      - {name: day_total, from: old, path: count}
+      - {name: scanned_all, expr: "day_total <= 300"}
+    not_found: {when: "empty(rows) && scanned_all", message: ไม่มีรายการถอนค้างในวันที่เลือก}
+    card:
+      title: รายการถอนที่ค้างนานที่สุด
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: รายการถอนทั้งวัน, value: day_total, format: int, suffix: " รายการ"}
+        - {label: ตรวจครบทุกรายการของวัน, value: scanned_all, format: bool}
+      table:
+        rows: rows
+        columns:
+          - {label: เวลาแจ้งถอน, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอด, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: อัปเดตล่าสุด, field: update_time, format: datetime}
+      note: >-
+        ไม่ระบุวันที่ = วันนี้ · ดูได้ทีละวันตามหน้ารายการถอน รายการค้างจากวันก่อนต้องถามวันที่นั้น
+        · ถ้า ตรวจครบทุกรายการของวัน = ไม่ใช่ ระบบดูเฉพาะช่วงต้นของวัน ให้เปิดหน้ารายการถอนเพื่อดูทั้งหมด
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "!empty(rows)"}
+      - {name: scanned_whole_day, type: bool, expr: "scanned_all == true"}
+      - {name: statuses, type: labels, from: known_rows, pluck: status, format: "status:withdraw"}
+      - {name: note, type: text, text: รายการและเวลาที่ค้างแสดงในการ์ดแล้ว}
+
+  - name: withdraw_find
+    description: >-
+      ค้นรายการถอนของวันที่เลือก (ค่าเริ่มต้นวันนี้) กรองด้วยยูสเซอร์เนม สถานะ หรือยอดได้ ใช้ดูว่ารายการถอนของสมาชิกสถานะอะไร ใครทำรายการ
+      ได้รหัสรายการ (id) ไปเปิดรายละเอียดด้วย withdraw_by_id
+    questions: [BQ-06]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      username: {type: string, description: ยูสเซอร์เนมของสมาชิก (ตรงตัว), pattern: "^[A-Za-z0-9_@-]{2,64}$"}
+      date: {type: date, description: วันที่ของรายการ ไม่ใส่ = วันนี้}
+      status: {type: integer, description: รหัสสถานะรายการถอนถ้าต้องการกรอง, min: 1, max: 16}
+      amount: {type: number, description: ยอดถอนถ้าต้องการกรอง, min: 0}
+    calls:
+      - id: list
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        # status ส่ง 0 เสมอ (ว่าง = กรอง status 0) แล้วกรองสถานะใน connector · search = regex ของ host → กรองยูสตรงตัวซ้ำ
+        query: {date: "{date:input.date|date:today}", status: "0", search: "{input.username}", sort: _id, order: "-1", limit: "200", page: "1"}
+        envelope: raw
+        cache_ttl: 15
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [code, count, payload]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload: {type: array, items: *wd_item}
+    values:
+      - {name: day, expr: "input.date"}
+      - name: rows
+        from: list
+        path: payload
+        filter: "(input.username == null || lower(item.username) == lower(input.username)) && (input.status == null || item.status == input.status) && (input.amount == null || item.amount == input.amount)"
+        limit: 20
+      - name: known_rows
+        from: list
+        path: payload
+        filter: "(input.username == null || lower(item.username) == lower(input.username)) && (input.status == null || item.status == input.status) && (input.amount == null || item.amount == input.amount) && item.status >= 1 && item.status <= 16"
+        limit: 20
+      - {name: found, expr: "count(rows)"}
+      - {name: fetched, from: list, path: count}
+      - {name: complete, expr: "fetched <= 200"}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการถอนตามเงื่อนไขในวันที่เลือก}
+    card:
+      title: รายการถอน
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: จำนวนที่แสดง, value: found, format: int, suffix: " รายการ"}
+        - {label: ค้นครบทุกรายการที่ตรงคำค้น, value: complete, format: bool}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอด, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: ผู้ทำรายการ, field: operator_name}
+          - {label: รหัสรายการ, field: id}
+      note: ไม่ระบุวันที่ = วันนี้ · ผู้ทำรายการว่าง = ระบบทำรายการอัตโนมัติ · แสดงล่าสุดก่อน สูงสุดยี่สิบรายการ · ข้อมูลนี้ไม่มี IP
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}&web={service}"}
+    model_context:
+      - {name: statuses_found, type: labels, from: known_rows, pluck: status, format: "status:withdraw"}
+      - {name: note, type: text, text: รายการ ผู้ทำรายการ และรหัสรายการแสดงในการ์ดแล้ว ถ้าผู้ใช้ต้องการรายละเอียดให้ขอรหัสรายการจากการ์ด}
+
+  - name: withdraw_by_id
+    description: รายละเอียดรายการถอน 1 รายการจากรหัสรายการ (id จากการ์ดรายการถอน) — สถานะ ยอด ผู้ทำรายการ และลำดับการดำเนินการ
+    questions: [BQ-06]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      id: {type: string, required: true, description: รหัสรายการถอน (ObjectID ยาวยี่สิบสี่ตัว), pattern: "^[0-9a-fA-F]{24}$"}
+    calls:
+      - id: one
+        method: GET
+        path: /WithdrawByID/{service}
+        query: {id: "{input.id}"}
+        cache_ttl: 15
+        not_found_codes: [1]
+        schema:
+          type: object
+          required: [id, datetime, username, amount, status, operator_name]
+          properties:
+            id: {type: string}
+            datetime: {type: string}
+            update_time: {type: string}
+            username: {type: string}
+            amount: {type: number}
+            status: {type: integer}
+            operator_name: {type: string}
+            comment: {type: string}
+            comment_time_lime:
+              type: array
+              nullable: true
+              items: {type: object, required: [datetime, status], properties: {datetime: {type: string}, operator_name: {type: string}, status: {type: integer}, action: {type: string}, comment: {type: string}}}
+    values:
+      - {name: when, from: one, path: datetime}
+      - {name: updated, from: one, path: update_time}
+      - {name: user, from: one, path: username}
+      - {name: amt, from: one, path: amount}
+      - {name: st, from: one, path: status}
+      - {name: operator, from: one, path: operator_name}
+      - {name: remark, from: one, path: comment}
+      - {name: steps, from: one, path: comment_time_lime, default: []}
+      - {name: known_steps, from: one, path: comment_time_lime, filter: "item.status >= 1 && item.status <= 16"}
+    card:
+      title: รายละเอียดรายการถอน
+      fields:
+        - {label: เวลาแจ้งถอน, value: when, format: datetime}
+        - {label: อัปเดตล่าสุด, value: updated, format: datetime}
+        - {label: ยูสเซอร์เนม, value: user}
+        - {label: ยอดถอน, value: amt, format: money, suffix: " บาท"}
+        - {label: สถานะ, value: st, format: "status:withdraw"}
+        - {label: ผู้ทำรายการล่าสุด, value: operator, when: "!empty(operator)"}
+        - {label: หมายเหตุ, value: remark, when: "!empty(remark)"}
+      table:
+        rows: steps
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ผู้ดำเนินการ, field: operator_name}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: การดำเนินการ, field: action}
+          - {label: หมายเหตุ, field: comment}
+      note: ไม่มีผู้ทำรายการ = ระบบทำรายการอัตโนมัติ · ข้อมูลนี้ไม่มี IP (ดูประวัติเข้าสู่ระบบของพนักงานที่เมนูจัดการพนักงาน)
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}&web={service}"}
+    model_context:
+      - {name: timeline_statuses, type: labels, from: known_steps, pluck: status, format: "status:withdraw"}
+      - {name: is_success, type: bool, expr: "st == 1"}
+      - {name: is_closed, type: bool, expr: "in(st, 1, 4, 11)"}
+      - {name: done_by_system, type: bool, expr: "empty(operator)"}
+      - {name: note, type: text, text: สถานะปัจจุบันแสดงในการ์ดแล้ว ถ้าผู้ใช้ถามว่าต้องทำอะไรต่อให้ใช้ตารางสถานะรายการถอน}

@@ -1,0 +1,46 @@
+tool: profit_loss_range
+cases:
+  - name: ไม่ระบุช่วง = ต้นเดือนถึงวันนี้
+    service: K11S
+    responses:
+      sum: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 3200000, withdraw: 2500000, bonus: 96000, last_deposit: 0, last_withdraw: 0, last_bonus: 0, profit: 0, count_deposit: 8120, count_withdraw: 3011, count: 0, service: ""}]}}
+    expect:
+      status: ok
+      calls:
+        sum: {path: /GetDashboardSummary/K11S, body: {start_date: "2026-09-01", end_date: "2026-09-24"}}
+      fields:
+        ยอดฝาก: "3,200,000.00 บาท"
+        ยอดถอน: "2,500,000.00 บาท"
+        โบนัส: "96,000.00 บาท"
+        กำไร (ฝาก - ถอน): "700,000.00 บาท"
+        กำไรหลังหักโบนัส: "604,000.00 บาท"
+        โบนัสต่อยอดฝาก: "3.0%"
+        จำนวนรายการฝาก: "8,120 รายการ"
+      no_fields: [ตั้งแต่วันที่, ถึงวันที่]
+      model_context: {profit_negative: false, withdraw_known: true, default_range_month_to_date: true}
+      link: "/report?service=SzExUw==&web=K11S"
+  - name: ระบุช่วงวัน ขาดทุน
+    service: K11S
+    input: {start_date: "2026-09-10", end_date: "2026-09-16"}
+    responses:
+      sum: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 100000, withdraw: 130000, bonus: 5000, count_deposit: 200, count_withdraw: 80}]}}
+    expect:
+      status: ok
+      calls:
+        sum: {body: {start_date: "2026-09-10", end_date: "2026-09-16"}}
+      fields: {ตั้งแต่วันที่: "10/09/2026", ถึงวันที่: "16/09/2026", กำไร (ฝาก - ถอน): "-30,000.00 บาท"}
+      model_context: {profit_negative: true, default_range_month_to_date: false}
+  - name: หลังเที่ยงคืนวันแรกของเดือน ช่วงเริ่มเดือนใหม่
+    now: "2026-10-01T00:05:00+07:00"
+    responses:
+      sum: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect:
+      status: ok
+      calls:
+        sum: {body: {start_date: "2026-10-01", end_date: "2026-10-01"}}
+      fields: {ยอดฝาก: "0.00 บาท", ยอดถอน: "—", กำไร (ฝาก - ถอน): "—"}
+      model_context: {withdraw_known: false}
+  - name: bind ไม่ผ่าน host ตอบ HTTP 400
+    responses:
+      sum: {status: 400, body: {error: "invalid character"}}
+    expect: {status: error, error_code: http_error}

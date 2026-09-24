@@ -1,0 +1,37 @@
+# response ตาม controller/report.go GetBillPayment (data[] บิลของทุกเว็บใน office · count)
+tool: bills_unpaid
+cases:
+  - name: มีบิลรอจ่ายและค้างชำระ
+    responses:
+      b:
+        body:
+          code: 0
+          message: Success
+          count: 4
+          data:
+            - {id: b01, billpayment_id: 1041, title: ค่าบริการรายเดือน, billpayment_name: ค่าบริการ กันยายน, total: 25000, overdue_amount: 0, status: 3, end_date: "2026-09-30T00:00:00+07:00", created_at: "2026-09-01T09:00:00+07:00", service: demo-svc}
+            - {id: b02, billpayment_id: 1030, title: ค่าบริการรายเดือน, billpayment_name: ค่าบริการ สิงหาคม, total: 24000, overdue_amount: 1200, status: 5, end_date: "2026-08-31T00:00:00+07:00", created_at: "2026-08-01T09:00:00+07:00", service: demo-svc}
+            - {id: b03, billpayment_id: 1029, title: ค่า SMS, billpayment_name: SMS, total: 3000, status: 6, end_date: "2026-08-15T00:00:00+07:00", created_at: "2026-08-01T09:00:00+07:00", service: other-svc}
+            - {id: b04, billpayment_id: 1035, title: ค่า SMS, billpayment_name: SMS, total: 3500, status: 4, end_date: "2026-09-15T00:00:00+07:00", created_at: "2026-09-01T09:00:00+07:00", service: demo-svc}
+    expect:
+      status: ok
+      calls:
+        b: {path: /get-bill-payment/DEMO-SVC, query: {sort: created_at, order: "-1", limit: "200", page: "1"}}
+      fields:
+        บิลที่ยังไม่ชำระ: "2 บิล"
+        ค้างชำระ (เลยกำหนด): "1 บิล"
+        ยอดรวม: "49,000.00 บาท"
+      table_rows: 2
+      table_cells:
+        - ["1030", ค่าบริการรายเดือน, ค่าบริการ สิงหาคม, "24,000.00", 31/08/2026, ค้างชำระ, demo-svc]
+        - ["1041", ค่าบริการรายเดือน, ค่าบริการ กันยายน, "25,000.00", 30/09/2026, รอจ่าย, demo-svc]
+      model_context: {has_unpaid: true, has_overdue: true, statuses: [ค้างชำระ, รอจ่าย]}
+      link: /bill
+  - name: ไม่มีบิลค้าง (ระบบบิลคืนว่าง = null)
+    responses:
+      b: {body: {code: 0, message: Success, data: null, count: 0}}
+    expect: {status: not_found}
+  - name: ระบบบิลไม่ตอบ (code 1)
+    responses:
+      b: {body: {code: 1, message: "dial tcp: i/o timeout", data: null}}
+    expect: {status: error, error_code: host_error}

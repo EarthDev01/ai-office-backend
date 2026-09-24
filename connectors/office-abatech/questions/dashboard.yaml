@@ -1,0 +1,81 @@
+# BQ-01 · ยอดฝาก-ถอนวันนี้ เทียบเมื่อวาน
+# API เดิม: POST /api/GetDashboardSummary/:service  body {start_date, end_date} "YYYY-MM-DD" (report/route.go:26, :185-209)
+#   repository report/repository.go:365-432 — อ่านอย่างเดียว (aggregate deposit_statement + withdraw_statement · ไม่มี Redis ไม่มีเขียน)
+#   frontend: components/Dashboard/DashboardOne.vue:365-374 ส่งรูปเดียวกัน
+# "เทียบเมื่อวาน" = ยิง 2 ครั้ง (วันนี้ / เมื่อวาน) แล้วลบกันเอง — ไม่ใช้ last_* ของ host (KI-1 · B-8)
+# ไม่ใช้ /GetDashboardSummaryByDayQuery (เส้นที่การ์ดรายงานภาพรวมใช้) เพราะเขียนแคช Redis 5 นาที = ไม่สด (B-7) และเป็นการเขียนแคชรายงาน
+# payload = [] แถวเดียว หรือ null เมื่อช่วงนั้นไม่มีรายการฝากเลย (ถอนจะหายไปด้วย → แสดง —)
+questions: [BQ-01]
+tools:
+  - name: dashboard_today_vs_yesterday
+    description: >-
+      ยอดฝาก (รายการเติมเครดิตสำเร็จ) ยอดถอนสำเร็จ โบนัส และกำไร (ฝากลบถอน) ของวันนี้ เทียบกับเมื่อวาน พร้อมส่วนต่าง
+      ใช้เมื่อถามยอดวันนี้ ยอดเมื่อวาน หรือเทียบวันนี้กับเมื่อวาน (วันอื่นหรือช่วงวันใช้ profit_loss_range)
+    permission: dashboard
+    freshness: live
+    calls:
+      - id: today
+        method: POST
+        path: /GetDashboardSummary/{service}
+        body: {start_date: "{date:today}", end_date: "{date:today}"}
+        cache_ttl: 0
+        schema: &dash_schema
+          type: [array, "null"]
+          items:
+            type: object
+            required: [deposit, withdraw, bonus, count_deposit, count_withdraw]
+            properties:
+              deposit: {type: number}
+              withdraw: {type: number}
+              bonus: {type: number}
+              count_deposit: {type: number}
+              count_withdraw: {type: number}
+      - id: yday
+        method: POST
+        path: /GetDashboardSummary/{service}
+        body: {start_date: "{date:yesterday}", end_date: "{date:yesterday}"}
+        cache_ttl: 0
+        schema: *dash_schema
+    values:
+      - {name: dep, from: today, path: "[0].deposit", default: 0}
+      - {name: dep_cnt, from: today, path: "[0].count_deposit", default: 0}
+      - {name: bonus_amt, from: today, path: "[0].bonus", default: 0}
+      - {name: wd, from: today, path: "[0].withdraw"}
+      - {name: wd_cnt, from: today, path: "[0].count_withdraw"}
+      - {name: dep_prev, from: yday, path: "[0].deposit", default: 0}
+      - {name: bonus_prev, from: yday, path: "[0].bonus", default: 0}
+      - {name: wd_prev, from: yday, path: "[0].withdraw"}
+      - {name: dep_diff, expr: "dep - dep_prev"}
+      - {name: wd_diff, expr: "wd - wd_prev"}
+      - {name: profit_amt, expr: "dep - wd"}
+      - {name: profit_prev, expr: "dep_prev - wd_prev"}
+      - {name: profit_diff, expr: "profit_amt - profit_prev"}
+      - {name: dep_pct, expr: "round((dep - dep_prev) * 100 / dep_prev, 1)"}
+    card:
+      title: ยอดฝาก-ถอน วันนี้เทียบเมื่อวาน
+      fields:
+        - {label: ยอดฝาก วันนี้, value: dep, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก เมื่อวาน, value: dep_prev, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก ต่างจากเมื่อวาน, value: dep_diff, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก เปลี่ยนแปลง, value: dep_pct, format: percent, when: "dep_pct != null"}
+        - {label: จำนวนรายการฝาก วันนี้, value: dep_cnt, format: int, suffix: " รายการ"}
+        - {label: ยอดถอน วันนี้, value: wd, format: money, suffix: " บาท"}
+        - {label: ยอดถอน เมื่อวาน, value: wd_prev, format: money, suffix: " บาท"}
+        - {label: ยอดถอน ต่างจากเมื่อวาน, value: wd_diff, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการถอน วันนี้, value: wd_cnt, format: int, suffix: " รายการ"}
+        - {label: โบนัส วันนี้, value: bonus_amt, format: money, suffix: " บาท"}
+        - {label: โบนัส เมื่อวาน, value: bonus_prev, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝาก - ถอน) วันนี้, value: profit_amt, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝาก - ถอน) เมื่อวาน, value: profit_prev, format: money, suffix: " บาท"}
+        - {label: กำไร ต่างจากเมื่อวาน, value: profit_diff, format: money, suffix: " บาท"}
+      note: >-
+        ยอดฝาก = รายการฝากที่เติมเครดิตสำเร็จ (ไม่รวมคืนเครดิตและลบเครดิต) · ยอดถอน = ถอนสำเร็จ · กำไรไม่หักโบนัส
+        · อาจไม่ตรงกับการ์ดรายงานภาพรวมที่นับเงินเข้าบัญชีฝาก · ขีด (—) = วันนั้นไม่มีรายการฝาก ระบบจึงไม่ส่งยอดถอนมา · วันตามเวลาไทย
+      link: {label: เปิดรายงานภาพรวม, path: "/DashboardOnce?service={service_b64}&web={service}"}
+    model_context:
+      - {name: deposit_increased, type: bool, expr: "dep_diff > 0"}
+      - {name: withdraw_increased, type: bool, expr: "wd_diff > 0"}
+      - {name: profit_increased, type: bool, expr: "profit_diff > 0"}
+      - {name: profit_negative, type: bool, expr: "profit_amt < 0"}
+      - {name: withdraw_known, type: bool, expr: "wd != null && wd_prev != null"}
+      - {name: note, type: text, text: ตัวเลขทั้งหมดแสดงในการ์ดแล้ว ให้สรุปแนวโน้มเป็นคำพูดโดยไม่ต้องพิมพ์ตัวเลข}

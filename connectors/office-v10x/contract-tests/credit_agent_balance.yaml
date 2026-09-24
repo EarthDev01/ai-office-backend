@@ -1,0 +1,33 @@
+# response ตาม controller/Agent.go GetBalanceAgent (data BalanceAgentCredit · updated_at = unix วินาที)
+tool: credit_agent_balance
+cases:
+  - name: มียอดล่าสุด
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      a: {body: {code: 0, message: Success, data: {amount: 1250000.75, code: 1001, name: CREDIT, unit: THB, updated_at: 1790234400, service: DEMO-DEV-OFFICEX-24}}}
+    expect:
+      status: ok
+      calls:
+        a: {path: /credit-agent-balance/DEMO-DEV-OFFICEX-24}
+      fields:
+        เครดิตเอเจ้นคงเหลือ: "1,250,000.75"
+        หน่วย: THB
+        อัปเดตล่าสุด: "24/09/2026 14:20"
+      model_context: {is_low_or_zero: false, never_updated: false}
+      link: /
+  - name: เครดิตหมด และไม่เคยอัปเดตเวลา
+    responses:
+      a: {body: {code: 0, data: {amount: 0, code: 1001, name: CREDIT, unit: "", updated_at: 0, service: DEMO-SVC}}}
+    expect:
+      status: ok
+      fields: {เครดิตเอเจ้นคงเหลือ: "0.00"}
+      no_fields: [หน่วย, อัปเดตล่าสุด]
+      model_context: {is_low_or_zero: true, never_updated: true}
+  - name: ยังไม่มีเอกสารยอด (code 1)
+    responses:
+      a: {body: {code: 1, message: "mongo: no documents in result", data: null}}
+    expect: {status: not_found}
+  - name: หลังบ้านไม่ตอบ
+    responses:
+      a: {error: timeout}
+    expect: {status: error, error_code: timeout}

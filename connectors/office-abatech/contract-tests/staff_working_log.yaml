@@ -1,0 +1,47 @@
+tool: staff_working_log
+cases:
+  - name: กรองตามยูสเซอร์เนม
+    service: K11S
+    input: {username: user01}
+    responses:
+      wl:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {id: "66f100000000000000000001", datetime: "2026-09-24T04:12:09Z", operator_name: "Admin A", operator_id: "65ab00000000000000000001", action: แจกโบนัสฟรี, change: "50", username: user01, username_prefix: "", detail: "แจกโบนัสฟรี user : user01 จำนวน 50", ip: "10.0.3.17", description: "", service: K11S, jsondata: null, data_new: {username: user01, amount: 50}, data_old: null}
+            - {id: "66f100000000000000000002", datetime: "2026-09-24T03:00:00Z", operator_name: "Admin B", operator_id: "65ab00000000000000000002", action: เช็คเครดิต, change: "0", username: user02, detail: "เช็คเครดิต user : user02", ip: "10.0.3.17", service: K11S}
+    expect:
+      status: ok
+      calls: {wl: {path: /GetWorkingLog, query: {date: "2026-09-24", service: K11S}}}
+      fields: {รายการที่ตรงเงื่อนไข: "1 รายการ"}
+      no_fields: [มีรายการมากกว่าที่แสดง]
+      table_rows: 1
+      table_cells: [["24/09/2026 11:12", "Admin A", แจกโบนัสฟรี, user01, "แจกโบนัสฟรี user : user01 จำนวน 50"]]
+      model_context: {has_more_rows: false}
+      link: /Logs/Working
+  - name: กรองชื่อพนักงานบางส่วน + ชื่อรายการ วันที่ย้อนหลัง
+    service: K11S
+    input: {operator: admin b, action: เช็ค, date: "2026-09-20"}
+    responses:
+      wl:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {datetime: "2026-09-20T04:12:09Z", operator_name: "Admin A", action: แจกโบนัสฟรี, username: user01, detail: "x"}
+            - {datetime: "2026-09-20T03:00:00Z", operator_name: "Admin B", action: เช็คเครดิต, username: user02, detail: "เช็คเครดิต user : user02"}
+    expect:
+      status: ok
+      calls: {wl: {query: {date: "2026-09-20", service: K11S}}}
+      fields: {วันที่: "20/09/2026", รายการที่ตรงเงื่อนไข: "1 รายการ"}
+      table_cells: [["20/09/2026 10:00", "Admin B", เช็คเครดิต]]
+  - name: ไม่มี log (payload null) หลังเที่ยงคืน
+    now: "2026-09-25T00:00:05+07:00"
+    responses:
+      wl: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found, calls: {wl: {query: {date: "2026-09-25"}}}}
+  - name: host ตอบ code 1
+    responses:
+      wl: {body: {code: 1, msg: "err", payload: null}}
+    expect: {status: error, error_code: host_error}

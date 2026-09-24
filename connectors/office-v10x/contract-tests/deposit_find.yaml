@@ -1,0 +1,48 @@
+tool: deposit_find
+cases:
+  - name: พบรายการฝากของยูส (search จับหลายยูส → กรองตรงตัว)
+    input: {username: user01}
+    responses:
+      l:
+        body:
+          code: 0
+          message: Success
+          count: 3
+          summary: 1800
+          data:
+            - {id: 66f2a1b2c3d4e5f601234567, username: user01, bank_name: สมชาย ใจดี, bank_code: KBANK, bank_number: "1234567890", bonus_name: ไม่รับโบนัส, amount: 500, datetime: "2026-09-24T13:05:00+07:00", channel: SMS, status: 2, operator_name: "", comment: ""}
+            - {id: 66f2a1b2c3d4e5f601234568, username: user011, bank_code: SCB, amount: 800, datetime: "2026-09-24T12:00:00+07:00", channel: SMS, status: 1}
+            - {id: 66f2a1b2c3d4e5f601234569, username: USER01, bank_code: KBANK, amount: 500, datetime: "2026-09-24T09:30:00+07:00", channel: INSERT_STATEMENT, status: 1, operator_name: admin_a, comment: เติมมือ}
+    expect:
+      status: ok
+      calls:
+        l: {path: /GetDepositStatementv2/DEMO-SVC, query: {search: user01, range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "50", page: "1"}}
+      fields: {พบ: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 13:05", user01, "500.00", รอคิว, SMS, KBANK, ไม่รับโบนัส, "", ""]
+        - ["24/09/2026 09:30", USER01, "500.00", สำเร็จ, INSERT_STATEMENT, KBANK, "—", admin_a, เติมมือ]
+      model_context: {statuses: [รอคิว, สำเร็จ], may_have_more: false}
+      link: /transection/deposit
+  - name: ไม่พบยูสนี้ในช่วงวัน
+    input: {username: nobody, date_from: "2026-09-01", date_to: "2026-09-02"}
+    responses:
+      l: {body: {code: 0, data: [], count: 0, summary: 0}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {range_dt: "2026-09-01 00:00:00~2026-09-02 23:59:59"}}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    input: {username: user01}
+    responses:
+      l: {body: {code: 0, data: [], count: 0, summary: 0}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: หลังบ้านตอบ JSON พัง
+    input: {username: user01}
+    responses:
+      l: {raw: "{not json"}
+    expect: {status: error, error_code: bad_json}

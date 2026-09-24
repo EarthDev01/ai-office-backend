@@ -1,0 +1,70 @@
+# BQ-12 · กำไรขาดทุนตามช่วงวันที่
+# หน้า /report (components/Report/ProfitLoss.vue) ยิง POST /GetReportProfitLossQuery ทีละวัน — เส้นนั้น "ห้ามใช้" (D-89):
+#   InsertReport เขียน report_alltime ถาวรเมื่อวันที่เก่ากว่าเจ็ดวัน (report/repository.go:1875-1891)
+# ทางที่อ่านอย่างเดียวและรับช่วงวันได้รวดเดียว: POST /GetDashboardSummary/:service {start_date, end_date}
+#   (report/route.go:26 · repository.go:365-432 · GetFilterDateBetween = start 00:00 ถึง end 23:59:59)
+#   ⚠️ นิยามต่างจากหน้า /report: ยอดฝากที่นี่ = deposit_statement ที่เติมเครดิตสำเร็จ · หน้า /report = เงินเข้าบัญชีธนาคาร (bank_statement)
+questions: [BQ-12]
+tools:
+  - name: profit_loss_range
+    description: >-
+      ยอดฝาก (รายการเติมเครดิตสำเร็จ) ยอดถอนสำเร็จ โบนัส และกำไร (ฝากลบถอน) รวมของช่วงวันที่ ค่าเริ่มต้น = ต้นเดือนถึงวันนี้
+      ใช้เมื่อถามกำไรขาดทุนเดือนนี้ สัปดาห์นี้ หรือช่วงวันที่ใด ๆ (ควรไม่เกินสามสิบเอ็ดวันต่อครั้ง)
+    permission: profit_loss
+    freshness: summary
+    input:
+      start_date: {type: date, description: วันเริ่มต้น ไม่ใส่ = วันที่หนึ่งของเดือนนี้}
+      end_date: {type: date, description: วันสิ้นสุด (รวมวันนั้น) ไม่ใส่ = วันนี้}
+    calls:
+      - id: sum
+        method: POST
+        path: /GetDashboardSummary/{service}
+        body:
+          start_date: "{date:input.start_date|date:month_start}"
+          end_date: "{date:input.end_date|date:today}"
+        cache_ttl: 60
+        timeout_ms: 20000
+        schema:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [deposit, withdraw, bonus, count_deposit, count_withdraw]
+            properties:
+              deposit: {type: number}
+              withdraw: {type: number}
+              bonus: {type: number}
+              count_deposit: {type: number}
+              count_withdraw: {type: number}
+    values:
+      - {name: from_day, expr: "input.start_date"}
+      - {name: to_day, expr: "input.end_date"}
+      - {name: dep, from: sum, path: "[0].deposit", default: 0}
+      - {name: dep_cnt, from: sum, path: "[0].count_deposit", default: 0}
+      - {name: bonus_amt, from: sum, path: "[0].bonus", default: 0}
+      - {name: wd, from: sum, path: "[0].withdraw"}
+      - {name: wd_cnt, from: sum, path: "[0].count_withdraw"}
+      - {name: profit_amt, expr: "dep - wd"}
+      - {name: profit_after_bonus, expr: "dep - wd - bonus_amt"}
+      - {name: bonus_pct, expr: "round(bonus_amt * 100 / dep, 1)"}
+    card:
+      title: กำไรขาดทุนตามช่วงวันที่
+      fields:
+        - {label: ตั้งแต่วันที่, value: from_day, format: date, when: "from_day != null"}
+        - {label: ถึงวันที่, value: to_day, format: date, when: "to_day != null"}
+        - {label: ยอดฝาก, value: dep, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการฝาก, value: dep_cnt, format: int, suffix: " รายการ"}
+        - {label: ยอดถอน, value: wd, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการถอน, value: wd_cnt, format: int, suffix: " รายการ"}
+        - {label: โบนัส, value: bonus_amt, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝาก - ถอน), value: profit_amt, format: money, suffix: " บาท"}
+        - {label: กำไรหลังหักโบนัส, value: profit_after_bonus, format: money, suffix: " บาท"}
+        - {label: โบนัสต่อยอดฝาก, value: bonus_pct, format: percent, when: "bonus_pct != null"}
+      note: >-
+        ไม่ระบุวันที่ = ต้นเดือนถึงวันนี้ · ยอดฝาก = รายการฝากที่เติมเครดิตสำเร็จ (ไม่รวมคืนเครดิตและลบเครดิต) ซึ่งต่างจากหน้ารายงานกำไรขาดทุนที่นับเงินเข้าบัญชีธนาคาร
+        ตัวเลขจึงอาจไม่ตรงกับหน้านั้น · ขีด (—) = ช่วงนั้นไม่มีรายการฝาก ระบบจึงไม่ส่งยอดถอนมา · วันตามเวลาไทย
+      link: {label: เปิดรายงานกำไรขาดทุน, path: "/report?service={service_b64}&web={service}"}
+    model_context:
+      - {name: profit_negative, type: bool, expr: "profit_amt < 0"}
+      - {name: withdraw_known, type: bool, expr: "wd != null"}
+      - {name: default_range_month_to_date, type: bool, expr: "from_day == null && to_day == null"}
+      - {name: note, type: text, text: ตัวเลขทั้งหมดแสดงในการ์ดแล้ว และนิยามยอดฝากต่างจากหน้ารายงานกำไรขาดทุน ให้บอกผู้ใช้ตามหมายเหตุในการ์ด}

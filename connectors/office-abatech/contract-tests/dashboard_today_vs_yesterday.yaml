@@ -1,0 +1,63 @@
+tool: dashboard_today_vs_yesterday
+cases:
+  - name: มีรายการทั้งสองวัน
+    service: K11S
+    responses:
+      today: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 152300, withdraw: 98000, bonus: 4200, last_deposit: 300, last_withdraw: 1500, last_bonus: 0, profit: 0, datestring: "", count_deposit: 412, count_withdraw: 133, count_newmember_deposit: 0, count_member_online: 0, count_member_new: 0, count: 0, service: "", last_update: "0001-01-01T00:00:00Z"}]}}
+      yday: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 160500, withdraw: 101000, bonus: 3900, last_deposit: 100, last_withdraw: 200, last_bonus: 0, profit: 0, datestring: "", count_deposit: 398, count_withdraw: 140, count: 0, service: "", last_update: "0001-01-01T00:00:00Z"}]}}
+    expect:
+      status: ok
+      calls:
+        today: {path: /GetDashboardSummary/K11S, body: {start_date: "2026-09-24", end_date: "2026-09-24"}}
+        yday: {path: /GetDashboardSummary/K11S, body: {start_date: "2026-09-23", end_date: "2026-09-23"}}
+      fields:
+        ยอดฝาก วันนี้: "152,300.00 บาท"
+        ยอดฝาก เมื่อวาน: "160,500.00 บาท"
+        ยอดฝาก ต่างจากเมื่อวาน: "-8,200.00 บาท"
+        ยอดฝาก เปลี่ยนแปลง: "-5.1%"
+        จำนวนรายการฝาก วันนี้: "412 รายการ"
+        ยอดถอน วันนี้: "98,000.00 บาท"
+        ยอดถอน ต่างจากเมื่อวาน: "-3,000.00 บาท"
+        โบนัส วันนี้: "4,200.00 บาท"
+        กำไร (ฝาก - ถอน) วันนี้: "54,300.00 บาท"
+        กำไร (ฝาก - ถอน) เมื่อวาน: "59,500.00 บาท"
+        กำไร ต่างจากเมื่อวาน: "-5,200.00 บาท"
+      model_context: {deposit_increased: false, withdraw_increased: false, profit_increased: false, profit_negative: false, withdraw_known: true}
+      link: "/DashboardOnce?service=SzExUw==&web=K11S"
+  - name: เมื่อวานไม่มีรายการฝาก (payload null) — ยอดถอนเมื่อวานไม่ทราบ
+    service: K11S
+    responses:
+      today: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 5000, withdraw: 7000, bonus: 0, count_deposit: 4, count_withdraw: 2}]}}
+      yday: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect:
+      status: ok
+      fields:
+        ยอดฝาก เมื่อวาน: "0.00 บาท"
+        ยอดถอน เมื่อวาน: "—"
+        ยอดถอน ต่างจากเมื่อวาน: "—"
+        กำไร (ฝาก - ถอน) วันนี้: "-2,000.00 บาท"
+        กำไร (ฝาก - ถอน) เมื่อวาน: "—"
+      no_fields: [ยอดฝาก เปลี่ยนแปลง]
+      model_context: {withdraw_known: false, profit_negative: true, deposit_increased: true}
+  - name: หลังเที่ยงคืนนับวันใหม่ตามเวลาไทย
+    service: K11S
+    now: "2026-09-25T00:03:00+07:00"
+    responses:
+      today: {body: {code: 0, msg: SUCCESS, payload: null}}
+      yday: {body: {code: 0, msg: SUCCESS, payload: [{deposit: 1000, withdraw: 0, bonus: 0, count_deposit: 1, count_withdraw: 0}]}}
+    expect:
+      status: ok
+      calls:
+        today: {body: {start_date: "2026-09-25", end_date: "2026-09-25"}}
+        yday: {body: {start_date: "2026-09-24", end_date: "2026-09-24"}}
+      fields: {ยอดฝาก วันนี้: "0.00 บาท", ยอดถอน วันนี้: "—", ยอดฝาก เมื่อวาน: "1,000.00 บาท"}
+  - name: host ตอบ code 1 (aggregate ถอนล้ม)
+    responses:
+      today: {body: {code: 1, msg: "context deadline exceeded", payload: null}}
+      yday: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect: {status: error, error_code: host_error}
+  - name: token ใช้ไม่ได้ (host ตอบ HTTP 200 code 401)
+    responses:
+      today: {body: {code: 401, msg: "AuthenHeader Fail !!"}}
+      yday: {body: {code: 401, msg: "AuthenHeader Fail !!"}}
+    expect: {status: error}

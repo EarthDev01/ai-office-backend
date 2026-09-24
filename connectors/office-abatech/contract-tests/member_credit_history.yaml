@@ -1,0 +1,40 @@
+tool: member_credit_history
+cases:
+  - name: ประวัติของยูสนี้ (ไม่สนตัวพิมพ์)
+    service: K11S
+    input: {username: User01}
+    responses:
+      wl:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {datetime: "2026-09-24T05:00:00Z", operator_name: "Admin A", action: คืนเครดิต, change: "100", username: user01, detail: "คืนเครดิต user : user01 จำนวน 100"}
+            - {datetime: "2026-09-24T04:12:09Z", operator_name: "Admin A", action: แจกโบนัสฟรี, change: "50", username: user01, detail: "แจกโบนัสฟรี user : user01 จำนวน 50"}
+            - {datetime: "2026-09-24T03:00:00Z", operator_name: "Admin B", action: เช็คเครดิต, change: "0", username: user02, detail: "เช็คเครดิต user : user02"}
+    expect:
+      status: ok
+      calls: {wl: {path: /GetWorkingLog, query: {date: "2026-09-24", service: K11S}}}
+      fields: {จำนวนรายการ: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 12:00", "Admin A", คืนเครดิต, "100"]
+        - ["24/09/2026 11:12", "Admin A", แจกโบนัสฟรี, "50"]
+      model_context: {has_more_rows: false}
+      link: /Logs/Working
+  - name: ไม่พบประวัติของยูสนี้
+    input: {username: nobody, date: "2026-09-01"}
+    responses:
+      wl: {body: {code: 0, msg: "", payload: [{datetime: "2026-09-01T03:00:00Z", operator_name: "Admin B", action: เช็คเครดิต, username: user02}]}}
+    expect: {status: not_found, calls: {wl: {query: {date: "2026-09-01"}}}}
+  - name: หลังเที่ยงคืน
+    now: "2026-09-25T00:30:00+07:00"
+    input: {username: user01}
+    responses:
+      wl: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found, calls: {wl: {query: {date: "2026-09-25"}}}}
+  - name: หมดเวลา
+    input: {username: user01}
+    responses:
+      wl: {error: timeout}
+    expect: {status: error, error_code: timeout}

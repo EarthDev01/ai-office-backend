@@ -1,0 +1,140 @@
+# BQ-41 / BQ-42 / BQ-44 · แถบด้านบน (components/Dashboard/Layout/TopNavbar.vue) + หน้า /BillPayment
+# API เดิม:
+#   GET /api/GetBalanceAgent/:service (route/Agent.go:16 · controller/Agent.go:168-181) — ยอด Agent Credit ที่บันทึกไว้ (OFFICE balance_credit_agent)
+#       ไม่พบ = code 0 + ค่าศูนย์ทั้งก้อน (service ว่าง) · TopNavbar.vue:400-409
+#       ไม่ใช้ /ReloadBalanceAgent: ยิง gateway + เขียน DB ทุกครั้ง (D-89 ยอมได้) แต่โหมด browser ไม่มี rate limit ฝั่ง host
+#       และ call ของ tool วิ่งขนานกัน (reload → อ่าน เรียงลำดับไม่ได้) → แสดง snapshot + เวลาอัปเดต + fact system_credit_refresh
+#   GET /api/CheckCreditBalanceEnter/:service (sms/route.go:44,612-632) — ยอด SMS สดจาก provider · payload = ตัวเลข
+#       provider ตอบไม่ใช่ 200 → code 0 + payload 0 (แยกไม่ออกจากเหลือศูนย์จริง) · TopNavbar.vue:423-432
+#   GET /api/GetBillPayment (global/route.go:37,399-413) — ไม่มี :service · ส่ง body ของระบบบิลต่อทั้งก้อน {status:{code}, data:[…]}
+#       ได้บิลของทุกเว็บใน office (หน้า /BillPayment แสดงแบบเดียวกัน) → scope: office · pages/BillPayment/index.vue:154-163
+questions: [BQ-41]
+tools:
+  - name: system_credit_balance
+    description: >-
+      เครดิตระบบ (Agent Credit) ของเว็บนี้ตามที่หลังบ้านบันทึกไว้ล่าสุด พร้อมเวลาที่อัปเดต ใช้เมื่อถามว่าเครดิตระบบเหลือเท่าไหร่
+    questions: [BQ-41]
+    permission: logged_in
+    freshness: live
+    calls:
+      - id: ag
+        method: GET
+        path: /GetBalanceAgent/{service}
+        cache_ttl: 0
+        schema:
+          type: object
+          required: [amount, service]
+          properties:
+            amount: {type: number}
+            code: {type: integer}
+            name: {type: string}
+            unit: {type: string}
+            updated_at: {type: number}
+            service: {type: string}
+    values:
+      - {name: svc_name, from: ag, path: service}
+      - {name: balance, from: ag, path: amount}
+      - {name: unit, from: ag, path: unit}
+      - {name: updated, from: ag, path: updated_at}
+    not_found: {when: "empty(svc_name)", message: ยังไม่มียอดเครดิตระบบที่บันทึกไว้ ให้กดรีเฟรชยอด Agent Credit ที่แถบด้านบนก่อน}
+    card:
+      title: เครดิตระบบ (Agent Credit)
+      fields:
+        - {label: เครดิตระบบคงเหลือ, value: balance, format: money}
+        - {label: หน่วย, value: unit, when: "!empty(unit)"}
+        - {label: อัปเดตยอดล่าสุดเมื่อ, value: updated, format: datetime, when: "updated > 0"}
+      note: >-
+        ยอดตามที่หลังบ้านบันทึกไว้ครั้งล่าสุด (แถบ Agent Credit ด้านบน) ผู้ช่วยไม่ได้สั่งรีเฟรชเอง ถ้าต้องการยอดล่าสุดให้กดรีเฟรชที่แถบด้านบน
+        · ถ้าเครดิตระบบหมดจะทำรายการฝากถอนไม่ได้ ให้แจ้งทีม support เพื่อเติม
+      link: {label: เปิดรายงานภาพรวม, path: "/DashboardOnce?service={service_b64}&web={service}"}
+    model_context:
+      - {name: is_low_or_zero, type: bool, expr: "balance <= 0"}
+      - {name: note, type: text, text: ยอดเครดิตระบบแสดงในการ์ดแล้ว เป็นยอดที่บันทึกไว้ล่าสุด การเติมเครดิตระบบต้องติดต่อทีม support}
+
+  - name: sms_credit_balance
+    description: เครดิต SMS คงเหลือของเว็บนี้ ดึงสดจากผู้ให้บริการ SMS ใช้เมื่อถามว่า SMS เหลือเท่าไหร่
+    questions: [BQ-42]
+    permission: logged_in
+    freshness: live
+    calls:
+      - id: sms
+        method: GET
+        path: /CheckCreditBalanceEnter/{service}
+        cache_ttl: 0
+        timeout_ms: 10000
+        schema: {type: number}
+    values:
+      - {name: sms_balance, from: sms, path: ""}
+      - {name: is_zero, expr: "sms_balance == 0"}
+    card:
+      title: เครดิต SMS คงเหลือ
+      fields:
+        - {label: เครดิต SMS คงเหลือ, value: sms_balance, format: number}
+        - {label: ยอดเป็นศูนย์ (อาจยังไม่ได้ตั้งค่า SMS หรือผู้ให้บริการตอบผิดปกติ), value: is_zero, format: bool, when: "is_zero == true"}
+      note: ดึงสดจากผู้ให้บริการ SMS แบบเดียวกับแถบ SMS Credit ด้านบน · หน่วยเป็นเครดิตของผู้ให้บริการ ไม่ใช่จำนวนข้อความโดยตรง
+      link: {label: เปิดเมนูส่งข้อความ, path: "/sms?service={service_b64}&web={service}"}
+    model_context:
+      - {name: balance_zero, type: bool, expr: "is_zero == true"}
+      - {name: note, type: text, text: ยอดเครดิต SMS แสดงในการ์ดแล้ว ถ้าเป็นศูนย์ให้บอกว่าอาจยังไม่ได้ตั้งค่าหรือผู้ให้บริการตอบผิดปกติ}
+
+  - name: bills_outstanding
+    description: บิลค่าใช้จ่ายระบบที่ยังค้างชำระ (สถานะ รอจ่าย และ ค้างชำระ) ตามหน้าบิลค่าใช้จ่ายระบบ พร้อมยอดและวันครบกำหนด
+    questions: [BQ-44]
+    permission: bills
+    freshness: live
+    calls:
+      - id: bl
+        method: GET
+        path: /GetBillPayment
+        scope: office
+        envelope: raw
+        cache_ttl: 0
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [status, data]
+          properties:
+            status: {type: object, required: [code], properties: {code: {type: integer}}}
+            data:
+              type: array
+              items:
+                type: object
+                required: [status, total]
+                properties:
+                  billpayment_id: {type: string}
+                  billpayment_name: {type: [string, "null"]}
+                  title: {type: [string, "null"]}
+                  to_name: {type: [string, "null"]}
+                  total: {type: number}
+                  end_date: {type: [string, "null"]}
+                  status: {type: integer}
+    values:
+      - {name: rows, from: bl, path: data, filter: "in(item.status, 3, 5)", sort_by: end_date, order: asc}
+      - {name: owe_count, expr: "count(rows)"}
+      - {name: owe_total, from: bl, path: data, filter: "in(item.status, 3, 5)", agg: sum, field: total}
+      - {name: overdue_count, from: bl, path: data, filter: "item.status == 5", agg: count}
+      - {name: upstream_ok, from: bl, path: status.code}
+      - {name: upstream_bad, expr: "upstream_ok != 200"}
+    not_found: {when: "upstream_ok == 200 && owe_count == 0", message: ไม่มีบิลค้างชำระ}
+    card:
+      title: บิลค่าใช้จ่ายระบบที่ค้างชำระ
+      fields:
+        - {label: บิลค้างชำระ, value: owe_count, format: int, suffix: " ใบ"}
+        - {label: ยอดรวมที่ต้องชำระ, value: owe_total, format: money, suffix: " บาท"}
+        - {label: เลยกำหนดแล้ว, value: overdue_count, format: int, suffix: " ใบ", when: "overdue_count > 0"}
+        - {label: ระบบบิลตอบกลับผิดปกติ (ตรวจในหน้าจริง), value: upstream_bad, format: bool, when: "upstream_bad == true"}
+      table:
+        rows: rows
+        columns:
+          - {label: เลขที่บิล, field: billpayment_id}
+          - {label: เรื่อง, field: billpayment_name}
+          - {label: เรียน, field: to_name}
+          - {label: ยอด, field: total, format: money}
+          - {label: กำหนดชำระ, field: end_date, format: date}
+          - {label: สถานะ, field: status, format: "status:bill"}
+      note: ตามหน้าบิลค่าใช้จ่ายระบบ (รวมทุกเว็บในหลังบ้านนี้) · ค้างชำระ = รอจ่าย และ ค้างชำระ · วันครบกำหนดตามที่ระบบบิลส่งมา
+      link: {label: เปิดบิลค่าใช้จ่ายระบบ, path: /BillPayment}
+    model_context:
+      - {name: has_outstanding, type: bool, expr: "owe_count > 0"}
+      - {name: has_overdue, type: bool, expr: "overdue_count > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:bill"}

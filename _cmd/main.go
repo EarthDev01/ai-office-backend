@@ -23,6 +23,7 @@ import (
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
 	"ai-office-backend/internal/adapter/host/hostapi"
 	"ai-office-backend/internal/adapter/llm/anthropic"
+	"ai-office-backend/internal/adapter/llm/openaicompat"
 	"ai-office-backend/internal/adapter/metrics"
 	"ai-office-backend/internal/adapter/notify"
 	"ai-office-backend/internal/adapter/storage/filestore"
@@ -214,7 +215,8 @@ func main() {
 	if os.Getenv("TICKET_SECRET") == "" {
 		fmt.Println("[WARN] TICKET_SECRET ไม่ได้ตั้งค่า — ใช้ dev secret ชั่วคราว ██ ห้ามใช้บน production")
 	}
-	if cfg.LLM.APIKey == "" {
+	fmt.Printf("[INFO] LLM: provider=%s model=%q (ว่าง = ตาม settings)\n", cfg.LLM.Provider, cfg.LLM.Model)
+	if cfg.LLM.APIKey == "" && cfg.LLM.Provider == "anthropic" {
 		fmt.Println("[WARN] ANTHROPIC_API_KEY ไม่ได้ตั้งค่า — แชทจะตอบว่า \"ผู้ช่วยไม่ตอบกลับ\" จนกว่าจะตั้งคีย์")
 	}
 
@@ -262,7 +264,7 @@ func main() {
 	runner := &service.ToolRunner{Host: host, Scoped: service.NewScopedTokenSource(host, sealer, time.Now), Cache: cache}
 	mx := metrics.New()
 	chat := service.NewChatService(service.ChatDeps{
-		Connectors: registry, Settings: settingsSvc, Quota: quotaSvc, LLM: anthropic.New(cfg.LLM.APIKey),
+		Connectors: registry, Settings: settingsSvc, Quota: quotaSvc, LLM: newLLM(cfg.LLM),
 		Runner: runner, Convs: st.convs, Msgs: st.msgs, Rollups: st.rollups, Sem: cnt, Metrics: mx,
 	})
 	adminSvc := &service.AdminService{
@@ -317,4 +319,12 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("[ERROR] server: %v", err)
 	}
+}
+
+// newLLM เลือกตัวต่อโมเดลตาม LLM_PROVIDER — core ใช้แค่ port.LLM ไม่ผูกค่ายใด
+func newLLM(c *config.LLM) port.LLM {
+	if c.Provider == "openai" {
+		return openaicompat.New(c.BaseURL, c.APIKey, c.Model, c.ExtraBody)
+	}
+	return anthropic.NewWith(c.APIKey, c.BaseURL, c.Model)
 }

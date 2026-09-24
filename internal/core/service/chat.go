@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -173,6 +174,7 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 			ans.msg.Aborted = true
 			return
 		}
+		log.Printf("[WARN] LLM ล้ม (office=%s service=%s): %v", office.ID, svc.ID, err)
 		ans.fail("llm_unavailable")
 		emit(errEvent("llm_unavailable"))
 		return
@@ -242,6 +244,7 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 			ans.msg.Aborted = true
 			return
 		}
+		log.Printf("[WARN] LLM ล้ม (office=%s service=%s): %v", office.ID, svc.ID, err)
 		ans.fail("llm_unavailable")
 		emit(errEvent("llm_unavailable"))
 		return

@@ -1,0 +1,60 @@
+# response ตาม controller/deposit.go GetDepositStatementV2 (helper.ResponseV2 → {code, message, data, summary, count})
+# และ GetDepositStatementRemainToDay (helper.Response → {code, message, data: ผลรวม, count})
+tool: deposit_summary
+cases:
+  - name: วันนี้มีฝากและมีตกค้าง
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      all: {body: {code: 0, message: Success, data: [{id: 66f2a1b2c3d4e5f601234567, username: user01, amount: 500, datetime: "2026-09-24T13:05:00+07:00", status: 1}], summary: 187500.5, count: 243}}
+      ok: {body: {code: 0, message: Success, data: [{id: 66f2a1b2c3d4e5f601234567, username: user01, amount: 500, datetime: "2026-09-24T13:05:00+07:00", status: 1}], summary: 180000, count: 231}}
+      remain: {body: {code: 0, message: Success, data: 3200, count: 4}}
+    expect:
+      status: ok
+      calls:
+        all: {path: /GetDepositStatementv2/DEMO-DEV-OFFICEX-24, query: {range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "1", page: "1"}}
+        ok: {path: /GetDepositStatementv2/DEMO-DEV-OFFICEX-24, query: {status: "1", range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59"}}
+        remain: {path: /GetDepositStatementRemainToday/DEMO-DEV-OFFICEX-24, query: {range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59"}}
+      fields:
+        รายการฝากทั้งหมด: "243 รายการ"
+        ยอดฝากรวม (ทุกสถานะ): "187,500.50 บาท"
+        ฝากสำเร็จ: "231 รายการ"
+        ยอดฝากสำเร็จ: "180,000.00 บาท"
+        ธุรกรรมตกค้าง: "4 รายการ"
+        ยอดตกค้าง: "3,200.00 บาท"
+      model_context: {has_remain: true, has_unsuccessful: true}
+      link: /transection/deposit
+  - name: ไม่มีฝากและไม่มีตกค้าง = ไม่พบ (ไม่ใช่ 0 บาท)
+    input: {date_from: "2026-09-20", date_to: "2026-09-21"}
+    responses:
+      all: {body: {code: 0, data: [], summary: 0, count: 0}}
+      ok: {body: {code: 0, data: [], summary: 0, count: 0}}
+      remain: {body: {code: 0, data: 0, count: 0}}
+    expect:
+      status: not_found
+      calls:
+        all: {query: {range_dt: "2026-09-20 00:00:00~2026-09-21 23:59:59"}}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      all: {body: {code: 0, data: [], summary: 0, count: 2}}
+      ok: {body: {code: 0, data: [], summary: 0, count: 2}}
+      remain: {body: {code: 0, data: 0, count: 0}}
+    expect:
+      status: ok
+      calls:
+        all: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+        remain: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+      fields: {รายการฝากทั้งหมด: "2 รายการ"}
+      model_context: {has_remain: false, has_unsuccessful: false}
+  - name: ตกค้าง DB ล้ม (หลังบ้านตอบ code 0 + data เป็น array) = ดึงไม่ได้ ไม่ใช่ศูนย์
+    responses:
+      all: {body: {code: 0, data: [], summary: 10, count: 1}}
+      ok: {body: {code: 0, data: [], summary: 10, count: 1}}
+      remain: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: token หมดอายุ (code 401 ไม่มี count/summary) = ดึงไม่ได้
+    responses:
+      all: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+      ok: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+      remain: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+    expect: {status: error, error_code: schema_mismatch}

@@ -1,0 +1,107 @@
+# connector ของหลังบ้าน office-abatech → GOTOPOPOFFICE (module abaoffice) · โหมด browser (ตัดสิน 24/09)
+# widget ในหน้าแอดมินยิง API เดิมของ GOTOPOPOFFICE ด้วย token ของแอดมินเอง — ไม่มีโค้ดใหม่ฝั่งหลังบ้าน
+# ที่มา: office-abatech pages/login.vue:255-257 · layouts/menu.vue:542-590 (IsLogin → jwt.decode(res.token).result)
+#        store/index.js:207-289 (OfficeCallAPI / ServiceCallAPI) · :291-310 (GetPermission = role.permission code + Isactive==1)
+#        plugins/config.js + plugins/main.js (prod baseURL "/api" = origin เดียวกับหน้า)
+#        GOTOPOPOFFICE employee/route.go:149-178,183-240 (ออก token 2 ตัว) · middlewares/auth.go:121-267
+kind: office-abatech
+label: หลังบ้าน abatech (OFFICE CONTROL)
+mode: browser
+page_auth:
+  # localStorage มี 2 ตัว (login.vue:256-257 · menu.vue ต่ออายุทุกครั้งที่เปลี่ยนหน้า):
+  #   token       = JWT ที่ result.role.permission ครบ (หน้าเว็บ decode ตัวนี้เป็น user + ใช้เช็คสิทธิ์เมนู)
+  #   headertoken = JWT ตัวเดียวกันแต่ role.permission = null (หน้าเว็บส่งตัวนี้เป็น Bearer)
+  # ใช้ "token" เพราะ identity ต้องอ่านรายการสิทธิ์ และ DSL อ่านตัวตนได้จาก token ตัวเดียวกับ Authorization เท่านั้น
+  # backend ยอมรับทั้งสองตัว (ลายเซ็น/claims รูปเดียวกัน · สิทธิ์จริงอ่านจาก DB) — ความเสี่ยงขนาด header ดู NOTES.md §5
+  token: {source: localStorage, key: token, format: raw}
+  # ทุกหน้าอ่าน this.$route.query.service แล้ว atob() — sidebar สร้าง path?service=btoa(service)&web=...
+  service: {source: query, key: service, encoding: base64}
+  # production axios.defaults.baseURL = "/api" → API อยู่ origin เดียวกับหน้า · dev คนละ origin → snippet ใส่ data-host-api-base
+  host_api_base: "{origin}/api"
+  auth_scheme: Bearer
+  # หลังบ้านเดิมใช้ header เดียว Authorization: Bearer … (ไม่มี header ชื่อ headertoken) → ไม่ต้องมี extra_headers
+  identity:
+    source: jwt
+    root: result                      # payload = {result: employee.User, exp}
+    id: id                            # ObjectID hex ของ t_account_office
+    username: name|line_displayname|full_name|id   # employee.User ไม่มี field username (มีเฉพาะ token จาก LoginVerify ก่อน IsLogin) → ใช้ name (ชื่อเข้าระบบ)
+    display_name: full_name
+    level: level
+    dept: deptcode
+    permissions: {path: role.permission, pluck: code, where_field: Isactive, where_value: 1}
+host_api:
+  # envelope หลัก (E1) ของ GOTOPOPOFFICE: {"code":0,"msg":"…","payload":…} · error = code 1 (HTTP 200)
+  # เส้นที่ไม่ใช่ E1 ใช้ envelope: raw ต่อ call (GetMemberBankPendingSummary code 200 · GetWithdrawP2PRemainCount ไม่มี payload · GetBillPayment body ของ upstream)
+  envelope: {code_field: code, ok_codes: [0], data_field: payload, message_field: msg}
+  timeout_ms: 10000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support ในห้องแชทประจำของเว็บ
+facts:
+  - id: no_unverified_member_count
+    title: จำนวนสมาชิกที่ยังไม่ยืนยันตัวตน
+    text: >-
+      ระบบยังนับจำนวนสมาชิกที่ยังไม่ยืนยันตัวตนให้ไม่ได้ เพราะหน้ารายการสมาชิกไม่มีตัวกรองสถานะนี้
+      ดูได้เองที่เมนู รายการสมาชิก ซึ่งแสดงป้าย ยังไม่ยืนยันตัวตน ต่อสมาชิกแต่ละคน
+      หรือถ้าต้องการตัวเลขรวมให้ติดต่อทีม support
+    keywords: [ยังไม่ยืนยันตัวตน, ไม่ยืนยันตัวตน, ยืนยันตัวตน, ยังไม่ยืนยัน, สมาชิกไม่ยืนยัน]
+    questions: [BQ-08]
+  - id: no_credit_forecast
+    title: คาดการณ์ว่าเครดิตระบบจะหมดเมื่อไหร่
+    text: >-
+      ระบบทำนายวันที่เครดิตระบบจะหมดไม่ได้ เพราะหลังบ้านนี้เก็บยอดเครดิตระบบไว้เพียงค่าล่าสุดค่าเดียว ไม่มีประวัติการใช้ย้อนหลัง
+      ดูยอดล่าสุดได้ที่แถบ Agent Credit ด้านบนของหลังบ้าน หรือถามผู้ช่วยว่าเครดิตระบบเหลือเท่าไหร่
+      ถ้าต้องการวางแผนเติมเครดิตให้ติดต่อทีม support
+    keywords: [หมดเมื่อไหร่, จะหมด, คาดการณ์เครดิต, ใช้ได้อีกกี่วัน, เครดิตพอไหม]
+    questions: [BQ-43]
+  - id: topup_system_credit
+    title: เติมเครดิตระบบ (Agent Credit)
+    text: >-
+      หลังบ้านนี้ไม่มีเมนูให้แอดมินเติมเครดิตระบบเอง การเติมเครดิตระบบต้องแจ้งทีม support
+      ระบบจะเตือนให้แจ้งเติม Credit Agent เมื่อยอดใกล้หมด เพราะถ้าเครดิตหมดจะทำรายการฝากถอนไม่ได้
+    keywords: [เติมเครดิตระบบ, เติม agent, เติมเครดิต agent, credit agent, เติมเครดิตเอเย่นต์]
+    questions: [BQ-45]
+  - id: topup_not_arrived
+    title: เติมเครดิตระบบแล้วยังไม่เข้า
+    text: >-
+      หลังบ้านนี้ไม่มีข้อมูลสถานะการเติมเครดิตระบบให้ตรวจสอบ จึงตอบไม่ได้ว่ารายการเติมถึงไหนแล้ว
+      ลองกดรีเฟรชยอด Agent Credit ที่แถบด้านบน ถ้ายอดยังไม่เปลี่ยนให้ติดต่อทีม support พร้อมแจ้งเวลาที่เติม
+    keywords: [เติมแล้วไม่เข้า, เครดิตไม่เข้า, เติมไม่เข้า, ยังไม่เข้า]
+    questions: [BQ-46]
+  - id: system_credit_refresh
+    title: ยอดเครดิตระบบที่ผู้ช่วยแสดง
+    text: >-
+      ผู้ช่วยแสดงยอดเครดิตระบบตามที่หลังบ้านบันทึกไว้ครั้งล่าสุด พร้อมเวลาที่อัปเดต ผู้ช่วยไม่ได้สั่งรีเฟรชยอดจากระบบเกมเอง
+      ถ้าต้องการยอดล่าสุดจริงให้กดปุ่มรีเฟรชข้าง Agent Credit ที่แถบด้านบน แล้วถามผู้ช่วยอีกครั้ง
+    keywords: [รีเฟรชเครดิต, ยอดไม่อัปเดต, เครดิตระบบล่าสุด, reload]
+    questions: [BQ-41]
+  - id: login_history
+    title: ใครเข้าระบบหลังบ้านช่วงเวลาไหน
+    text: >-
+      ผู้ช่วยยังดึงประวัติการเข้าสู่ระบบของพนักงานให้ไม่ได้ เพราะหน้าจอเดิมต้องเลือกพนักงานทีละคนก่อน
+      ดูได้เองที่เมนู จัดการพนักงาน แล้วเปิดประวัติเข้าสู่ระบบของพนักงานคนนั้น ซึ่งต้องมีสิทธิ์เมนูจัดการพนักงาน
+      เข้าระบบผ่าน LINE จะไม่มี IP จริงในประวัติ ส่วนคำถามว่าใครแก้รายการ ผู้ช่วยตอบได้จากรายงานการทำงานของพนักงาน
+    keywords: [ใครเข้าระบบ, ประวัติเข้าสู่ระบบ, ล็อกอิน, login, เข้าระบบตอนไหน]
+    questions: [BQ-35]
+  - id: emergency_buttons
+    title: ปุ่มสถานการณ์ฉุกเฉิน
+    text: >-
+      แถบด้านบนของหลังบ้านนี้มีปุ่ม SOS สีแดง เมื่อกดยืนยันคำถาม ต้องการ ปิด SERVER ใช่หรือไม่ ระบบจะปิดการใช้งานหลังบ้านของกลุ่มเว็บทันที
+      และมีปุ่ม Disabled สีเหลือง สำหรับปิดการใช้งานบัญชีพนักงานของตัวเอง แล้วระบบจะพาออกไปหน้าเข้าสู่ระบบ
+      ผู้ช่วยกดปุ่มเหล่านี้แทนไม่ได้ ใช้เฉพาะเมื่อเกิดเหตุฉุกเฉินจริงและควรแจ้งหัวหน้าหรือทีม support ทันที
+    keywords: [ฉุกเฉิน, sos, ปิดเว็บ, ปิดserver, ปิดระบบ, disabled, ปิดการใช้งานตัวเอง]
+    questions: [BQ-55]
+  - id: no_ip_in_transactions
+    title: IP ของผู้ทำรายการฝากถอน
+    text: >-
+      ข้อมูลรายการฝากและถอนที่ผู้ช่วยเห็นไม่มี IP ผู้ช่วยบอกได้แค่ชื่อพนักงานที่ทำรายการ
+      ถ้าต้องการดู IP ที่พนักงานใช้เข้าระบบ ให้ดูประวัติเข้าสู่ระบบในเมนู จัดการพนักงาน ซึ่งต้องมีสิทธิ์เมนูนั้น
+    keywords: [ip, ไอพี, ip ใคร]
+    questions: [BQ-06]
+  - id: about_assistant
+    title: ผู้ช่วยนี้คือใคร
+    text: >-
+      ผู้ช่วยนี้เป็นระบบอัตโนมัติ ไม่ใช่พนักงาน อ่านข้อมูลของเว็บที่เปิดอยู่ได้อย่างเดียว ทำรายการหรือแก้ข้อมูลแทนไม่ได้
+      ถ้าต้องการคุยกับคนให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [เป็นคนไหม, บอท, ใครตอบ, คุยกับคน]
+    questions: [BQ-53]

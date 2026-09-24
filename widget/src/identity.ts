@@ -8,6 +8,14 @@ import type { HostUser, IdentitySpec, PageAuth } from './types'
  */
 export function getPath(obj: unknown, path: string | undefined): unknown {
   if (!path) return obj
+  // "a|b|c" = ใช้ตัวแรกที่มีค่า (เช่น ชื่อผู้ใช้อยู่คนละช่องตามวิธีล็อกอิน)
+  if (path.includes('|')) {
+    for (const p of path.split('|')) {
+      const v = getPath(obj, p.trim())
+      if (v != null && v !== '') return v
+    }
+    return undefined
+  }
   let cur: unknown = obj
   for (const part of path.split('.')) {
     if (cur == null || typeof cur !== 'object') return undefined
@@ -30,7 +38,15 @@ export function decodeJwtPayload(token: string): unknown {
   }
 }
 
+/** เหตุผลที่อ่านตัวตนไม่ได้ (ไว้บอกใน console) */
+export let identityProblem = ''
+
 export function mapUser(spec: IdentitySpec, src: unknown): HostUser | null {
+  identityProblem = ''
+  if (src == null) {
+    identityProblem = 'อ่าน token ไม่ออก (ไม่ใช่ JWT หรือ decode ไม่ได้)'
+    return null
+  }
   const root = getPath(src, spec.root)
   const str = (p?: string) => {
     if (!p) return ''
@@ -39,7 +55,11 @@ export function mapUser(spec: IdentitySpec, src: unknown): HostUser | null {
   }
   const id = str(spec.id)
   const username = str(spec.username)
-  if (!id || !username) return null
+  if (!id || !username) {
+    const keys = root && typeof root === 'object' ? Object.keys(root as object).slice(0, 30).join(', ') : typeof root
+    identityProblem = `ไม่พบ ${!id ? 'id (' + spec.id + ')' : 'username (' + spec.username + ')'} ใน ${spec.root || 'payload'} — field ที่มี: ${keys}`
+    return null
+  }
   const user: HostUser = { id, username, display_name: str(spec.display_name) || username }
   const lvl = spec.level ? Number(getPath(root, spec.level)) : NaN
   if (spec.level && Number.isFinite(lvl)) user.level = lvl
@@ -63,7 +83,10 @@ export function mapUser(spec: IdentitySpec, src: unknown): HostUser | null {
 /** ลายนิ้วมือ token (sha256 hex) — ส่งแค่นี้ ไม่ส่ง token ไป backend */
 export async function tokenFingerprint(token: string): Promise<string> {
   const subtle = (globalThis.crypto as Crypto | undefined)?.subtle
-  if (!subtle) return ''
+  if (!subtle) {
+    identityProblem = 'browser ไม่มี crypto.subtle (ต้องเปิดผ่าน https หรือ localhost)'
+    return ''
+  }
   const buf = await subtle.digest('SHA-256', new TextEncoder().encode(token))
   return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('')
 }

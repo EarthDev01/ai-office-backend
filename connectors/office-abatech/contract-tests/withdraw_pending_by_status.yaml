@@ -1,0 +1,78 @@
+tool: withdraw_pending_by_status
+cases:
+  - name: มีถอนค้างหลายสถานะ
+    service: K11S
+    responses:
+      s2: {body: {code: 0, msg: Success, count: 7, payload: [{id: "66f2c3d4e5f60718293a4b5c", datetime: "2026-09-24T04:01:00Z", username: "abc0812345678", phone_number: "0812345678", amount: 1000, status: 2, bank_number: "1112223334"}]}}
+      s3: {body: {code: 0, msg: Success, count: 2, payload: [{id: "66f2c3d4e5f60718293a4b5d", datetime: "2026-09-24T05:01:00Z", username: "u2", amount: 500, status: 3}]}}
+      s99: {body: {code: 0, msg: Success, count: 9, payload: [{id: "66f2c3d4e5f60718293a4b5e", datetime: "2026-09-24T05:02:00Z", username: "u3", amount: 300, status: 4}]}}
+      s4: {body: {code: 0, msg: Success, count: 5, payload: []}}
+      s11: {body: {code: 0, msg: Success, count: 1, payload: []}}
+      p2p: {body: {code: 0, count: 2}}
+    expect:
+      status: ok
+      calls:
+        s2: {path: /GetWithdrawStatementListByFilter/K11S, query: {date: "2026-09-24", status: "2", limit: "1", page: "1", sort: _id, order: "-1"}}
+        s3: {query: {status: "3"}}
+        s99: {query: {status: "99"}}
+        s4: {query: {status: "4"}}
+        s11: {query: {status: "11"}}
+        p2p: {path: /GetWithdrawP2PRemainCount/K11S, query: {date: "2026-09-24"}}
+      fields:
+        ยังไม่จบ (ต้องติดตาม): "12 รายการ"
+        รอโอน: "7 รายการ"
+        กำลังตรวจสอบ: "2 รายการ"
+        สถานะอื่นที่ยังไม่จบ (OTP / ระบบธนาคาร / ผิดพลาด / รอยืนยัน): "3 รายการ"
+        ยกเลิก: "5 รายการ"
+        ถูกซ่อน: "1 รายการ"
+        ถอน PeerToPeer ที่ยังมียอดเหลือต้องจัดการ: "2 รายการ"
+      no_fields: [วันที่]
+      model_context: {has_open: true, has_waiting_transfer: true, has_waiting_check: true, has_other_open: true, has_p2p_remainder: true}
+      link: "/Withdraw?service=SzExUw==&web=K11S"
+  - name: ระบุวันที่ ไม่มีค้างเลย = ไม่พบ
+    service: K11S
+    input: {date: "2026-09-20"}
+    responses:
+      s2: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s3: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s99: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s4: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s11: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      p2p: {body: {code: 0, count: 0}}
+    expect:
+      status: not_found
+      calls:
+        s2: {query: {date: "2026-09-20"}}
+        p2p: {query: {date: "2026-09-20"}}
+  - name: หลังเที่ยงคืนนับวันใหม่
+    now: "2026-09-25T00:01:00+07:00"
+    responses:
+      s2: {body: {code: 0, msg: Success, count: 1, payload: []}}
+      s3: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s99: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s4: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s11: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      p2p: {body: {code: 0, count: 0}}
+    expect:
+      status: ok
+      calls: {s2: {query: {date: "2026-09-25"}}, s11: {query: {date: "2026-09-25"}}}
+      fields: {ยังไม่จบ (ต้องติดตาม): "1 รายการ"}
+      no_fields: [ถอน PeerToPeer ที่ยังมียอดเหลือต้องจัดการ]
+  - name: host ตอบ code 1 (ไม่มี count) = ดึงไม่ได้ ไม่มีตัวเลขบางส่วน
+    responses:
+      s2: {body: {code: 1, msg: "server selection timeout", payload: []}}
+      s3: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s99: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s4: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      s11: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      p2p: {body: {code: 0, count: 0}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: service ไม่รู้จัก host panic 500
+    responses:
+      s2: {status: 500, raw: ""}
+      s3: {status: 500, raw: ""}
+      s99: {status: 500, raw: ""}
+      s4: {status: 500, raw: ""}
+      s11: {status: 500, raw: ""}
+      p2p: {status: 500, raw: ""}
+    expect: {status: error, error_code: http_error}

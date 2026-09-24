@@ -1,0 +1,60 @@
+tool: withdraw_by_id
+cases:
+  - name: รายการสำเร็จ พร้อมลำดับการดำเนินการ
+    service: K11S
+    input: {id: "66f2c3d4e5f60718293a4b5c"}
+    responses:
+      one:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            id: "66f2c3d4e5f60718293a4b5c"
+            datetime: "2026-09-24T04:01:00Z"
+            username: "abc0812345678"
+            amount: 1000
+            status: 1
+            operator_id: ""
+            operator_name: "admin01"
+            comment: "โอนแล้ว"
+            update_time: "2026-09-24T04:20:00Z"
+            bank_number: "1112223334"
+            acc_bank_number: "5556667778"
+            comment_time_lime:
+              - {operator_name: admin01, status: 1, comment: โอนแล้ว, datetime: "2026-09-24T04:20:00Z", action: ยืนยันถอน, channel: MANUAL}
+            count_deposit: 14
+            tags: []
+            deposit_accounts: [{bank_number: "1112223334", bank_code: KBANK, bank_name: "นาย ข", in_bank_list: true}]
+    expect:
+      status: ok
+      calls: {one: {path: /WithdrawByID/K11S, query: {id: "66f2c3d4e5f60718293a4b5c"}}}
+      fields:
+        เวลาแจ้งถอน: "24/09/2026 11:01"
+        อัปเดตล่าสุด: "24/09/2026 11:20"
+        ยูสเซอร์เนม: abc0812345678
+        ยอดถอน: "1,000.00 บาท"
+        สถานะ: สำเร็จ
+        ผู้ทำรายการล่าสุด: admin01
+        หมายเหตุ: โอนแล้ว
+      table_rows: 1
+      table_cells: [["24/09/2026 11:20", admin01, สำเร็จ, ยืนยันถอน, โอนแล้ว]]
+      model_context: {is_success: true, is_closed: true, done_by_system: false, timeline_statuses: [สำเร็จ]}
+  - name: รอโอน ไม่มี timeline (null) ไม่มีผู้ทำ
+    input: {id: "66f2c3d4e5f60718293a4b5d"}
+    responses:
+      one: {body: {code: 0, msg: "", payload: {id: "66f2c3d4e5f60718293a4b5d", datetime: "2026-09-24T04:01:00Z", username: "u2", amount: 500, status: 2, operator_name: "", comment: "", comment_time_lime: null}}}
+    expect:
+      status: ok
+      table_rows: 0
+      no_fields: [ผู้ทำรายการล่าสุด, หมายเหตุ]
+      model_context: {is_success: false, is_closed: false, done_by_system: true}
+  - name: ไม่พบ (host code 1 ไม่พบข้อมูล)
+    input: {id: "66f2c3d4e5f60718293a4b00"}
+    responses:
+      one: {body: {code: 1, msg: "ไม่พบข้อมูล"}}
+    expect: {status: not_found}
+  - name: host ล่ม
+    input: {id: "66f2c3d4e5f60718293a4b00"}
+    responses:
+      one: {error: timeout}
+    expect: {status: error, error_code: timeout}

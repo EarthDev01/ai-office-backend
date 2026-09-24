@@ -1,0 +1,81 @@
+# GET /api/worklog-list (route/log.go · controller/log.go GetWorklogList) — ไม่มี :service ใน path (OFFICE work_logs ทุกเว็บ)
+#   frontend: api-service/system/log.ts GetLogList · Worklog.vue ส่ง sort=datetime · order=-1 · limit · page · search · action · range_dt
+#   และตัวกรอง service (FullFilter output "service") → connector ส่ง service={service} เสมอ เพื่อผูกเว็บที่เปิดอยู่
+#   search = regex (QuoteMeta) บน action/form/description/ip/operator_name · คีย์อื่น = equality (operator_username, action)
+#   data[] WorkLog {datetime, service, action, form, description, ip, data, data_old, operator_name, operator_username, operator_dept, ...}
+#   ⚠️ log เข้าระบบบันทึก service ว่าง → ค้นตามเว็บไม่เจอ (fact no_ip_answer) · data_old ไม่ถูกล้างข้อมูลลับ (ไม่ขึ้นการ์ด แต่ผ่าน relay)
+#   DB error → code 0 + data [] (กลืน error = ดูเหมือน "ไม่พบ")
+questions: [BQ-35]
+tools:
+  - name: worklog_search
+    description: >-
+      ค้นประวัติการทำงานของพนักงานในเว็บที่เปิดอยู่ ตามคำค้น (เช่น ยูสเซอร์เนมสมาชิก ชื่อเมนู หรือชื่อพนักงาน) และช่วงวัน
+      แสดงเวลา การดำเนินการ จากหน้าไหน รายละเอียด และผู้ดำเนินการ · ใช้เมื่อถามว่าใครแก้รายการนี้ ใครทำอะไรเมื่อไหร่
+      · ไม่ระบุวัน = วันนี้ · ไม่แสดง IP
+    questions: [BQ-35]
+    permission: worklog
+    freshness: summary
+    input:
+      keyword: {type: string, description: คำค้น เช่น ยูสเซอร์เนมสมาชิก ชื่อพนักงาน หรือคำในรายละเอียด (ไม่ระบุ = ทุกรายการ), pattern: "^[\\p{Thai}A-Za-z0-9 _.@:-]{1,50}$"}
+      operator_username: {type: string, description: ยูสเซอร์เนมของพนักงานผู้ดำเนินการ ตรงตัว (ไม่ระบุ = ทุกคน), pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: w
+        method: GET
+        path: /worklog-list
+        query:
+          service: "{service}"
+          search: "{input.keyword}"
+          operator_username: "{input.operator_username}"
+          range_dt: "{datetime:input.date_from|datetime:today}~{datetime_end:input.date_to|datetime_end:input.date_from|datetime_end:today}"
+          sort: datetime
+          order: "-1"
+          limit: "20"
+          page: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [code, data]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [datetime, action]
+                properties:
+                  datetime: {type: string}
+                  service: {type: string}
+                  action: {type: string}
+                  form: {type: string}
+                  description: {type: string}
+                  operator_name: {type: string}
+                  operator_username: {type: string}
+    values:
+      - {name: rows, from: w, path: data}
+      - {name: match_count, from: w, path: count}
+      - {name: shown_count, expr: "len(rows)"}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติการทำงานตามที่ค้นในช่วงวันที่ถาม}
+    card:
+      title: ประวัติการทำงานของพนักงาน
+      fields:
+        - {label: พบทั้งหมด, value: match_count, format: int, suffix: " รายการ"}
+        - {label: แสดงในการ์ด, value: shown_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: วันที่, field: datetime, format: datetime}
+          - {label: ดำเนินการ, field: action}
+          - {label: จาก, field: form}
+          - {label: รายละเอียด, field: description}
+          - {label: ผู้ดำเนินการ, field: operator_name}
+      note: ไม่แสดง IP · ประวัติการเข้าระบบของพนักงานไม่ผูกกับเว็บ ดูได้ที่หน้าประวัติการทำงานของพนักงาน
+      link: {label: เปิดประวัติการทำงานของพนักงาน, path: /worklog}
+    model_context:
+      - {name: more_than_shown, type: bool, expr: "match_count > shown_count"}

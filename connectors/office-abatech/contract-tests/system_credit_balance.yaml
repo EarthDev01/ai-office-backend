@@ -1,0 +1,20 @@
+tool: system_credit_balance
+cases:
+  - name: มียอดที่บันทึกไว้
+    service: K11S
+    responses:
+      ag: {body: {code: 0, msg: Success, payload: {amount: 152340.5, code: 1001, name: Credit, unit: THB, updated_at: 1790227200, service: K11S}}}
+    expect:
+      status: ok
+      calls: {ag: {path: /GetBalanceAgent/K11S}}
+      fields: {เครดิตระบบคงเหลือ: "152,340.50", หน่วย: THB, อัปเดตยอดล่าสุดเมื่อ: "24/09/2026 12:20"}
+      model_context: {is_low_or_zero: false}
+      link: "/DashboardOnce?service=SzExUw==&web=K11S"
+  - name: ยังไม่เคยบันทึกยอด (ค่าศูนย์ทั้งก้อน) = ไม่พบ ไม่ใช่ศูนย์บาท
+    responses:
+      ag: {body: {code: 0, msg: Success, payload: {amount: 0, code: 0, name: "", unit: "", updated_at: 0, service: ""}}}
+    expect: {status: not_found}
+  - name: host ล่ม
+    responses:
+      ag: {status: 500, raw: ""}
+    expect: {status: error, error_code: http_error}

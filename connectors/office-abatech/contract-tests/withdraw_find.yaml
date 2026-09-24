@@ -1,0 +1,59 @@
+tool: withdraw_find
+cases:
+  - name: ค้นด้วยยูส กรองตรงตัว (regex ของ host ติดยูสอื่นมาด้วย)
+    service: K11S
+    input: {username: "abc01"}
+    responses:
+      list:
+        body:
+          code: 0
+          msg: Success
+          count: 3
+          payload:
+            - {id: "66f2c3d4e5f60718293a4b61", datetime: "2026-09-24T06:00:00Z", username: "abc01", phone_number: "0812345678", amount: 1000, status: 1, operator_name: "admin01", bank_number: "1112223334"}
+            - {id: "66f2c3d4e5f60718293a4b62", datetime: "2026-09-24T05:00:00Z", username: "abc0123", amount: 200, status: 2, operator_name: ""}
+            - {id: "66f2c3d4e5f60718293a4b63", datetime: "2026-09-24T04:00:00Z", username: "ABC01", amount: 300, status: 10, operator_name: ""}
+    expect:
+      status: ok
+      calls:
+        list: {path: /GetWithdrawStatementListByFilter/K11S, query: {date: "2026-09-24", status: "0", search: abc01, limit: "200", sort: _id, order: "-1"}}
+      fields: {จำนวนที่แสดง: "2 รายการ", ค้นครบทุกรายการที่ตรงคำค้น: "ใช่"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 13:00", abc01, "1,000.00", สำเร็จ, admin01, "66f2c3d4e5f60718293a4b61"]
+        - ["24/09/2026 11:00", ABC01, "300.00", ไม่ได้รับ OTP]
+      model_context: {statuses_found: [สำเร็จ, ไม่ได้รับ OTP]}
+  - name: กรองสถานะและวันที่
+    service: K11S
+    input: {date: "2026-09-22", status: 2}
+    responses:
+      list:
+        body:
+          code: 0
+          msg: Success
+          count: 2
+          payload:
+            - {id: "66f2c3d4e5f60718293a4b71", datetime: "2026-09-22T06:00:00Z", username: "u1", amount: 1000, status: 1, operator_name: "admin01"}
+            - {id: "66f2c3d4e5f60718293a4b72", datetime: "2026-09-22T05:00:00Z", username: "u2", amount: 700, status: 2, operator_name: ""}
+    expect:
+      status: ok
+      calls: {list: {query: {date: "2026-09-22", status: "0", search: ""}}}
+      fields: {วันที่: "22/09/2026", ค้นครบทุกรายการที่ตรงคำค้น: "ใช่"}
+      table_rows: 1
+      table_cells: [["22/09/2026 12:00"]]
+  - name: ไม่พบ
+    input: {username: "nobody"}
+    responses:
+      list: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found}
+  - name: host ตอบ code 1
+    input: {username: "abc01"}
+    responses:
+      list: {body: {code: 1, msg: "error", payload: []}}
+    expect: {status: error}
+  - name: หลังเที่ยงคืนค้นของวันใหม่
+    now: "2026-09-25T00:02:00+07:00"
+    input: {username: "abc01"}
+    responses:
+      list: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found, calls: {list: {query: {date: "2026-09-25", search: abc01}}}}

@@ -1,0 +1,21 @@
+tool: sms_credit_balance
+cases:
+  - name: มียอด SMS
+    service: K11S
+    responses:
+      sms: {body: {code: 0, msg: "สำเร็จ", payload: 4820}}
+    expect:
+      status: ok
+      calls: {sms: {path: /CheckCreditBalanceEnter/K11S}}
+      fields: {เครดิต SMS คงเหลือ: "4,820"}
+      no_fields: ["ยอดเป็นศูนย์ (อาจยังไม่ได้ตั้งค่า SMS หรือผู้ให้บริการตอบผิดปกติ)"]
+      model_context: {balance_zero: false}
+      link: "/sms?service=SzExUw==&web=K11S"
+  - name: ยอดศูนย์ (กำกวม)
+    responses:
+      sms: {body: {code: 0, msg: "สำเร็จ", payload: 0}}
+    expect: {status: ok, fields: {"ยอดเป็นศูนย์ (อาจยังไม่ได้ตั้งค่า SMS หรือผู้ให้บริการตอบผิดปกติ)": ใช่}, model_context: {balance_zero: true}}
+  - name: ผู้ให้บริการผิดพลาด (code 1)
+    responses:
+      sms: {body: {code: 1, msg: "API  เกิดข้อผิดพลาด", payload: 0}}
+    expect: {status: error, error_code: host_error}

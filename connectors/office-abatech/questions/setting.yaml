@@ -1,0 +1,112 @@
+# BQ-11 / BQ-13
+# API เดิม:
+#   GET /api/Bonuslist/:service (bonus/route.go:21,114-136 · repository.go:567-582) — โปรทั้งหมดใน bonus_config เรียงตาม order
+#       response {code, msg, payload:[BonustModel], is_deposit} · frontend components/Bonus/BonusList.vue:1184-1188
+#   GET /api/GetConfigByKey?key=submenu|mainmenu (setting/route.go:93,1600-1627 · ไม่มี :service · ไม่มี auth)
+#       ค่าระดับ deployment (OFFICE system_config) → scope: office · response {code, msg, payload:<string>, data:[code…], …} → envelope: raw
+#       frontend layouts/menu.vue:364-405 (submenu ∩ plugins/menulist.js ∩ สิทธิ์ผู้ใช้) · SideBar.vue:479-500 (mainmenu ∩ plugins/menumain.js)
+questions: [BQ-11]
+tools:
+  - name: promotions_active
+    description: >-
+      โปรโมชั่นที่เปิดใช้งานอยู่ของเว็บนี้ พร้อมวันเริ่ม วันสิ้นสุด และการแสดงบนหน้าเว็บ ใช้เมื่อถามว่าตอนนี้มีโปรอะไรเปิดอยู่บ้าง
+    questions: [BQ-11]
+    permission: promotion
+    freshness: summary
+    calls:
+      - id: bl
+        method: GET
+        path: /Bonuslist/{service}
+        cache_ttl: 60
+        schema:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [bonus_name, status, start_date, end_date]
+            properties:
+              title: {type: string}
+              bonus_name: {type: string}
+              status: {type: integer}
+              is_show: {type: boolean}
+              start_date: {type: string}
+              end_date: {type: string}
+              bonus_start_time: {type: string}
+              bonus_end_time: {type: string}
+              type_system: {type: string}
+              order: {type: integer}
+    values:
+      - {name: rows, from: bl, path: "", filter: "item.status == 1", sort_by: order, order: asc}
+      - {name: on_count, expr: "count(rows)"}
+      - {name: shown_count, from: bl, path: "", filter: "item.status == 1 && item.is_show == true", agg: count}
+      - {name: all_count, from: bl, path: "", agg: count}
+    not_found: {when: "empty(rows)", message: ไม่มีโปรโมชั่นที่เปิดใช้งานอยู่}
+    card:
+      title: โปรโมชั่นที่เปิดใช้งาน
+      fields:
+        - {label: โปรที่เปิดใช้งาน, value: on_count, format: int, suffix: " รายการ"}
+        - {label: แสดงบนหน้าเว็บ, value: shown_count, format: int, suffix: " รายการ"}
+        - {label: โปรทั้งหมดในระบบ, value: all_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 30
+        columns:
+          - {label: ชื่อโปร, field: bonus_name}
+          - {label: ประเภท, field: type_system}
+          - {label: เริ่ม, field: start_date, format: date}
+          - {label: สิ้นสุด, field: end_date, format: date}
+          - {label: แสดงบนหน้าเว็บ, field: is_show, format: bool}
+      note: >-
+        นับโปรที่สถานะเปิดใช้งาน · ระบบยังตัดโปรที่พ้นวันสิ้นสุดให้ไม่ได้ ให้ดูคอลัมน์ สิ้นสุด ประกอบ
+        · ช่วงเวลาในแต่ละวันและเงื่อนไขโปรดูที่เมนูจัดการโปรโมชั่น
+      link: {label: เปิดจัดการโปรโมชั่น, path: "/Bonus?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_active, type: bool, expr: "on_count > 0"}
+      - {name: note, type: text, text: ชื่อโปรและวันที่แสดงในการ์ดแล้ว บอกผู้ใช้ให้ดูวันสิ้นสุดในการ์ดเพราะบางโปรอาจพ้นวันแล้ว}
+
+  - name: menu_access_check
+    description: >-
+      ตรวจว่าเมนูที่ระบุด้วยรหัสสิทธิ์ (เช่น รหัสใน description ของเมนูจาก lookup_menu) เปิดใช้งานในระบบหลังบ้านนี้หรือไม่
+      ใช้ต่อจาก lookup_menu เมื่อผู้ใช้บอกว่าหาเมนูไม่เจอ
+    questions: [BQ-13]
+    permission: logged_in
+    freshness: summary
+    input:
+      code: {type: string, required: true, description: รหัสสิทธิ์ของเมนู เช่น Pxxx Mxxx CRMxx, pattern: "^(P[0-9]{3}|M[0-9]{3}|CRM[0-9]{2})$"}
+    calls:
+      - id: sub
+        method: GET
+        path: /GetConfigByKey
+        query: {key: submenu}
+        scope: office
+        envelope: raw
+        cache_ttl: 60
+        schema: &cfg
+          type: object
+          required: [code]
+          properties:
+            code: {type: integer}
+            data: {type: [array, "null"]}
+      - id: main
+        method: GET
+        path: /GetConfigByKey
+        query: {key: mainmenu}
+        scope: office
+        envelope: raw
+        cache_ttl: 60
+        optional: true
+        schema: *cfg
+    values:
+      - {name: sub_codes, from: sub, path: data}
+      - {name: main_codes, from: main, path: data}
+      - {name: enabled, expr: "contains(sub_codes, input.code) || contains(main_codes, input.code)"}
+      - {name: config_known, expr: "sub_codes != null"}
+    card:
+      title: ตรวจเมนูที่เปิดในระบบ
+      fields:
+        - {label: เมนูนี้เปิดใช้งานในระบบนี้, value: enabled, format: bool}
+        - {label: อ่านรายการเมนูที่เปิดได้, value: config_known, format: bool}
+      note: เมนูจะแสดงเมื่อเปิดในระบบนี้ และบัญชีของคุณมีสิทธิ์เมนูนั้น · ถ้าเปิดในระบบแล้วแต่ไม่เห็น ให้หัวหน้าเปิดสิทธิ์ในเมนู ตั้งค่าสิทธิ์การใช้งาน
+      link: {label: เปิดหน้าข่าวสาร, path: "/News?service={service_b64}&web={service}"}
+    model_context:
+      - {name: menu_enabled, type: bool, expr: "enabled == true"}
+      - {name: config_readable, type: bool, expr: "config_known == true"}

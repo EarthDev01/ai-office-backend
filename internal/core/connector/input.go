@@ -27,7 +27,9 @@ func (t *Tool) InputSchema() (properties map[string]any, required []string) {
 		case "integer", "number", "boolean", "string":
 			p["type"] = in.Type
 		}
-		if in.Pattern != "" {
+		// pattern แบบ Go (\p{Thai} ฯลฯ) ไม่ใช่ regex ของ JSON Schema — ผู้ให้บริการบางเจ้าปฏิเสธทั้งคำขอ
+		// ส่งให้โมเดลเฉพาะที่เป็น regex พื้นฐาน · ฝั่งเราตรวจด้วย pattern เต็มเสมอ (ValidateInput)
+		if in.Pattern != "" && !strings.Contains(in.Pattern, `\p{`) {
 			p["pattern"] = in.Pattern
 		}
 		if len(in.Enum) > 0 {

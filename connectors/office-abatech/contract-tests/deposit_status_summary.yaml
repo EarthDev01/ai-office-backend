@@ -1,0 +1,53 @@
+tool: deposit_status_summary
+cases:
+  - name: นับตามสถานะ (สถานะหกส่งเป็น 10 ตามเลขฐานหกของ host)
+    service: K11S
+    responses:
+      all: {body: {code: 0, msg: Success, count: 123, payload: [{id: "66f2b0000000000000000001", datetime: "2026-09-24T02:10:11Z", username: "abc0812345678", amount: 500, status: 1, bank_number: "9876543210"}]}}
+      st1: {body: {code: 0, msg: Success, count: 110, payload: []}}
+      st2: {body: {code: 0, msg: Success, count: 5, payload: []}}
+      st5: {body: {code: 0, msg: Success, count: 3, payload: []}}
+      st6: {body: {code: 0, msg: Success, count: 1, payload: []}}
+    expect:
+      status: ok
+      calls:
+        all: {path: /GetDepositStatementListByFilter/K11S, query: {date: "2026-09-24", status: "0", limit: "1"}}
+        st1: {query: {status: "1"}}
+        st2: {query: {status: "2"}}
+        st5: {query: {status: "5"}}
+        st6: {query: {status: "10"}}
+      fields:
+        รายการฝากทั้งหมด: "123 รายการ"
+        สำเร็จ: "110 รายการ"
+        รอคิว: "5 รายการ"
+        ติดกิจกรรม: "3 รายการ"
+        เครดิตค้าง: "1 รายการ"
+        ไม่สำเร็จ: "4 รายการ"
+      no_fields: ["นับได้สูงสุดห้าพันรายการ (อาจมีมากกว่านี้)"]
+      model_context: {has_queue: true, has_stuck_credit: true, has_failed: true}
+  - name: ไม่มีรายการฝาก
+    input: {date: "2026-09-01"}
+    responses:
+      all: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st1: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st2: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st5: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st6: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found, calls: {all: {query: {date: "2026-09-01"}}}}
+  - name: หลังเที่ยงคืน
+    now: "2026-09-25T00:04:00+07:00"
+    responses:
+      all: {body: {code: 0, msg: Success, count: 2, payload: []}}
+      st1: {body: {code: 0, msg: Success, count: 2, payload: []}}
+      st2: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st5: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st6: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: ok, calls: {st6: {query: {date: "2026-09-25"}}}, fields: {ไม่สำเร็จ: "0 รายการ"}}
+  - name: host ล่มบาง call = ดึงไม่ได้ทั้งการ์ด
+    responses:
+      all: {body: {code: 0, msg: Success, count: 2, payload: []}}
+      st1: {error: timeout}
+      st2: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st5: {body: {code: 0, msg: Success, count: 0, payload: []}}
+      st6: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: error, error_code: timeout}

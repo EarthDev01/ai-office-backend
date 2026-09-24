@@ -1,0 +1,39 @@
+# mirror สิทธิ์ที่หน้าจอ office-v10x กั้นจริง (helper.checkPermission(code).is_view + router/Sidebar) — office-api-v10 เส้นอ่านเกือบทั้งหมดไม่ตรวจ code เอง
+# ⚠️ โหมด browser อ่าน permission จาก JWT ซึ่งหลังบ้านล้าง role.permission เป็น null ก่อนเซ็นเสมอ → rule ที่ใช้ code ไม่ผ่านจนกว่าจะมีแหล่ง permission (NOTES.md §3 ข้อ 1)
+# ชื่อเมนูที่บอกผู้ใช้ = ชื่อหน้า/แท็บที่พบในโค้ด office-v10x (ชื่อ sidebar จริงมาจาก SUPERCOM)
+rules:
+  # Sidebar.vue `user.level >= 6 && checkPermission("DASHBOARDALL").is_view` · router/index.ts `result.level < 6` → กลับหน้าแรก
+  dashboard: {all_of: [DASHBOARDALL], min_level: 6, menu: Dashboard, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ Dashboard และตั้งระดับบัญชีให้ถึงเกณฑ์ที่เห็น Dashboard}
+  # views/transection/deposit/DepositTransection.vue checkPermission("TRANSECTION_DEPOSIT")
+  deposit: {any_of: [TRANSECTION_DEPOSIT], menu: รายการฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูเมนูรายการฝาก}
+  # views/transection/withdraw/WithdrawView2.vue checkPermission("TRANSECTION_WITHDRAW")
+  withdraw: {any_of: [TRANSECTION_WITHDRAW], menu: รายการถอน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูเมนูรายการถอน}
+  # views/member/MemberListView.vue · _id.vue checkPermission("MEMBER_INFO")
+  member: {any_of: [MEMBER_INFO], menu: รายการสมาชิก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูข้อมูลสมาชิก}
+  # views/member/MemberApproveBankListView.vue checkPermission("MEMBER_APPROVE_BANK")
+  member_approve_bank: {any_of: [MEMBER_APPROVE_BANK], menu: อนุมัติบัญชีสมาชิก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูอนุมัติบัญชีสมาชิก}
+  # views/statement/ManagebankView.vue BANK_MANAGE + แท็บ (assets/webconfig/menu_bank.ts keyPermissions)
+  bank_deposit: {all_of: [BANK_MANAGE, BANK_MANAGE_DEPOSIT], menu: จัดการบัญชีธนาคาร › จัดการบัญชีฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร และแท็บจัดการบัญชีฝาก}
+  bank_withdraw: {all_of: [BANK_MANAGE, BANK_MANAGE_WITHDRAW], menu: จัดการบัญชีธนาคาร › จัดการบัญชีถอน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร และแท็บจัดการบัญชีถอน}
+  bank_manage: {any_of: [BANK_MANAGE], menu: จัดการบัญชีธนาคาร, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร}
+  # views/setting/BonusList.vue checkPermission("SETTING_BONUS")
+  bonus: {any_of: [SETTING_BONUS], menu: โบนัส/โปรโมชั่น, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูตั้งค่าโบนัส}
+  # views/system/Worklog.vue checkPermission("SYSTEM_WORKLOG") · menu_navbar.ts
+  worklog: {any_of: [SYSTEM_WORKLOG], menu: ประวัติการทำงานของพนักงาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูประวัติการทำงานของพนักงาน}
+  # components/headers/Navbar2.vue แสดงเครดิตเอเจ้น / เครดิต Sms ให้ทุกคนที่ล็อกอิน (ไม่มี code)
+  credit_system: {logged_in: true, menu: แถบด้านบน เครดิตเอเจ้น / เครดิต Sms, grant_hint: เข้าสู่ระบบหลังบ้านใหม่อีกครั้ง}
+  # views/bill/ListView.vue checkPermission("SYSTEM_BILL") · menu_navbar.ts
+  bill: {any_of: [SYSTEM_BILL], menu: บิลค่าใช้จ่าย, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูบิลค่าใช้จ่าย}
+  # POST /credit-check (ไม่ส่ง asset_code) — backend บังคับเอง TRANSECTION_MANAGECREDIT + TRANSECTION_MANAGECREDIT_CHECK (controller/credit.go CheckCredit)
+  credit_check: {all_of: [TRANSECTION_MANAGECREDIT, TRANSECTION_MANAGECREDIT_CHECK], menu: จัดการเครดิต › เช็คเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต และสิทธิ์เช็คเครดิต}
+  # views/transection/ManageCreditView.vue checkPermission("TRANSECTION_MANAGECREDIT") (ตารางประวัติจัดการเครดิต)
+  manage_credit: {any_of: [TRANSECTION_MANAGECREDIT], menu: จัดการเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต}
+  # หน้าที่ UI ไม่กั้นด้วย code (รายงาน, สถานการณ์ฉุกเฉิน) — ทุกคนที่ล็อกอิน
+  logged_in: {logged_in: true, menu: หลังบ้าน, grant_hint: เข้าสู่ระบบหลังบ้านใหม่อีกครั้ง}
+  # มี code แต่ไม่มี tool (ใช้กรองเมนู/แท็บใน lookup_menu)
+  member_block: {any_of: [MEMBER_BLOCKINFO], menu: สมาชิก Block, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูสมาชิก Block}
+  employee: {any_of: [SYSTEM_EMPLOYEE], menu: ระบบจัดการพนักงาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูระบบจัดการพนักงาน}
+  role: {any_of: [SYSTEM_ROLE], menu: ตั้งค่าสิทธิ์การใช้งาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูตั้งค่าสิทธิ์การใช้งาน}
+  deposit_insert: {any_of: [TRANSECTION_INSERT], menu: เพิ่มรายการฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เพิ่มรายการฝาก}
+  # ManageCreditView.vue แท็บ จัดการเครดิต โผล่เมื่อมี _RETURN หรือ _DELETE
+  credit_add: {all_of: [TRANSECTION_MANAGECREDIT], any_of: [TRANSECTION_MANAGECREDIT_RETURN, TRANSECTION_MANAGECREDIT_DELETE], menu: จัดการเครดิต › จัดการเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต และสิทธิ์เพิ่มหรือลบเครดิต}

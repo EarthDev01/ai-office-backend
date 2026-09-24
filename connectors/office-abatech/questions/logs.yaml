@@ -1,0 +1,117 @@
+# BQ-35 · BQ-50 · หน้า /Logs/Working (เมนูหลัก M005 · pages/Logs/Working.vue:335-341)
+# API เดิม: GET /api/GetWorkingLog?date=YYYY-MM-DD&service=<ชื่อเว็บ> (log/router.go:15,72-91 · repository.go:225-261)
+#   ⚠️ service ว่าง = log ของทุกเว็บ (OFFICE log_working) → ส่ง {service} เสมอ
+#   ได้ทั้งวัน ไม่มี limit/filter ฝั่ง host → กรองผู้ทำ/ยูส/รายการใน connector · payload null เมื่อไม่มี log
+#   ไม่ประกาศ data_new / data_old / ip / operator_id ใน values (ip = IP ภายในของ server ไม่ใช่ของพนักงาน)
+# ประวัติเข้าสู่ระบบ (/GetLogLogin?id=<employee id>) ต้องรู้ id พนักงาน → ไม่มี tool · ตอบด้วย fact login_history
+questions: [BQ-35]
+tools:
+  - name: staff_working_log
+    description: >-
+      ประวัติการทำงานของพนักงานในเว็บนี้ของวันที่เลือก (ค่าเริ่มต้นวันนี้) — ใครทำอะไร กับสมาชิกคนไหน เมื่อไหร่
+      กรองด้วยชื่อพนักงาน ยูสเซอร์เนมสมาชิก หรือชื่อรายการได้ ใช้ตอบว่าใครแก้รายการนี้ · ดูได้ทีละวัน
+    questions: [BQ-35]
+    permission: staff_log
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+      operator: {type: string, description: ชื่อพนักงานที่ทำรายการ (บางส่วนของชื่อก็ได้), pattern: "^[\\p{Thai}A-Za-z0-9 ._@-]{2,40}$"}
+      username: {type: string, description: ยูสเซอร์เนมของสมาชิกที่ถูกทำรายการ (ตรงตัว), pattern: "^[A-Za-z0-9_.@-]{2,64}$"}
+      action: {type: string, description: ชื่อรายการ เช่น แจกโบนัสฟรี คืนเครดิต (บางส่วนของคำก็ได้), pattern: "^[\\p{Thai}A-Za-z0-9 ._-]{2,40}$"}
+    calls:
+      - id: wl
+        method: GET
+        path: /GetWorkingLog
+        query: {date: "{date:input.date|date:today}", service: "{service}"}
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema: &wl_schema
+          type: [array, "null"]
+          items:
+            type: object
+            required: [datetime, operator_name, action, username]
+            properties:
+              datetime: {type: string}
+              operator_name: {type: string}
+              action: {type: string}
+              change: {type: string}
+              username: {type: string}
+              detail: {type: string}
+    values:
+      - {name: day, expr: "input.date"}
+      - name: matched
+        from: wl
+        path: ""
+        filter: "(input.operator == null || contains(lower(item.operator_name), lower(input.operator))) && (input.username == null || lower(item.username) == lower(input.username)) && (input.action == null || contains(item.action, input.action))"
+      - {name: rows, from: wl, path: "", filter: "(input.operator == null || contains(lower(item.operator_name), lower(input.operator))) && (input.username == null || lower(item.username) == lower(input.username)) && (input.action == null || contains(item.action, input.action))", limit: 50}
+      - {name: total, expr: "count(matched)"}
+      - {name: more, expr: "total > 50"}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติการทำงานตามเงื่อนไขในวันที่เลือก}
+    card:
+      title: ประวัติการทำงานของพนักงาน
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: รายการที่ตรงเงื่อนไข, value: total, format: int, suffix: " รายการ"}
+        - {label: มีรายการมากกว่าที่แสดง, value: more, format: bool, when: "more == true"}
+      table:
+        rows: rows
+        max_rows: 50
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: พนักงาน, field: operator_name}
+          - {label: รายการ, field: action}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: รายละเอียด, field: detail}
+      note: ไม่ระบุวันที่ = วันนี้ · ตามเมนูรายงานการทำงานของพนักงาน เฉพาะเว็บนี้ ล่าสุดก่อน · ไม่มี IP ของพนักงาน
+      link: {label: เปิดรายงานการทำงานของพนักงาน, path: /Logs/Working}
+    model_context:
+      - {name: has_more_rows, type: bool, expr: "more == true"}
+      - {name: note, type: text, text: รายการ ชื่อพนักงาน และรายละเอียดแสดงในการ์ดแล้ว ห้ามพิมพ์ชื่อหรือตัวเลขเอง}
+
+  - name: member_credit_history
+    description: >-
+      ประวัติการจัดการเครดิตของสมาชิกรายคนที่พนักงานทำในวันที่เลือก (ค่าเริ่มต้นวันนี้) เช่น แจกโบนัสฟรี คืนเครดิต ลบเครดิต เช็คเครดิต
+      จากรายงานการทำงานของพนักงาน ดูได้ทีละวัน
+    questions: [BQ-50]
+    permission: credit_history
+    freshness: summary
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก (ตรงตัว), pattern: "^[A-Za-z0-9_.@-]{2,64}$"}
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: wl
+        method: GET
+        path: /GetWorkingLog
+        query: {date: "{date:input.date|date:today}", service: "{service}"}
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema: *wl_schema
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: matched, from: wl, path: "", filter: "lower(item.username) == lower(input.username)"}
+      - {name: rows, from: wl, path: "", filter: "lower(item.username) == lower(input.username)", limit: 50}
+      - {name: total, expr: "count(matched)"}
+      - {name: more, expr: "total > 50"}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติการจัดการเครดิตของสมาชิกนี้ในวันที่เลือก}
+    card:
+      title: ประวัติการจัดการเครดิตของสมาชิก
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: จำนวนรายการ, value: total, format: int, suffix: " รายการ"}
+        - {label: มีรายการมากกว่าที่แสดง, value: more, format: bool, when: "more == true"}
+      table:
+        rows: rows
+        max_rows: 50
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: พนักงาน, field: operator_name}
+          - {label: รายการ, field: action}
+          - {label: จำนวน, field: change}
+          - {label: รายละเอียด, field: detail}
+      note: >-
+        ไม่ระบุวันที่ = วันนี้ · จากรายงานการทำงานของพนักงาน (รายการที่พนักงานกดเอง) ไม่ใช่สมุดบัญชีเครดิต
+        · การเติมเครดิตอัตโนมัติจากการฝากดูที่รายการฝาก
+      link: {label: เปิดรายงานการทำงานของพนักงาน, path: /Logs/Working}
+    model_context:
+      - {name: has_more_rows, type: bool, expr: "more == true"}
+      - {name: note, type: text, text: รายการและยอดแสดงในการ์ดแล้ว ห้ามพิมพ์ชื่อหรือตัวเลขเอง}

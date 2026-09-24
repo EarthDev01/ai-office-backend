@@ -1,0 +1,348 @@
+# BQ-02 / BQ-06 (ฝาก) / BQ-10 · หน้า /Deposit (P003) แต่ละแท็บเปิดด้วย code ของแท็บ (pages/Deposit/index.vue:139-203)
+# API เดิม:
+#   GET /api/DepositBankSummaryV2/:service?date=&start_date=YYYY-MM-DD HH:mm:ss&end_date=…&deposit_type=open|all
+#     deposit/route.go:34,160-187 · ต้องส่ง start_date เสมอ (ไม่ส่ง = JSON สองก้อน) · frontend components/Deposit/DepositBank.vue:280-324
+#     payload 1 แถวต่อบัญชีฝาก {code, full_name, number, deposit, remain, count, balance, status, max_deposit, today_deposit, …}
+#   GET /api/DepositBankRemain/:service?date=&bank_number= (deposit/route.go:38,243-270 · components/Deposit/DepositRemain.vue:596-612)
+#     payload รายการเงินเข้าที่ตกค้าง (สูงสุดสองพัน) {datetime, deposit, status, comment, …เลขบัญชีลูกค้า}
+#   GET /api/GetDepositStatementListByFilter/:service?date=&status=&sort=&order=&limit=&page=&search= (controller/deposit.go:29-71)
+#     ⚠️ host ไม่มี auth · status เป็นเลขฐานหก (0 = ทุกสถานะ · "10" = สถานะหก · ว่าง = กรองสถานะศูนย์) → ส่งเสมอ
+#     response {code, msg, payload, count} — count อยู่นอก payload → envelope: raw
+# เลขบัญชี ชื่อบัญชีลูกค้า ไม่ประกาศใน values
+questions: [BQ-02]
+tools:
+  - name: deposit_bank_summary
+    description: >-
+      สรุปยอดเงินเข้าบัญชีฝากที่เปิดใช้ ของวันที่เลือก (ค่าเริ่มต้นวันนี้) แยกตามบัญชี: ยอดฝากที่เข้าระบบแล้ว ยอดตกค้าง จำนวนรายการ และยอดคงเหลือในบัญชี
+      ใช้เมื่อถามยอดฝากวันนี้เข้าบัญชีไหนเท่าไหร่ หรือยอดตกค้างรวม
+    questions: [BQ-02]
+    permission: deposit_bank
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: bank
+        method: GET
+        path: /DepositBankSummaryV2/{service}
+        query:
+          date: "{date:input.date|date:today}"
+          start_date: "{date:input.date|date:today} 00:00:00"
+          end_date: "{date:input.date|date:today} 23:59:00"
+          deposit_type: open
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [code, deposit, remain, count]
+            properties:
+              code: {type: string}
+              full_name: {type: string}
+              deposit: {type: number}
+              remain: {type: number}
+              count: {type: integer}
+              balance: {type: number}
+              status: {type: integer}
+              update_date: {type: string}
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: rows, from: bank, path: "", sort_by: deposit, order: desc}
+      - {name: dep_total, from: bank, path: "", agg: sum, field: deposit}
+      - {name: remain_total, from: bank, path: "", agg: sum, field: remain}
+      - {name: cnt_total, from: bank, path: "", agg: sum, field: count}
+      - {name: all_total, expr: "dep_total + remain_total"}
+      - {name: accounts, expr: "count(rows)"}
+    not_found: {when: "empty(rows)", message: ไม่พบบัญชีฝากที่เปิดใช้งานของเว็บนี้}
+    card:
+      title: สรุปยอดเงินในบัญชีฝาก
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: ยอดฝากทั้งหมด (รวมตกค้าง), value: all_total, format: money, suffix: " บาท"}
+        - {label: ยอดฝากที่เข้าระบบแล้ว, value: dep_total, format: money, suffix: " บาท"}
+        - {label: ยอดตกค้าง, value: remain_total, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการเงินเข้า, value: cnt_total, format: int, suffix: " รายการ"}
+        - {label: บัญชีฝากที่เปิดใช้, value: accounts, format: int, suffix: " บัญชี"}
+      table:
+        rows: rows
+        columns:
+          - {label: ธนาคาร, field: code}
+          - {label: ชื่อบัญชี, field: full_name}
+          - {label: เข้าระบบแล้ว, field: deposit, format: money}
+          - {label: ตกค้าง, field: remain, format: money}
+          - {label: รายการ, field: count, format: int}
+          - {label: ยอดคงเหลือในบัญชี, field: balance, format: money}
+      note: ไม่ระบุวันที่ = วันนี้ · ตามแท็บ สรุปยอดเงินในบัญชีฝาก (เฉพาะบัญชีที่เปิดใช้) · ยอดฝากทั้งหมด = เข้าระบบแล้ว + ตกค้าง · ไม่แสดงเลขบัญชี
+      link: {label: เปิดรายการฝาก, path: "/Deposit?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_remain, type: bool, expr: "remain_total > 0"}
+      - {name: has_deposit, type: bool, expr: "dep_total > 0"}
+      - {name: note, type: text, text: ยอดแต่ละบัญชีแสดงในการ์ดแล้ว ถ้ามีตกค้างให้แนะนำแท็บ รายการตกค้าง ในเมนูรายการฝาก}
+
+  - name: deposit_remain_summary
+    description: >-
+      รายการเงินเข้าบัญชีฝากที่ตกค้าง (ระบบจับคู่สมาชิกหรือเติมเครดิตไม่สำเร็จ) ของวันที่เลือก แยกตามสาเหตุ พร้อมจำนวนและยอดรวม
+      ใช้เมื่อถามว่ามีรายการตกค้างเท่าไหร่ ตกค้างเพราะอะไร
+    questions: [BQ-02]
+    permission: deposit_remain
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: rem
+        method: GET
+        path: /DepositBankRemain/{service}
+        query: {date: "{date:input.date|date:today}"}
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [datetime, deposit, status]
+            properties:
+              datetime: {type: string}
+              deposit: {type: number}
+              status: {type: integer}
+              comment: {type: string}
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: items, from: rem, path: "", default: []}
+      - {name: by_reason, from: rem, path: "", group_by: comment, field: deposit, sort_by: count, order: desc}
+      - {name: known_items, from: rem, path: "", filter: "in(item.status, 0, 1, 2, 3, 99)"}
+      - {name: remain_count, expr: "count(items)"}
+      - {name: remain_amount, from: rem, path: "", agg: sum, field: deposit}
+      - {name: capped, expr: "remain_count >= 2000"}
+    not_found: {when: "empty(items)", message: ไม่มีรายการตกค้างในวันที่เลือก}
+    card:
+      title: รายการตกค้าง (เงินเข้าบัญชีฝาก)
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: จำนวนรายการตกค้าง, value: remain_count, format: int, suffix: " รายการ"}
+        - {label: ยอดตกค้างรวม, value: remain_amount, format: money, suffix: " บาท"}
+        - {label: มีรายการมากกว่าที่ระบบส่งมา, value: capped, format: bool, when: "capped == true"}
+      table:
+        rows: by_reason
+        columns:
+          - {label: สาเหตุ, field: key}
+          - {label: จำนวน, field: count, format: int, suffix: " รายการ"}
+          - {label: ยอดรวม, field: sum, format: money}
+      note: ไม่ระบุวันที่ = วันนี้ · ตามแท็บ รายการตกค้าง ในเมนูรายการฝาก · สาเหตุว่าง = ระบบไม่ได้บันทึกสาเหตุ · ไม่แสดงเลขบัญชีลูกค้า
+      link: {label: เปิดรายการฝาก (แท็บ รายการตกค้าง), path: "/Deposit?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_remain, type: bool, expr: "remain_count > 0"}
+      - {name: statuses, type: labels, from: known_items, pluck: status, format: "status:bank_statement"}
+      - {name: note, type: text, text: สาเหตุและยอดแสดงในการ์ดแล้ว วิธีจัดการให้ใช้ตารางสถานะรายการเงินเข้าบัญชีฝาก}
+
+  - name: deposit_status_summary
+    description: >-
+      จำนวนรายการฝาก (รายการเติมเครดิต) ของวันที่เลือก (ค่าเริ่มต้นวันนี้) แยกตามสถานะ สำเร็จ รอคิว ติดกิจกรรม เครดิตค้าง และไม่สำเร็จ
+      ใช้เมื่อถามว่าวันนี้มีรายการฝากกี่รายการ สำเร็จกี่รายการ ค้างกี่รายการ
+    questions: [BQ-02]
+    permission: deposit_list
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้}
+    calls:
+      - id: all
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "0", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: &dl_count
+          type: object
+          required: [code, count, payload]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload: {type: array}
+      - id: st1
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "1", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *dl_count
+      - id: st2
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "2", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *dl_count
+      - id: st5
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "5", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *dl_count
+      - id: st6
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        # host แปลง status เป็นฐานหก → "10" = สถานะหก (เครดิตค้าง)
+        query: {date: "{date:input.date|date:today}", status: "10", sort: _id, order: "-1", limit: "1", page: "1"}
+        envelope: raw
+        cache_ttl: 30
+        schema: *dl_count
+    values:
+      - {name: day, expr: "input.date"}
+      - {name: total, from: all, path: count}
+      - {name: ok_cnt, from: st1, path: count}
+      - {name: queue_cnt, from: st2, path: count}
+      - {name: event_cnt, from: st5, path: count}
+      - {name: stuck_cnt, from: st6, path: count}
+      - {name: fail_cnt, expr: "total - ok_cnt - queue_cnt - event_cnt - stuck_cnt"}
+      - {name: capped, expr: "total >= 5000"}
+    not_found: {when: "total == 0", message: ไม่มีรายการฝากในวันที่เลือก}
+    card:
+      title: จำนวนรายการฝากแยกตามสถานะ
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: รายการฝากทั้งหมด, value: total, format: int, suffix: " รายการ"}
+        - {label: สำเร็จ, value: ok_cnt, format: int, suffix: " รายการ"}
+        - {label: รอคิว, value: queue_cnt, format: int, suffix: " รายการ"}
+        - {label: ติดกิจกรรม, value: event_cnt, format: int, suffix: " รายการ"}
+        - {label: เครดิตค้าง, value: stuck_cnt, format: int, suffix: " รายการ"}
+        - {label: ไม่สำเร็จ, value: fail_cnt, format: int, suffix: " รายการ"}
+        - {label: นับได้สูงสุดห้าพันรายการ (อาจมีมากกว่านี้), value: capped, format: bool, when: "capped == true"}
+      note: ไม่ระบุวันที่ = วันนี้ · ตามแท็บ แสดงรายการฝาก · ไม่สำเร็จ = สถานะอื่นทั้งหมดตามที่หน้าจอแสดง · ยอดเงินรวมดูที่ สรุปยอดเงินในบัญชีฝาก
+      link: {label: เปิดรายการฝาก, path: "/Deposit?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_queue, type: bool, expr: "queue_cnt > 0"}
+      - {name: has_stuck_credit, type: bool, expr: "stuck_cnt > 0"}
+      - {name: has_failed, type: bool, expr: "fail_cnt > 0"}
+      - {name: note, type: text, text: จำนวนแต่ละสถานะแสดงในการ์ดแล้ว วิธีจัดการให้ใช้ตารางสถานะรายการเติมเครดิต}
+
+  - name: deposit_find
+    description: >-
+      ค้นรายการฝาก (รายการเติมเครดิต) ของวันที่เลือก (ค่าเริ่มต้นวันนี้) กรองด้วยยูสเซอร์เนม สถานะ หรือยอดได้
+      ใช้ดูว่ารายการฝากของสมาชิกสถานะอะไร ใครทำรายการ (ฝั่งฝากไม่มีการค้นด้วยรหัสรายการ)
+    questions: [BQ-06]
+    permission: deposit_list
+    freshness: summary
+    input:
+      username: {type: string, description: ยูสเซอร์เนมของสมาชิก (ตรงตัว), pattern: "^[A-Za-z0-9_@-]{2,64}$"}
+      date: {type: date, description: วันที่ของรายการ ไม่ใส่ = วันนี้}
+      status: {type: integer, description: "รหัสสถานะรายการฝากถ้าต้องการกรอง (1 สำเร็จ · 2 รอคิว · 5 ติดกิจกรรม · 6 เครดิตค้าง · 0 ไม่สำเร็จ)", enum: [0, 1, 2, 5, 6]}
+      amount: {type: number, description: ยอดฝากถ้าต้องการกรอง, min: 0}
+    calls:
+      - id: list
+        method: GET
+        path: /GetDepositStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "0", search: "{input.username}", sort: _id, order: "-1", limit: "200", page: "1"}
+        envelope: raw
+        cache_ttl: 15
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [code, count, payload]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload:
+              type: array
+              items:
+                type: object
+                required: [datetime, username, amount, status]
+                properties:
+                  datetime: {type: string}
+                  username: {type: string}
+                  amount: {type: number}
+                  bonus: {type: number}
+                  bonus_name: {type: string}
+                  status: {type: integer}
+                  operator_name: {type: string}
+                  channel: {type: string}
+                  comment: {type: string}
+    values:
+      - {name: day, expr: "input.date"}
+      - name: rows
+        from: list
+        path: payload
+        filter: "(input.username == null || lower(item.username) == lower(input.username)) && (input.status == null || item.status == input.status) && (input.amount == null || item.amount == input.amount)"
+        limit: 20
+      - name: known_rows
+        from: list
+        path: payload
+        filter: "(input.username == null || lower(item.username) == lower(input.username)) && (input.status == null || item.status == input.status) && (input.amount == null || item.amount == input.amount) && in(item.status, 0, 1, 2, 5, 6)"
+        limit: 20
+      - {name: found, expr: "count(rows)"}
+      - {name: fetched, from: list, path: count}
+      - {name: complete, expr: "fetched <= 200"}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการฝากตามเงื่อนไขในวันที่เลือก}
+    card:
+      title: รายการฝาก
+      fields:
+        - {label: วันที่, value: day, format: date, when: "day != null"}
+        - {label: จำนวนที่แสดง, value: found, format: int, suffix: " รายการ"}
+        - {label: ค้นครบทุกรายการที่ตรงคำค้น, value: complete, format: bool}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอดฝาก, field: amount, format: money}
+          - {label: โบนัส, field: bonus, format: money}
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: ผู้ทำรายการ, field: operator_name}
+          - {label: ช่องทาง, field: channel}
+      note: ไม่ระบุวันที่ = วันนี้ · ผู้ทำรายการว่าง = ระบบทำรายการอัตโนมัติ (หน้าจอแสดง auto) · แสดงล่าสุดก่อน สูงสุดยี่สิบรายการ · ข้อมูลนี้ไม่มี IP
+      link: {label: เปิดรายการฝาก, path: "/Deposit?service={service_b64}&web={service}"}
+    model_context:
+      - {name: statuses_found, type: labels, from: known_rows, pluck: status, format: "status:deposit"}
+      - {name: note, type: text, text: รายการ ผู้ทำรายการ และยอดแสดงในการ์ดแล้ว}
+
+  - name: deposit_bank_accounts
+    description: >-
+      บัญชีธนาคารฝากของเว็บนี้ที่เปิดใช้งาน แยกตามธนาคาร (นับจำนวนบัญชี) ใช้เมื่อถามว่ามีบัญชีฝากเปิดอยู่กี่บัญชี ธนาคารอะไรบ้าง
+    questions: [BQ-10]
+    permission: bank_accounts
+    freshness: summary
+    calls:
+      # ใช้เส้นสรุปบัญชีฝาก (deposit_type=all = บัญชีสถานะเปิดและปิด) แทน /GetBankAll เพราะ /GetBankAll ส่งข้อมูลลับของบัญชีธนาคาร
+      # (citizen_id, refresh_token, token_proxy_bank …) กลับมาทั้งก้อน — โหมด browser จะพาข้อมูลนั้นผ่าน widget มาถึง backend
+      - id: acc
+        method: GET
+        path: /DepositBankSummaryV2/{service}
+        query:
+          date: "{date:today}"
+          start_date: "{date:today} 00:00:00"
+          end_date: "{date:today} 23:59:00"
+          deposit_type: all
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema:
+          type: [array, "null"]
+          items:
+            type: object
+            required: [code, status]
+            properties:
+              code: {type: string}
+              status: {type: integer}
+    values:
+      - {name: all_rows, from: acc, path: "", default: []}
+      - {name: open_by_bank, from: acc, path: "", filter: "item.status == 1", group_by: code, sort_by: count, order: desc}
+      - {name: closed_by_bank, from: acc, path: "", filter: "item.status != 1", group_by: code}
+      - {name: open_count, from: acc, path: "", filter: "item.status == 1", agg: count}
+      - {name: all_count, expr: "count(all_rows)"}
+      - {name: closed_count, expr: "all_count - open_count"}
+    not_found: {when: "empty(all_rows)", message: ไม่พบบัญชีฝากของเว็บนี้}
+    card:
+      title: บัญชีฝากที่เปิดใช้งาน แยกตามธนาคาร
+      fields:
+        - {label: บัญชีฝากที่เปิดใช้งาน, value: open_count, format: int, suffix: " บัญชี"}
+        - {label: บัญชีฝากที่ปิดอยู่, value: closed_count, format: int, suffix: " บัญชี"}
+      table:
+        rows: open_by_bank
+        columns:
+          - {label: ธนาคาร, field: key}
+          - {label: เปิดใช้งาน, field: count, format: int, suffix: " บัญชี"}
+      note: นับตามสถานะเปิดใช้งานของบัญชีฝาก (ไม่รวมบัญชีที่ลบแล้ว) · การแสดงบัญชีบนหน้าเว็บและช่วงเวลาแสดงดูที่เมนูจัดการบัญชีธนาคาร · ไม่แสดงเลขบัญชี
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: "/Statement?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_open_account, type: bool, expr: "open_count > 0"}
+      - {name: has_closed_account, type: bool, expr: "closed_count > 0"}
+      - {name: note, type: text, text: ธนาคารและจำนวนบัญชีแสดงในการ์ดแล้ว}

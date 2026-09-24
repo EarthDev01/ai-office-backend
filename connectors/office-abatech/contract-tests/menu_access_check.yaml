@@ -1,0 +1,34 @@
+tool: menu_access_check
+cases:
+  - name: เมนูต่อเว็บเปิดในระบบ
+    service: K11S
+    input: {code: P061}
+    responses:
+      sub: {body: {code: 0, msg: "", payload: "", data: [P001, P003, P004, P006, P061], authlogin: "", service: DEMOSLOT, channel_id: "", firebase: ""}}
+      main: {body: {code: 0, msg: "", payload: "", data: [M003, M004, M005], authlogin: "", service: DEMOSLOT, channel_id: "", firebase: ""}}
+    expect:
+      status: ok
+      calls:
+        sub: {path: /GetConfigByKey, query: {key: submenu}}
+        main: {path: /GetConfigByKey, query: {key: mainmenu}}
+      fields: {เมนูนี้เปิดใช้งานในระบบนี้: ใช่, อ่านรายการเมนูที่เปิดได้: ใช่}
+      model_context: {menu_enabled: true, config_readable: true}
+      link: "/News?service=SzExUw==&web=K11S"
+  - name: เมนูหลักระดับ office
+    input: {code: M005}
+    responses:
+      sub: {body: {code: 0, msg: "", payload: "", data: [P001]}}
+      main: {body: {code: 0, msg: "", payload: "", data: [M003, M005]}}
+    expect: {status: ok, fields: {เมนูนี้เปิดใช้งานในระบบนี้: ใช่}}
+  - name: เมนูยังไม่เปิด (mainmenu อ่านไม่ได้ก็ยังตอบจาก submenu)
+    input: {code: P048}
+    responses:
+      sub: {body: {code: 0, msg: "", payload: "", data: [P001, P003]}}
+      main: {error: timeout}
+    expect: {status: ok, fields: {เมนูนี้เปิดใช้งานในระบบนี้: ไม่ใช่}, model_context: {menu_enabled: false}}
+  - name: อ่าน submenu ไม่ได้
+    input: {code: P001}
+    responses:
+      sub: {status: 502, raw: ""}
+      main: {body: {code: 0, msg: "", payload: "", data: []}}
+    expect: {status: error, error_code: http_error}
