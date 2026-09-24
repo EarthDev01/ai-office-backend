@@ -35,7 +35,7 @@ func officeResult(exp int64) map[string]any {
 				"list_service": []map[string]any{
 					{"service": "DEMO-STAGING", "permission": true},
 					{"service": "SECRET-SVC", "permission": false}, // ต้องถูกข้าม
-					{"service": "", "permission": true},             // ต้องถูกข้าม
+					{"service": "", "permission": true},            // ต้องถูกข้าม
 				},
 			},
 		},
@@ -79,10 +79,10 @@ func TestParseOfficeJWT_Expired(t *testing.T) {
 
 func TestParseOfficeJWT_Malformed(t *testing.T) {
 	cases := map[string]string{
-		"not a jwt":      "abc",
-		"two parts":      "aaa.bbb",
-		"bad base64":     "aaa.$$$.ccc",
-		"empty result":   makeJWT(map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "result": map[string]any{}}),
+		"not a jwt":    "abc",
+		"two parts":    "aaa.bbb",
+		"bad base64":   "aaa.$$$.ccc",
+		"empty result": makeJWT(map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "result": map[string]any{}}),
 	}
 	for name, tok := range cases {
 		if _, err := parseOfficeJWT(tok); err != domain.ErrNotAuthenticated {

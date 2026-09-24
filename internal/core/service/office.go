@@ -209,7 +209,7 @@ func (s *officeService) Bootstrap(ctx context.Context, publicKey, serviceID, ori
 	// ██ การตรวจ service — 2 ด่าน
 	//
 	// หน้าเว็บเป็นคนบอกว่ากำลังเปิด service ไหน (localStorage["web-service"])
-	// เพราะ office-api-v10 ไม่มี session ฝั่ง server ที่จำไว้ — เราจึงต้องตรวจเอง
+	// ไม่มี session ฝั่ง server ที่จำไว้ — เราจึงต้องตรวจเอง
 	if serviceID == "" {
 		return domain.Bootstrap{Enabled: false, Reason: "no_service"}, nil
 	}
@@ -217,8 +217,7 @@ func (s *officeService) Bootstrap(ctx context.Context, publicKey, serviceID, ori
 	// ด่าน 1: Role.ListService ของแอดมินคนนั้น
 	//
 	// ██ ข้อมูลจริงของ demo-staging_office: list_service ว่างทั้ง 9 employee และทั้ง 4 role
-	// ██ เพราะ office ที่มี service เดียวไม่มีอะไรให้จำกัด และ office-api เองก็ไม่ได้เช็ค field นี้
-	// ██ ว่าง = ไม่จำกัด ซึ่งตรงกับพฤติกรรมจริงของระบบเดิม
+	// ██ เพราะ office ที่มี service เดียวไม่มีอะไรให้จำกัด → ว่าง = ไม่จำกัด
 	// ██ แต่ถ้ามีค่า (office ที่มีหลาย service) ต้องบังคับตามนั้น
 	if len(caller.Services) > 0 && !caller.CanAccessService(serviceID) {
 		return domain.Bootstrap{}, domain.ErrServiceNotAllowed
@@ -233,14 +232,8 @@ func (s *officeService) Bootstrap(ctx context.Context, publicKey, serviceID, ori
 	if !svc.Enabled {
 		return domain.Bootstrap{Enabled: false, Reason: "service_disabled"}, nil
 	}
-	// Allowlist = ด่านคุมการปล่อยของเราเอง คนละเรื่องกับ Role.ListService ที่ข้างบน
-	// ตรวจไปแล้วว่าเขา "มีสิทธิ์" ใน service นี้
-	//
-	// ██ ว่าง = ไม่จำกัด: ใครก็ตามที่ล็อกอิน office สำเร็จ + มีสิทธิ์ service นี้ ใช้ได้เลย
-	// ██ (ตรงกับกฎ list_service ว่าง = ไม่จำกัด ข้างบน) · ถ้ามีรายชื่อค่อยจำกัดตามนั้น
-	if len(svc.Allowlist) > 0 && !callerInList(caller, svc.Allowlist) {
-		return domain.Bootstrap{Enabled: false, Reason: "not_in_allowlist"}, nil
-	}
+	// ██ ไม่มี allowlist แล้ว — ใครก็ตามที่ล็อกอิน office สำเร็จ + มีสิทธิ์ service นี้
+	// ██ (Role.ListService ตรวจข้างบนแล้ว) ใช้ AI ได้เลย เปิดให้ทุกคนที่ล็อกอิน
 
 	return domain.Bootstrap{
 		Enabled:      true,
@@ -254,14 +247,6 @@ func (s *officeService) Bootstrap(ctx context.Context, publicKey, serviceID, ori
 		Theme:        o.Theme,
 		Placement:    o.Placement,
 	}, nil
-}
-
-func (s *officeService) AllowedOrigins(ctx context.Context) []string {
-	list, err := s.repo.AllOrigins(ctx)
-	if err != nil {
-		return nil
-	}
-	return list
 }
 
 func (s *officeService) touchSave(ctx context.Context, o domain.Office, actor string) (domain.Office, error) {
@@ -289,13 +274,4 @@ func normalizeOrigins(in []string) ([]string, error) {
 		out = append(out, v)
 	}
 	return out, nil
-}
-
-func callerInList(caller domain.Caller, allowlist []string) bool {
-	for _, x := range allowlist {
-		if caller.Matches(x) {
-			return true
-		}
-	}
-	return false
 }

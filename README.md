@@ -19,7 +19,7 @@ Office  = หลังบ้าน 1 ชุด (1 การติดตั้ง
 - Office/Service CRUD จากคอนโซล + `rotate-key`
 - CORS อ่าน `allowed_origins` จาก DB — เพิ่มลูกค้าใหม่ไม่ต้อง deploy
 - ปฏิเสธ request ที่ client พยายามเลือก service เอง
-- **ตรวจตัวตนกับ `office-api-v10` จริง** — `GET /api/employees-byid` ด้วย Bearer ของแอดมิน แล้วเอา `Role.ListService` มาตรวจว่าเข้า service นั้นได้ไหม (cache 60 วิ)
+- **อ่านตัวตนจาก JWT ของแอดมิน** — decode payload (`result` = EmployeeModel) แล้วเอา `Role.ListService` มาตรวจว่าเข้า service นั้นได้ไหม (cache 60 วิ)
 - **MongoDB** (`STORE_DRIVER=mongo`) หรือไฟล์ JSON (`file`) ไว้ dev เร็ว ๆ
 
 **ยังไม่มีในรอบนี้:** LLM, tool, SSE chat, ประวัติแชท, โควตา, audit — อยู่ใน Phase 3+ ของ `05-PLAN.md`
@@ -59,8 +59,7 @@ cd widget && npm test       # 19 test
 
 | ส่วน | ตอนนี้ | ต้องเปลี่ยนเป็น |
 |---|---|---|
-| token ปลอม `dev:<admin>:<services>:<role>` | ใช้ได้เฉพาะ office ที่ยังไม่ตั้ง `backoffice_api_url` + `APP_MODE=dev` | ตั้ง `backoffice_api_url` แล้วระบบจะไปถาม office-api จริงเอง |
-| forward `User-Agent`/`CF-Connecting-IP` | สะพานชั่วคราวของ `O9` | ขอ service token read-only จากทีม office-api (survey §2.4 ข้อ B) |
+| token ปลอม `dev:<admin>:<services>:<role>` | ใช้ได้เฉพาะ office ที่ยังไม่ตั้ง `backoffice_api_url` + `APP_MODE=dev` | ตั้ง `backoffice_api_url` แล้วระบบจะอ่านตัวตนจาก JWT จริงเอง |
 | `ConsoleAuth` | static token จาก env | JWT คนละ secret กับแอดมินเว็บ (`02-SPEC §6`) |
 | `filestore` | ไฟล์ JSON | MongoDB — สลับที่ `_cmd/main.go` บรรทัดเดียว |
 | `seedOffices()` | office `demo` hardcode | ไม่ต้องมี — สร้างจากคอนโซล |

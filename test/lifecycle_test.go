@@ -49,27 +49,24 @@ func TestRotateKey_OldKeyDies(t *testing.T) {
 	}
 }
 
-// เพิ่มลูกค้าใหม่แล้ว CORS ต้องอนุญาตทันทีโดยไม่ต้อง deploy
-func TestCORS_FollowsOfficeOriginsWithoutDeploy(t *testing.T) {
+// CORS เปิดทุก origin (เหมือน office-api-v10) — origin ไหนก็ได้ ACAO = "*"
+func TestCORS_AllowsAnyOrigin(t *testing.T) {
 	r := newRouter(t)
-	const newOrigin = "http://acme.test"
 
-	before := do(t, r, req{method: http.MethodGet, path: "/healthz", origin: newOrigin})
-	if before.Header().Get("Access-Control-Allow-Origin") != "" {
-		t.Fatal("origin ที่ยังไม่ลงทะเบียนต้องไม่ได้ ACAO")
+	for _, origin := range []string{"http://acme.test", "http://evil.example", "http://localhost:5173"} {
+		w := do(t, r, req{method: http.MethodGet, path: "/healthz", origin: origin})
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Fatalf("origin %q ต้องได้ ACAO=* ได้ %q", origin, got)
+		}
 	}
 
-	if code, _ := admin(t, r, http.MethodPost, "/api/ai/admin/offices", `{"id":"acme","label":"ACME"}`); code != http.StatusCreated {
-		t.Fatalf("สร้าง office ไม่สำเร็จ %d", code)
+	// preflight ต้องตอบ 204 พร้อม header ครบ
+	pre := do(t, r, req{method: http.MethodOptions, path: "/api/ai/admin/offices", origin: "http://acme.test"})
+	if pre.Code != http.StatusNoContent {
+		t.Fatalf("preflight ต้องได้ 204 ได้ %d", pre.Code)
 	}
-	if code, _ := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/acme",
-		`{"allowed_origins":["http://acme.test"]}`); code != http.StatusOK {
-		t.Fatalf("ตั้ง origin ไม่สำเร็จ %d", code)
-	}
-
-	after := do(t, r, req{method: http.MethodGet, path: "/healthz", origin: newOrigin})
-	if after.Header().Get("Access-Control-Allow-Origin") != newOrigin {
-		t.Fatalf("หลังลงทะเบียนต้องได้ ACAO ทันที ได้ %q", after.Header().Get("Access-Control-Allow-Origin"))
+	if pre.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("preflight ต้องได้ ACAO=* ได้ %q", pre.Header().Get("Access-Control-Allow-Origin"))
 	}
 }
 

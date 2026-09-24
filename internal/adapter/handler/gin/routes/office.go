@@ -17,10 +17,11 @@ func NewOfficeHandler(svc port.OfficeService) *OfficeHandler {
 	return &OfficeHandler{svc: svc}
 }
 
+// actorOf อ่าน username ของ console user ที่ล็อกอินอยู่ (ตั้งโดย ConsoleAuth middleware)
+// ใช้ ctxConsoleUsername ตัวเดียวกับที่ auth.go ใช้ — ประกาศ const ซ้ำที่นั่นเพราะ
+// import gin (middleware) กลับมาที่ routes จะเกิด import cycle
 func actorOf(c *gin.Context) string {
-	v, _ := c.Get("console_actor")
-	s, _ := v.(string)
-	return s
+	return consoleUsername(c)
 }
 
 func (h *OfficeHandler) fail(c *gin.Context, err error) {

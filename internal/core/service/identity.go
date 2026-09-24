@@ -12,12 +12,10 @@ import (
 	"ai-office-backend/internal/core/port"
 )
 
-// identityResolver ถาม office-api-v10 ว่า token นี้เป็นใคร มีสิทธิ์อะไร เข้า service ไหนได้
+// identityResolver อ่านจาก token ว่าเป็นใคร มีสิทธิ์อะไร เข้า service ไหนได้
 //
-// มี cache สั้น ๆ เพราะทุกข้อความในแชทจะต้อง resolve ใหม่ ถ้ายิงทุกครั้งจะไปกิน
-// rate limit ของ office-api (survey §6.3)
+// มี cache สั้น ๆ เพราะทุกข้อความในแชทจะต้อง resolve ใหม่
 type identityResolver struct {
-	api     port.BackofficeAPI
 	ttl     time.Duration
 	devMode bool
 
@@ -30,11 +28,11 @@ type cachedCaller struct {
 	until  time.Time
 }
 
-func NewIdentityResolver(api port.BackofficeAPI, ttl time.Duration, devMode bool) port.IdentityResolver {
+func NewIdentityResolver(ttl time.Duration, devMode bool) port.IdentityResolver {
 	if ttl <= 0 {
 		ttl = 60 * time.Second
 	}
-	return &identityResolver{api: api, ttl: ttl, devMode: devMode, cache: map[string]cachedCaller{}}
+	return &identityResolver{ttl: ttl, devMode: devMode, cache: map[string]cachedCaller{}}
 }
 
 func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cred domain.Credential) (domain.Caller, error) {
@@ -53,21 +51,18 @@ func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cr
 
 	key := office.ID + "|" + cred.Token
 	if c, ok := r.get(key); ok {
-		c.Cred = cred // ใช้ UA/IP ของ request ปัจจุบันเสมอ ไม่เอาของที่ cache ไว้
 		return c, nil
 	}
 
-	// ตัวตนจริงถูกเข้ารหัสอยู่ใน JWT อยู่แล้ว (claim "result" = EmployeeModel)
-	// จึง decode ตรง ๆ แบบเดียวกับที่ office-v10x ทำ (jwt_decode(auth_token).result)
-	// ไม่เรียก office-api เพราะมันอยู่หลัง Cloudflare + Supercom IP-whitelist ที่
-	// server-to-server call ผ่านไม่ได้ · อีกทั้ง secret ของ JWT ผูกกับ IP (O9)
-	// จึง verify signature ฝั่ง server ไม่ได้ — เชื่อ token ที่ browser ล็อกอินมาแล้ว
+	// ตัวตนจริงถูกเข้ารหัสอยู่ใน JWT อยู่แล้ว (claim "result" = EmployeeModel) จึง decode ตรง ๆ
+	// ไม่เรียก backoffice API เพราะอยู่หลัง Cloudflare + IP-whitelist ที่ server-to-server
+	// call ผ่านไม่ได้ · อีกทั้ง secret ของ JWT ผูกกับ IP (O9) จึง verify signature ฝั่ง
+	// server ไม่ได้ — เชื่อ token ที่ browser ล็อกอินมาแล้ว
 	caller, err := parseOfficeJWT(cred.Token)
 	if err != nil {
 		return domain.Caller{}, err
 	}
 	caller.OfficeID = office.ID
-	caller.Cred = cred
 	r.put(key, caller)
 	return caller, nil
 }
@@ -94,7 +89,7 @@ func (r *identityResolver) put(key string, caller domain.Caller) {
 // parseDevToken รับ token ปลอมรูปแบบ "dev:<admin>:<service1,service2>:<role>"
 //
 // ██ DEV ONLY — ใช้ได้เฉพาะ office ที่ยังไม่ได้ตั้ง backoffice_api_url และ APP_MODE=dev
-// ██ มีไว้ทดสอบหน้าจอตอนยังต่อ office-api จริงไม่ได้ (ติด O9)
+// ██ มีไว้ทดสอบหน้าจอโดยไม่ต้องมี JWT จริง
 func parseDevToken(office domain.Office, cred domain.Credential) (domain.Caller, error) {
 	if !strings.HasPrefix(cred.Token, "dev:") {
 		return domain.Caller{}, domain.ErrNotAuthenticated
@@ -119,15 +114,13 @@ func parseDevToken(office domain.Office, cred domain.Credential) (domain.Caller,
 		OfficeID: office.ID,
 		RoleName: role,
 		Services: services,
-		Cred:     cred,
 	}, nil
 }
 
-// parseOfficeJWT อ่านตัวตนจาก payload ของ office-api JWT ตรง ๆ
+// parseOfficeJWT อ่านตัวตนจาก payload ของ JWT หลังบ้านตรง ๆ
 //
-// JWT ของ office-api = HS256 · payload = { exp, result: EmployeeModel }
-// (middlewares/auth.go:31-35 ของ office-api-v10) โดย result มี id/username/role
-// ที่มี permission กับ list_service ครบ — เหมือนที่ /api/employees-permission คืน
+// JWT = HS256 · payload = { exp, result: EmployeeModel } โดย result มี id/username/role
+// ที่มี permission กับ list_service ครบ
 //
 // ██ เราอ่านเฉพาะ payload · ไม่ verify signature เพราะ secret ผูกกับ UA+IP (O9)
 // ██ ที่ฝั่ง server คำนวณซ้ำไม่ได้ ทางที่ถูกระยะยาวคือ service token แยก (survey §2.4 B)
@@ -150,9 +143,9 @@ func parseOfficeJWT(token string) (domain.Caller, error) {
 			ID       string `json:"id"`
 			Username string `json:"username"`
 			Role     struct {
-				Name        string `json:"name"`
-				Level       int32  `json:"level"`
-				Permission  []struct {
+				Name       string `json:"name"`
+				Level      int32  `json:"level"`
+				Permission []struct {
 					Code string `json:"code"`
 				} `json:"permission"`
 				ListService []struct {
@@ -188,7 +181,7 @@ func parseOfficeJWT(token string) (domain.Caller, error) {
 			caller.Permissions = append(caller.Permissions, p.Code)
 		}
 	}
-	// เอาเฉพาะ service ที่ Permission == true (เหมือน EmployeeByID เดิม)
+	// เอาเฉพาะ service ที่ Permission == true — ตัวที่ false คือมีชื่อแต่ไม่ให้เข้า
 	for _, s := range res.Role.ListService {
 		if s.Permission && s.Service != "" {
 			caller.Services = append(caller.Services, s.Service)

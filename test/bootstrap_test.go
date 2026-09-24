@@ -120,14 +120,15 @@ func TestBootstrap_EmptyAllowlistMeansEveryone(t *testing.T) {
 	}
 }
 
-// แต่ถ้า allowlist มีรายชื่อ ต้องกรองเฉพาะคนในลิสต์
-func TestBootstrap_NonEmptyAllowlistStillFilters(t *testing.T) {
+// ยกเลิก allowlist แล้ว — แม้ service จะมีรายชื่อเดิมติดอยู่ ใครที่ล็อกอิน + มีสิทธิ์
+// service นั้น ก็ใช้ AI ได้ทุกคน (ไม่กรองรายคนอีกต่อไป)
+func TestBootstrap_AllowlistNoLongerFilters(t *testing.T) {
 	r := newRouter(t, realOffice()) // K11S allowlist = [adm_ploy]
 
-	tok := officeJWT("someone_new", map[string]bool{"K11S": true}, nil)
-	_, b, _ := getBoot(t, r, demoKey, "K11S", tok)
-	if b.Enabled || b.Reason != "not_in_allowlist" {
-		t.Fatalf("คนนอกลิสต์ต้องโดน not_in_allowlist: %+v", b)
+	tok := officeJWT("someone_new", map[string]bool{"K11S": true}, nil) // ไม่อยู่ในลิสต์
+	code, b, raw := getBoot(t, r, demoKey, "K11S", tok)
+	if code != http.StatusOK || !b.Enabled {
+		t.Fatalf("ยกเลิก allowlist แล้ว ทุกคนที่ล็อกอิน+มีสิทธิ์ service ต้องผ่าน: %d %s", code, raw)
 	}
 }
 

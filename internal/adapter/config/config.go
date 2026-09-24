@@ -2,25 +2,18 @@ package config
 
 import (
 	"os"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/joho/godotenv"
 )
 
+// Container เก็บเฉพาะค่าที่มาจาก env จริง 6 ตัว: APP_MODE, HTTP_PORT, STORE_DRIVER,
+// DB_URI, DB_NAME, CONSOLE_JWT_SECRET · ค่าคงที่อื่น ๆ (CORS origin, TTL, timeout,
+// path ของ file store) ไม่ได้อยู่ตรงนี้ — ฝังไว้ที่จุดใช้ใน _cmd/main.go แทน
 type Container struct {
-	App        *App
-	HTTP       *HTTP
-	Store      *Store
-	Admin      *Admin
-	Backoffice *Backoffice
-}
-
-// Backoffice = office-api-v10 · base url อยู่ราย office ในฐานข้อมูล ไม่ได้อยู่ตรงนี้
-type Backoffice struct {
-	Timeout     time.Duration
-	IdentityTTL time.Duration
+	App     *App
+	HTTP    *HTTP
+	Store   *Store
+	Console *Console
 }
 
 type App struct {
@@ -30,21 +23,21 @@ type App struct {
 func (a *App) IsDev() bool { return a.Mode != "production" }
 
 type HTTP struct {
-	Port           string
-	AllowedOrigins []string
+	Port string
 }
 
 type Store struct {
-	Driver     string // mongo | file
-	ConfigPath string // ใช้เมื่อ Driver=file
-	URI        string // ██ secret — ห้าม log
-	DBName     string
+	Driver string // mongo | file
+	URI    string // ██ secret — ห้าม log
+	DBName string
 }
 
 func (s *Store) IsMongo() bool { return s.Driver == "mongo" }
 
-type Admin struct {
-	ConsoleToken string
+// Console = ai-office console auth (JWT session)
+// JWTSecret ██ secret ห้าม log — ใช้เซ็น/ตรวจ session token
+type Console struct {
+	JWTSecret string
 }
 
 func New() (*Container, error) {
@@ -53,32 +46,15 @@ func New() (*Container, error) {
 	_ = godotenv.Load()
 
 	return &Container{
-		App: &App{Mode: env("APP_MODE", "dev")},
-		HTTP: &HTTP{
-			Port:           env("HTTP_PORT", "6767"),
-			AllowedOrigins: split(env("HTTP_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174")),
-		},
+		App:  &App{Mode: env("APP_MODE", "dev")},
+		HTTP: &HTTP{Port: env("HTTP_PORT", "6767")},
 		Store: &Store{
-			Driver:     env("STORE_DRIVER", "file"),
-			ConfigPath: env("CONFIG_STORE_PATH", "./data/offices.json"),
-			URI:        os.Getenv("DB_URI"),
-			DBName:     env("DB_NAME", "ai_office"),
+			Driver: env("STORE_DRIVER", "file"),
+			URI:    os.Getenv("DB_URI"),
+			DBName: env("DB_NAME", "ai_office"),
 		},
-		Admin: &Admin{ConsoleToken: env("ADMIN_CONSOLE_TOKEN", "dev-console-token")},
-		Backoffice: &Backoffice{
-			Timeout:     envDuration("BACKOFFICE_TIMEOUT_MS", 8000),
-			IdentityTTL: envDuration("IDENTITY_CACHE_TTL_MS", 60000),
-		},
+		Console: &Console{JWTSecret: env("CONSOLE_JWT_SECRET", "dev-console-jwt-secret")},
 	}, nil
-}
-
-func envDuration(k string, defMS int) time.Duration {
-	if v := os.Getenv(k); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Millisecond
-		}
-	}
-	return time.Duration(defMS) * time.Millisecond
 }
 
 func env(k, def string) string {
@@ -86,14 +62,4 @@ func env(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func split(s string) []string {
-	out := []string{}
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }

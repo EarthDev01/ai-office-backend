@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"ai-office-backend/internal/adapter/auth"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
-	httpreq "ai-office-backend/internal/adapter/handler/http_request"
 	"ai-office-backend/internal/adapter/storage/filestore"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/service"
@@ -21,13 +21,14 @@ import (
 )
 
 const (
-	consoleToken = "test-console-token"
-	officeOrigin = "http://office.test"
-	demoKey      = "pk_demo_test"
+	consoleToken     = "test-console-token"
+	officeOrigin     = "http://office.test"
+	demoKey          = "pk_demo_test"
+	consoleJWTSecret = "test-console-jwt-secret"
 )
 
-// officeJWT สร้าง office-api JWT จริง (HS256, payload = {exp, result: EmployeeModel})
-// แบบเดียวกับที่ office-v10x เก็บใน localStorage["auth_token"]
+// officeJWT สร้าง JWT หลังบ้าน (HS256, payload = {exp, result: EmployeeModel})
+// ที่หน้า office เก็บใน localStorage["auth_token"]
 //
 // backend อ่านตัวตนจาก payload นี้ตรง ๆ (ไม่ verify signature — ดู parseOfficeJWT)
 // services: service id -> permission(true/false) ตาม Role.ListService
@@ -89,14 +90,31 @@ func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	cuRepo, err := filestore.NewConsoleUserRepository(filepath.Join(t.TempDir(), "console_users.json"))
+	if err != nil {
+		t.Fatalf("open console user store: %v", err)
+	}
+	rmRepo, err := filestore.NewRoleMatrixRepository(filepath.Join(t.TempDir(), "role_permissions.json"))
+	if err != nil {
+		t.Fatalf("open role permission store: %v", err)
+	}
+	permSvc := service.NewPermissionService(rmRepo)
+	authSvc := service.NewConsoleAuth(
+		cuRepo,
+		auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
+		auth.NewTOTPProvider("AI Office Console Test"),
+		auth.NewTicketIssuer(consoleJWTSecret, 5*time.Minute),
+		permSvc,
+		time.Now,
+	)
 	return httpgin.NewTestRouter(httpgin.Deps{
 		OfficeService: service.NewOfficeService(repo),
-		Identity: service.NewIdentityResolver(
-			httpreq.NewBackofficeClient(3*time.Second), 50*time.Millisecond, true),
+		Identity:      service.NewIdentityResolver(50*time.Millisecond, true),
 		BundlePath:    filepath.Join(t.TempDir(), "missing.js"),
+		Tokens:        auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
+		Auth:          authSvc,
+		Permissions:   permSvc,
 		ConsoleToken:  consoleToken,
-		AllowedOrigin: []string{"http://localhost:5173"},
-		DevMode:       true,
 	})
 }
 

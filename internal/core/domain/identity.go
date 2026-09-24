@@ -15,18 +15,13 @@ var (
 
 // Credential คือสิ่งที่หน้า office ส่งมาเพื่อยืนยันตัวตน
 //
-// office-v10x เก็บ token ไว้ที่ localStorage["auth_token"] แล้วส่งเป็น Authorization: Bearer
-// ไม่ใช่ cookie — ดู backoffice-api-survey.md §2.1
-//
-// UserAgent / ClientIP ต้องพกไปด้วยเพราะ office-api-v10 คำนวณ secret ของ JWT
-// จาก ACCESS_SECRET + User-Agent + IP ของ client (survey §2.2) — ยังเป็นข้อ O9 ที่รอตัดสิน
+// หน้า office เก็บ token ไว้ที่ localStorage["auth_token"] แล้วส่งเป็น Authorization: Bearer
+// ไม่ใช่ cookie
 type Credential struct {
-	Token     string
-	UserAgent string
-	ClientIP  string
+	Token string
 }
 
-// Caller คือตัวตนที่ตรวจแล้วจาก office-api-v10
+// Caller คือตัวตนที่อ่านได้จาก token ของหน้า office
 //
 // ServiceID ไม่ได้อยู่ในนี้โดยเจตนา — หน้าเว็บเป็นคนบอกว่ากำลังเปิด service ไหน
 // (เก็บที่ localStorage["web-service"] ไม่มี session ฝั่ง server ให้เอา)
@@ -39,30 +34,12 @@ type Caller struct {
 	Level       int32
 	Permissions []string // permission code จาก Role.Permission
 	Services    []string // service id จาก Role.ListService ที่ Permission == true
-	Cred        Credential
 }
 
-// CanAccessService — แหล่งความจริงว่าแอดมินคนนี้เข้า service ไหนได้
-// มาจาก Role.ListService ของ office-api-v10 (model/employee.go:157)
+// CanAccessService — แหล่งความจริงว่าแอดมินคนนี้เข้า service ไหนได้ (มาจาก Role.ListService)
 func (c Caller) CanAccessService(serviceID string) bool {
 	for _, s := range c.Services {
 		if s == serviceID {
-			return true
-		}
-	}
-	return false
-}
-
-// Matches ใช้กับ allowlist ที่คนกรอกในคอนโซล
-//
-// คนกรอก "username" เป็นหลัก แต่ยอมรับ id ด้วยเผื่อบางที่ใช้ id
-func (c Caller) Matches(v string) bool {
-	return v != "" && (v == c.Username || v == c.AdminID)
-}
-
-func (c Caller) HasPermission(code string) bool {
-	for _, p := range c.Permissions {
-		if p == code {
 			return true
 		}
 	}

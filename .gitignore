@@ -3,3 +3,4 @@ data/*.json
 node_modules/
 widget/node_modules/
 .DS_Store
+.superpowers/

@@ -35,5 +35,4 @@ type OfficeService interface {
 	Bootstrap(ctx context.Context, publicKey, serviceID, origin string, caller domain.Caller) (domain.Bootstrap, error)
 	// ResolveByPublicKey ใช้ตอน serve bundle — ตรวจแค่ว่า key มีจริงและ office เปิดอยู่
 	ResolveByPublicKey(ctx context.Context, publicKey string) (domain.Office, error)
-	AllowedOrigins(ctx context.Context) []string
 }

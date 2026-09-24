@@ -10,6 +10,7 @@ import (
 	"ai-office-backend/internal/adapter/handler/gin/routes"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
+	"ai-office-backend/internal/core/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,7 +27,7 @@ const (
 //
 // หมายเหตุ: service_id ไม่ใช่ "ค่าต้องห้าม" อีกต่อไป (หน้าเว็บเป็นคนรู้ว่าเปิด service ไหน
 // อยู่ที่ localStorage["web-service"]) แต่ต้องมาทาง path เท่านั้น แล้วเราตรวจกับ
-// Role.ListService ของแอดมินคนนั้นก่อนเสมอ — ดู backoffice-api-survey.md §3
+// Role.ListService ของแอดมินคนนั้นก่อนเสมอ
 var tenantKeys = map[string]bool{
 	"service_id": true, "serviceid": true, "service": true,
 	"website_id": true, "websiteid": true, "website": true,
@@ -109,18 +110,13 @@ func ResolveOffice(svc port.OfficeService) gin.HandlerFunc {
 	}
 }
 
-// ResolveCaller เอา Bearer token ไปถาม office-api-v10 ว่าเป็นใคร
-//
-// office-v10x เก็บ token ที่ localStorage["auth_token"] แล้วส่งเป็น Authorization: Bearer
-// ไม่ใช่ cookie (backoffice-api-survey.md §2.1)
+// ResolveCaller อ่าน Bearer token ของหน้า office ว่าเป็นใคร
 func ResolveCaller(r port.IdentityResolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		office := OfficeFrom(c)
 
 		cred := domain.Credential{
-			Token:     strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")),
-			UserAgent: c.GetHeader("User-Agent"),
-			ClientIP:  c.ClientIP(),
+			Token: strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")),
 		}
 
 		caller, err := r.Resolve(c.Request.Context(), office, cred)
@@ -163,54 +159,105 @@ func OfficeFrom(c *gin.Context) domain.Office {
 	return o
 }
 
+const (
+	ConsoleUserIDKey   = "console_user_id"
+	ConsoleUsernameKey = "console_username"
+	ConsoleRoleKey     = "console_role"
+)
+
 // ConsoleAuth คุม /api/ai/admin/* ซึ่งอ่านข้อมูลข้ามทุกเว็บ
 //
-// ██ รอบนี้เป็น static token · ของจริงต้องเป็น JWT คนละ secret กับแอดมินเว็บ
-// ██ เพราะแอดมินของเว็บต้องเข้าคอนโซลนี้ไม่ได้ (04-SPEC §7)
-func ConsoleAuth(token string) gin.HandlerFunc {
+// ตรวจด้วย JWT (คนละ secret กับแอดมินเว็บ เพราะแอดมินของเว็บต้องเข้าคอนโซลนี้ไม่ได้
+// — 04-SPEC §7) ยกเว้น breakGlass token (ถ้าตั้งไว้) ที่ผ่านได้ทันทีในฐานะ admin
+// ██ ห้าม log ทั้ง token และ breakGlass
+func ConsoleAuth(tokens port.TokenIssuer, breakGlass string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		got := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		if got == "" || got != token {
+		got := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+		if got == "" {
+			routes.ResData(c, http.StatusUnauthorized, "UNAUTHORIZED", "ไม่พบ token", nil)
+			c.Abort()
+			return
+		}
+
+		if breakGlass != "" && got == breakGlass {
+			c.Set(ConsoleRoleKey, domain.RoleAdmin)
+			c.Set(ConsoleUsernameKey, "break-glass")
+			c.Set(ConsoleUserIDKey, "")
+			c.Next()
+			return
+		}
+
+		claims, err := tokens.Verify(got)
+		if err != nil {
 			routes.ResData(c, http.StatusUnauthorized, "UNAUTHORIZED", "console token ไม่ถูกต้อง", nil)
 			c.Abort()
 			return
 		}
-		c.Set("console_actor", "console")
+
+		c.Set(ConsoleUserIDKey, claims.UserID)
+		c.Set(ConsoleUsernameKey, claims.Username)
+		c.Set(ConsoleRoleKey, claims.Role)
 		c.Next()
 	}
 }
 
-// CORS เปิดให้ origin ของคอนโซล (จาก env) + origin ของทุก office (จาก DB)
-//
-// ส่วนที่มาจาก DB ทำให้เพิ่มลูกค้าใหม่ได้โดยไม่ต้อง deploy
-// อ่านใหม่ทุก request เพราะรายการเปลี่ยนได้ตลอดจากคอนโซล
-func CORS(static []string, dynamic func() []string) gin.HandlerFunc {
+// RequireRole ปฏิเสธ request ที่ role ต่ำกว่า min (ต้องมาหลัง ConsoleAuth เสมอ)
+func RequireRole(min domain.Role) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		allowed := false
-		if origin != "" {
-			for _, o := range static {
-				if o == origin {
-					allowed = true
-					break
-				}
-			}
-			if !allowed && dynamic != nil {
-				for _, o := range dynamic() {
-					if o == origin {
-						allowed = true
-						break
-					}
-				}
-			}
+		role := ConsoleRoleFrom(c)
+		if !role.AtLeast(min) {
+			routes.ResData(c, http.StatusForbidden, "FORBIDDEN", "สิทธิ์ไม่พอ", nil)
+			c.Abort()
+			return
 		}
-		if allowed {
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-			c.Header("Vary", "Origin")
+		c.Next()
+	}
+}
+
+// RequirePermission ปฏิเสธ request ที่ role ปัจจุบันไม่มี permission key นี้ตาม RoleMatrix
+// (ต้องมาหลัง ConsoleAuth เสมอ)
+//
+// break-glass เข้ามาเป็น role admin เสมอ (ดู ConsoleAuth) — admin ทุกคนจึงผ่านด่านนี้ได้ตรง ๆ
+// โดยไม่ต้องเช็ค matrix เลย กันไม่ให้ config ผิดพลาดล็อกทางเข้าตั้งค่าตัวเอง (anti-lockout)
+func RequirePermission(perm string, perms *service.PermissionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := ConsoleRoleFrom(c)
+		if role == domain.RoleAdmin {
+			c.Next()
+			return
 		}
+		ok, err := perms.Can(c.Request.Context(), role, perm)
+		if err != nil {
+			routes.ResData(c, http.StatusInternalServerError, "INTERNAL", "ตรวจสิทธิ์ไม่สำเร็จ", nil)
+			c.Abort()
+			return
+		}
+		if !ok {
+			routes.ResData(c, http.StatusForbidden, "FORBIDDEN", "ไม่มีสิทธิ์ทำรายการนี้", nil)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// ConsoleRoleFrom อ่าน role ของ console user จาก context (ต้องผ่าน ConsoleAuth มาก่อน)
+func ConsoleRoleFrom(c *gin.Context) domain.Role {
+	v, _ := c.Get(ConsoleRoleKey)
+	role, _ := v.(domain.Role)
+	return role
+}
+
+// CORS เปิดทุก origin — ตอบ Access-Control-Allow-Origin: *
+// ให้ทุกคำขอ ไม่เช็ค allowlist
+//
+// ไม่ตั้ง Allow-Credentials: true เพราะเบราว์เซอร์ห้ามใช้คู่กับ "*" · คอนโซลส่ง
+// token ผ่าน Authorization header (Bearer) อยู่แล้ว ไม่ได้พึ่ง cookie
+func CORS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return

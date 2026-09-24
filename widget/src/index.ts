@@ -331,6 +331,12 @@ if (self) {
     }
   }
   const boot = () => {
+    // โหมด preview (หน้า console) ไม่มี session ของ office — mount ครั้งเดียวเลย
+    // ไม่ต้องเฝ้า session (ตัวเฝ้าไว้สำหรับ widget จริงที่ฝังในหน้า office-v10x เท่านั้น)
+    if (ds.previewMount) {
+      void mount({ dataset: ds })
+      return
+    }
     sync()
     setInterval(sync, 800)
   }
