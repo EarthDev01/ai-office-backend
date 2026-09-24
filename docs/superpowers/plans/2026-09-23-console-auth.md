@@ -291,7 +291,7 @@ type ConsoleUserRepository interface {
 
 `filestore/console_user.go` — mirror `office.go`: struct with `sync.RWMutex`, `path`, in-memory `map[string]domain.ConsoleUser` keyed by ID, plus lookup by `NormalizeUsername`. `Create` returns `ErrUsernameTaken` if any existing user has same normalized username. Persist to JSON on each write (reuse office.go's load/save helpers style).
 
-`mongodb/repository/console_user.go` — `const consoleUserCollection = "ai_console_users"`; in constructor create unique index on `username`. `Create` maps a duplicate-key error to `port.ErrUsernameTaken`; `ByUsername` uses `NormalizeUsername`; `mongo.ErrNoDocuments` → `port.ErrUserNotFound`. Follow `office.go` mongo repo exactly for connection/context handling.
+`mongodb/repository/console_user.go` — `const consoleUserCollection = "console_users"`; in constructor create unique index on `username`. `Create` maps a duplicate-key error to `port.ErrUsernameTaken`; `ByUsername` uses `NormalizeUsername`; `mongo.ErrNoDocuments` → `port.ErrUserNotFound`. Follow `office.go` mongo repo exactly for connection/context handling.
 
 - [ ] **Step 4: Run filestore test — expect PASS**
 

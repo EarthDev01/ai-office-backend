@@ -20,6 +20,7 @@ type Deps struct {
 	Permissions   *service.PermissionService
 	Audit         *service.AuditService // nil = ไม่บันทึก/ไม่เปิด endpoint ประวัติ
 	ConsoleToken  string
+	LLM           port.LLMClient // nil = ปิดแชท
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -59,9 +60,13 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	bootstrap := func(c *gin.Context) { boot.Bootstrap(c, OfficeFrom(c), CallerFrom(c)) }
 
+	chatHandler := routes.NewChatHandler(d.OfficeService, d.LLM)
+	chat := func(c *gin.Context) { chatHandler.Chat(c, OfficeFrom(c), CallerFrom(c)) }
+
 	api := r.Group("/api/ai/widget/service/:service_id", widgetAPI...)
 	{
 		api.GET("/bootstrap", bootstrap)
+		api.POST("/chat", chat)
 	}
 	// ██ path เก่าที่มี key (snippet รุ่นก่อน) — key ไม่ถูกใช้แล้ว หา office จาก Origin เหมือนกัน
 	// ลบได้เมื่อไม่มี officeลูกค้า ไหนใช้ snippet เก่าแล้ว

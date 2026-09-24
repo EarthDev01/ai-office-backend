@@ -11,6 +11,8 @@ import (
 	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/adapter/config"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
+	"ai-office-backend/internal/adapter/llm/gemini"
+	"ai-office-backend/internal/adapter/llm/openaicompat"
 	"ai-office-backend/internal/adapter/storage/filestore"
 	mongodb "ai-office-backend/internal/adapter/storage/mongodb"
 	"ai-office-backend/internal/adapter/storage/mongodb/repository"
@@ -158,6 +160,20 @@ func main() {
 	permSvc := service.NewPermissionService(rmRepo, auditSvc)
 	authSvc := service.NewConsoleAuth(cuRepo, tokens, totpP, tickets, permSvc, auditSvc, time.Now)
 
+	// แชท ██ SPIKE — ไม่มี key = ปิดแชท แต่ระบบส่วนอื่นยังทำงานปกติ
+	var llm port.LLMClient
+	switch {
+	case cfg.LLM.Provider == "glm" && cfg.LLM.GLMKey != "":
+		// glm-5.3 ปิดการคิดได้เฉพาะ endpoint coding — ปิดแล้วตอบไวกว่า low ราว 2 เท่า
+		llm = openaicompat.New(cfg.LLM.GLMBaseURL, cfg.LLM.GLMKey, cfg.LLM.GLMModel, map[string]string{"type": "disabled"})
+		fmt.Printf("[INFO] chat LLM: glm · model=%s ✔\n", cfg.LLM.GLMModel)
+	case cfg.LLM.Provider == "gemini" && cfg.LLM.APIKey != "":
+		llm = gemini.New(cfg.LLM.APIKey, cfg.LLM.Model)
+		fmt.Printf("[INFO] chat LLM: gemini · model=%s ✔\n", cfg.LLM.Model)
+	default:
+		fmt.Printf("[WARN] LLM_PROVIDER=%s แต่ไม่มี key ของตัวนั้น — ปิดแชท (/chat ตอบ 503)\n", cfg.LLM.Provider)
+	}
+
 	r := httpgin.NewRouter(httpgin.Deps{
 		OfficeService: officeService,
 		Identity:      identity,
@@ -168,6 +184,7 @@ func main() {
 		Audit:         auditSvc,
 		// break-glass token ปิดอยู่ (ค่าว่าง) — เข้าผ่าน login จริงเท่านั้น
 		ConsoleToken: "",
+		LLM:          llm,
 	})
 
 	addr := ":" + cfg.HTTP.Port

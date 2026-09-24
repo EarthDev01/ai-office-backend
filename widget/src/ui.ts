@@ -49,13 +49,14 @@ export function buildUI(root: ShadowRoot): UI {
 }
 
 /** ข้อความทุกชิ้นลงด้วย textContent — ไม่มี innerHTML กับข้อความที่ไม่ได้มาจากเรา */
-export function addBubble(log: HTMLDivElement, who: 'me' | 'ai', text: string) {
+export function addBubble(log: HTMLDivElement, who: 'me' | 'ai', text: string): HTMLDivElement {
   const row = el('div', 'row ' + who)
-  const b = el('div', 'bubble')
+  const b = el('div', 'bubble') as HTMLDivElement
   b.textContent = text
   row.appendChild(b)
   log.appendChild(row)
   log.scrollTop = log.scrollHeight
+  return b
 }
 
 export function addNote(log: HTMLDivElement, text: string) {

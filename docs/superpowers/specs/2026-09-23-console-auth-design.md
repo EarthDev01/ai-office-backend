@@ -38,7 +38,7 @@ port/console_user.go          ConsoleUserRepository (interface)
 port/token.go                 TokenIssuer (mint/verify JWT) — เผื่อ mock ใน test
 service/console_auth.go       Register, Login, Me, ChangePIN, CreateUser, ListUsers,
                               PatchUser, ResetPIN, Delete + logic lockout/hash
-adapter/storage/mongodb/repository/console_user.go   collection "ai_console_users"
+adapter/storage/mongodb/repository/console_user.go   collection "console_users"
 adapter/storage/filestore/console_user.go            JSON store (dev)
 adapter/handler/http_request หรือ crypto/…           bcrypt + golang-jwt (มาตรฐาน)
 adapter/handler/gin/routes/auth.go                   handlers auth + users
@@ -69,7 +69,7 @@ type ConsoleUser struct {
 }
 ```
 
-- Mongo collection `ai_console_users`, unique index บน `username` (lowercase)
+- Mongo collection `console_users`, unique index บน `username` (lowercase)
 - Filestore: JSON ที่ `CONFIG_STORE_PATH` ข้าง offices (เช่น `./data/console_users.json`)
 - **PIN validate:** `^\d{6}$` เท่านั้น (ปฏิเสธ 6 ตัวซ้ำ/เรียง เช่น 000000, 123456 — optional เตือน ไม่บล็อก)
 
