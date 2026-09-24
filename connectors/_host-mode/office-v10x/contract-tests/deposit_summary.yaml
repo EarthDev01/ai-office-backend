@@ -1,0 +1,44 @@
+tool: deposit_summary
+cases:
+  - name: ยอดฝากวันนี้ (ตัวอย่าง catalog R2)
+    responses:
+      s:
+        body:
+          code: 0
+          message: SUCCESS
+          data:
+            range: {from: "2026-09-24T00:00:00+07:00", to: "2026-09-25T00:00:00+07:00", timezone: Asia/Bangkok}
+            total: {count: 412, amount: 198500}
+            success: {count: 405, amount: 195300}
+            by_status: [{status: 1, count: 405, amount: 195300}, {status: 2, count: 5, amount: 2200}, {status: 6, count: 2, amount: 1000}]
+            by_channel: [{channel: GATEWAY, count: 120, amount: 61000}, {channel: SMS, count: 292, amount: 137500}]
+            remain: {count: 3, amount: 1500}
+    expect:
+      status: ok
+      calls:
+        s: {path: /api/ai/read/deposit-summary/DEMO-SVC, query: {from: "2026-09-24", to: "2026-09-24"}}
+      fields:
+        รายการฝากทั้งหมด: "412 รายการ"
+        ยอดฝากทั้งหมด: "198,500.00 บาท"
+        ฝากสำเร็จ: "405 รายการ"
+        ตกค้าง: "3 รายการ"
+        ยอดตกค้าง: "1,500.00 บาท"
+      table_rows: 3
+      table_cells:
+        - [สำเร็จ, "405 รายการ", "195,300.00"]
+        - [รอคิว, "5 รายการ", "2,200.00"]
+        - [เครดิตค้าง, "2 รายการ", "1,000.00"]
+      model_context: {has_remain: true, has_unfinished: true, statuses: [สำเร็จ, รอคิว, เครดิตค้าง]}
+      link: /transection/deposit
+  - name: ไม่มีฝากและไม่มีตกค้าง = ไม่พบ ไม่ใช่ศูนย์บาท
+    responses:
+      s: {body: {code: 0, data: {total: {count: 0, amount: 0}, success: {count: 0, amount: 0}, by_status: [], by_channel: [], remain: {count: 0, amount: 0}}}}
+    expect: {status: not_found}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      s: {status: 500, body: {code: 500, message: INTERNAL_ERROR, data: null}}
+    expect:
+      status: error
+      calls:
+        s: {query: {from: "2026-09-25", to: "2026-09-25"}}

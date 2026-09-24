@@ -1,0 +1,88 @@
+# rule สิทธิ์ของ office-abatech
+# ██ rule ที่ tool ใช้ต้องตรงกับ AIRequire ของ route ฝั่ง host เป๊ะ ๆ (GOTOPOPOFFICE/ai/read_routes.go readRouteTable)
+#    ไม่งั้น backend ผ่านแต่ host ตอบ 403 PERMISSION_DENIED
+# ██ rule ของเมนู/แท็บที่ไม่มี tool (menu_* / tab_*) ใช้กรอง lookup_menu เท่านั้น — mirror UI:
+#    เมนูต่อเว็บ plugins/menulist.js (GetPermission code + Isactive==1 · layouts/menu.vue:426-447)
+#    เมนูหลัก plugins/menumain.js (SideBar.vue:477-503) · แท็บ /Credit pages/Credit/index.vue:96-160
+# code = code ที่ host ใส่ใน user.permissions (Role.Permission ที่ IsActive==1)
+rules:
+  # ---------- rule ของ tool (ตรง host) ----------
+  dashboard:      {any_of: [P001], menu: รายงานภาพรวม, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายงานภาพรวม ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  deposit:        {any_of: [P003], menu: รายการฝาก, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายการฝาก ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  withdraw:       {any_of: [P004], menu: รายการถอน, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายการถอน ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  member:         {any_of: [P006], menu: รายการสมาชิก, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายการสมาชิก ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  bank_pending:   {any_of: [P061], menu: รายการสมาชิกที่รอตรวจสอบ, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายการสมาชิกที่รอตรวจสอบ ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  bank_accounts:  {any_of: [P013], menu: จัดการบัญชีธนาคาร, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู จัดการบัญชีธนาคาร ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  promotion:      {any_of: [P010], menu: จัดการโปรโมชั่น, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู จัดการโปรโมชั่น ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  profit_loss:    {any_of: [P019], menu: รายงานกำไรขาดทุน, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู รายงานกำไรขาดทุน ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  staff_log:      {any_of: [M005], menu: รายงานการทำงานของพนักงาน, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนูหลัก รายงานการทำงานของพนักงาน ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  credit:         {any_of: [P008], menu: ระบบจัดการเครดิตสมาชิก, grant_hint: ให้หัวหน้าหรือผู้ดูแลสิทธิ์เปิดสิทธิ์เมนู ระบบจัดการเครดิตสมาชิก ในเมนู ตั้งค่าสิทธิ์การใช้งาน}
+  # กระดิ่งบิล TopNavbar.vue:196 แสดงเมื่อ level ถึงเกณฑ์ (host: MinLevel)
+  bills:          {min_level: 7, menu: บิลค่าใช้จ่ายระบบ, grant_hint: หน้าบิลค่าใช้จ่ายระบบเปิดให้เฉพาะพนักงานระดับหัวหน้าขึ้นไป ให้หัวหน้าเป็นผู้ตรวจบิลหรือขอปรับระดับกับผู้ดูแลระบบ}
+  # เมนู/เครดิตระบบ/SMS: host ใช้ logged_in (D-91)
+  logged_in:      {logged_in: true}
+
+  # ---------- แท็บหน้า /Credit (กรอง lookup_menu) ----------
+  tab_check_credit:        {any_of: ["8001"], menu: เช็คเครดิต, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ เช็คเครดิต ใต้เมนู ระบบจัดการเครดิตสมาชิก}
+  tab_check_credit_wallet: {any_of: ["8007"], menu: เช็คเครดิต กระเป๋าเงินสด, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ เช็คเครดิต กระเป๋าเงินสด}
+  tab_return_credit:       {any_of: ["8002"], menu: คืนเครดิต, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ คืนเครดิต}
+  tab_delete_credit:       {any_of: ["8003"], menu: ลบเครดิต, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ ลบเครดิต}
+  tab_free_bonus:          {any_of: ["8004"], menu: แจกโบนัสฟรี, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ แจกโบนัสฟรี ใต้เมนู ระบบจัดการเครดิตสมาชิก}
+  tab_edit_turn:           {any_of: ["8005"], menu: แก้ไขเทิร์น, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ แก้ไขเทิร์น}
+  tab_free_point:          {any_of: ["8006"], menu: แจกแต้ม, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ แจกแต้ม}
+  tab_free_ticket:         {any_of: ["8008"], menu: แจกตั๋ว, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ แจกตั๋ว}
+  tab_free_wallet:         {any_of: ["8009"], menu: แจกยอดแนะนำเพื่อน, grant_hint: ให้ผู้ดูแลสิทธิ์เปิดสิทธิ์แท็บ แจกยอดแนะนำเพื่อน}
+
+  # ---------- เมนูต่อเว็บที่ไม่มี tool (plugins/menulist.js) ----------
+  menu_p002:  {any_of: [P002], menu: รายงานโบนัส}
+  menu_p005:  {any_of: [P005], menu: รายการกิจกรรมต่าง ๆ}
+  menu_p007:  {any_of: [P007], menu: ระบบตรวจสอบความถูกต้อง}
+  menu_p009:  {any_of: [P009], menu: เพิ่มรายการฝาก}
+  menu_p011:  {any_of: [P011], menu: ตั้งค่าพื้นฐานระบบ}
+  menu_p012:  {any_of: [P012], menu: ตั้งค่าระบบแจ้งเตือน}
+  menu_p014:  {any_of: [P014], menu: ตั้งค่าไลน์บอทสำหรับลูกค้า}
+  menu_p015:  {any_of: [P015], menu: กิจกรรมแจกแต้ม}
+  menu_p016:  {any_of: [P016], menu: คูปอง}
+  menu_p017:  {any_of: [P017], menu: รายงานกงล้อ}
+  menu_p018:  {any_of: [P018], menu: ส่งข้อความ}
+  menu_p020:  {any_of: [P020], menu: ตั้งค่าแจ้งเตือนระบบผ่านไลน์}
+  menu_p021:  {any_of: [P021], menu: รายการสมาชิก WISDOM}
+  menu_p023:  {any_of: [P023], menu: ตั้งค่ารูปแบบเกมส์}
+  menu_p024:  {any_of: [P024], menu: ฝากกินดอกเบี้ย}
+  menu_p025:  {any_of: [P025], menu: กงล้อ}
+  menu_p026:  {any_of: [P026], menu: ตั้งค่ารูปแบบเว็บไซต์}
+  menu_p027:  {any_of: [P027], menu: ระบบส่งข้อความอัตโนมัติ}
+  menu_p028:  {any_of: [P028], menu: กิจกรรมเช็คอิน}
+  menu_p029:  {any_of: [P029], menu: Ranking}
+  menu_p030:  {any_of: [P030], menu: รายงานหวยแนะนำเพื่อน}
+  menu_p031:  {any_of: [P031], menu: ระบบแนะนำเพื่อน}
+  menu_p032:  {any_of: [P032], menu: รายงานแนะนำเพื่อน}
+  menu_p033:  {any_of: [P033], menu: Qr Payment}
+  menu_p034:  {any_of: [P034], menu: กล่องสุ่ม}
+  menu_p035:  {any_of: [P035], menu: กิจกรรมตัวคูณยอดฝาก}
+  menu_p037:  {any_of: [P037], menu: รายการโยกเงินอัตโนมัติ}
+  menu_p038:  {any_of: [P038], menu: รายงานหวยผลแพ้ชนะ}
+  menu_p039:  {any_of: [P039], menu: รายการสมาชิกที่โดนบล็อค}
+  menu_p040:  {any_of: [P040], menu: ตั้งค่าบทความ}
+  menu_p041:  {any_of: [P041], menu: รายงานกิจกรรมตัวคูณ}
+  menu_p043:  {any_of: [P043], menu: รายการสมาชิก VIP}
+  menu_p044:  {any_of: [P044], menu: ร้านค้า}
+  menu_p045:  {any_of: [P045], menu: ฝากประจำ}
+  menu_p046:  {any_of: [P046], menu: ทัวร์นาเมนต์}
+  menu_p048:  {any_of: [P048], menu: Payment}
+  menu_p049:  {any_of: [P049], menu: โควิด}
+  menu_p050:  {any_of: [P050], menu: บัตรกำนัล}
+  menu_p052:  {any_of: [P052], menu: ภารกิจ}
+  menu_p060:  {any_of: [P060], menu: รายการสมาชิกที่ปิดกิจกรรม}
+  menu_p062:  {any_of: [P062], menu: รายงานภารกิจ}
+  menu_crm01: {any_of: [CRM01], menu: Telesale}
+  # ---------- เมนูหลัก (plugins/menumain.js) ----------
+  menu_m002:  {any_of: [M002], menu: ตรวจสอบบัญชีธนาคาร}
+  menu_m003:  {any_of: [M003], menu: จัดการพนักงาน}
+  menu_m004:  {any_of: [M004], menu: ตั้งค่าสิทธิ์การใช้งาน}
+  menu_m006:  {any_of: [M006], menu: รวมการทำงานพนักงาน}
+  menu_m007:  {any_of: [M007], menu: รายงานตรวจ ถอน/ฝาก/คืน}
+  menu_m008:  {any_of: [M008], menu: ระบบติดตามลูกค้า}
+  menu_m009:  {any_of: [M009], menu: รายการฝาก QRCODE รวม}
+  menu_m010:  {any_of: [M010], menu: จัดการ IP การเข้าใช้งาน}
+  menu_m011:  {any_of: [M011], menu: มอนิเตอร์บัญชีฝาก}

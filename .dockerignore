@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+!.env.example
+data/
+widget/node_modules/
+node_modules/
+static/widget/*.js
+docs/
+.superpowers/
+**/*_test.go
+test/

@@ -1,0 +1,167 @@
+# R21 POST credit-check (legacy CheckCredit + RewriteCreditCheckBody) · R22 get-credit-list · R23 get-credit-real-wallet-list (legacy + query adapter)
+questions: [BQ-47, BQ-50]
+tools:
+  - name: member_credit_live
+    description: >-
+      เครดิตคงเหลือของสมาชิกรายคน ดึงสดจากระบบเกม (ยูสเซอร์เนมหรือเบอร์โทรที่สมัคร) · ใช้เมื่อถามว่าสมาชิกคนนี้มีเครดิตเท่าไหร่
+    questions: [BQ-47]
+    permission: credit_check
+    freshness: live
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมหรือเบอร์โทรของสมาชิก, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: c
+        method: POST
+        path: /api/ai/read/credit-check/{service}
+        body: {username: "{input.username}"}
+        timeout_ms: 15000
+        # handler เดิมตอบ code 1 ทั้ง "ไม่พบยูส" · "ไม่มีสิทธิ์" · "ระบบเกมไม่ตอบ" (แยกไม่ได้ — NOTES.md)
+        not_found_codes: [1]
+        schema:
+          type: object
+          required: [currentCredit, username]
+          properties:
+            currentCredit: {type: number}
+            username: {type: string}
+    values:
+      - {name: user, from: c, path: username}
+      - {name: credit, from: c, path: currentCredit}
+    not_found: {when: "false", message: ไม่พบยูสนี้ในระบบ หรือระบบเกมยังตอบกลับไม่ได้ในตอนนี้ — ตรวจชื่อยูสอีกครั้ง หรือเปิดหน้าข้อมูลสมาชิกเพื่อเช็กเอง}
+    card:
+      title: เครดิตคงเหลือของสมาชิก
+      fields:
+        - {label: ยูสเซอร์เนม, value: user}
+        - {label: เครดิตคงเหลือ, value: credit, format: money, suffix: " เครดิต"}
+      note: ดึงสดจากระบบเกม ณ เวลาที่ถาม
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: has_credit, type: bool, expr: "credit > 0"}
+
+  - name: credit_history
+    description: >-
+      ประวัติจัดการเครดิต (เพิ่ม/คืน และลบเครดิตมือ) ของวันหรือช่วงวัน ค้นด้วยยูสเซอร์เนมได้ แสดงยอด เครดิตก่อน-หลัง และผู้ดำเนินการ
+      · ไม่ระบุวัน = วันนี้ · ระบบไม่แยกว่ารายการไหนเพิ่มหรือลบ
+    questions: [BQ-50]
+    permission: manage_credit
+    freshness: summary
+    input:
+      username: {type: string, description: ยูสเซอร์เนมของสมาชิก (ค้นแบบมีคำนี้), pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: h
+        method: GET
+        path: /api/ai/read/get-credit-list/{service}
+        query:
+          username: "{input.username}"
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+          limit: "50"
+          page: "1"
+          order: "-1"
+        envelope: raw
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data, count, summary]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            summary: {type: number}
+            data:
+              type: array
+              items:
+                type: object
+                required: [datetime, username, bonus, before_credit, after_credit, operator_name]
+                properties:
+                  datetime: {type: string}
+                  username: {type: string}
+                  bonus: {type: number}
+                  before_credit: {type: number}
+                  after_credit: {type: number}
+                  operator_name: {type: string}
+    values:
+      - {name: rows, from: h, path: data}
+      - {name: total_count, from: h, path: count}
+      - {name: total_credit, from: h, path: summary}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติจัดการเครดิตในช่วงวันที่ถาม}
+    card:
+      title: ประวัติจัดการเครดิต
+      fields:
+        - {label: จำนวนรายการ, value: total_count, format: int, suffix: " รายการ"}
+        - {label: ยอดเครดิตรวม, value: total_credit, format: money}
+      table:
+        rows: rows
+        max_rows: 50
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอดเครดิต, field: bonus, format: money}
+          - {label: เครดิตก่อน, field: before_credit, format: money}
+          - {label: เครดิตหลัง, field: after_credit, format: money}
+          - {label: ผู้ดำเนินการ, field: operator_name}
+      note: รวมทั้งรายการเพิ่มและลบเครดิต ระบบไม่แยกประเภท (เหมือนหน้าจอ) ดูเครดิตก่อน-หลังประกอบ
+      link: {label: เปิดจัดการเครดิต, path: "/transection/managecredit?menu=credit"}
+    model_context:
+      - {name: mixed_add_remove, type: text, text: ประวัตินี้รวมทั้งเพิ่มและลบเครดิต ระบบไม่แยกประเภท}
+
+  - name: credit_wallet_history
+    description: ประวัติจัดการเครดิตกระเป๋าเงินสดของวันหรือช่วงวัน (ค้นด้วยยูสไม่ได้) · ไม่ระบุวัน = วันนี้
+    questions: [BQ-50]
+    permission: manage_credit
+    freshness: summary
+    input:
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: h
+        method: GET
+        path: /api/ai/read/get-credit-real-wallet-list/{service}
+        query:
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+          limit: "50"
+          page: "1"
+          order: "-1"
+        envelope: raw
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data, count, summary]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            summary: {type: number}
+            data:
+              type: array
+              items:
+                type: object
+                required: [datetime, username, amount, before_credit, after_credit, operator_name]
+                properties:
+                  datetime: {type: string}
+                  username: {type: string}
+                  amount: {type: number}
+                  before_credit: {type: number}
+                  after_credit: {type: number}
+                  operator_name: {type: string}
+    values:
+      - {name: rows, from: h, path: data}
+      - {name: total_count, from: h, path: count}
+      - {name: total_amount, from: h, path: summary}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติจัดการเครดิตกระเป๋าเงินสดในช่วงวันที่ถาม}
+    card:
+      title: ประวัติจัดการเครดิตกระเป๋าเงินสด
+      fields:
+        - {label: จำนวนรายการ, value: total_count, format: int, suffix: " รายการ"}
+        - {label: ยอดรวม, value: total_amount, format: money}
+      table:
+        rows: rows
+        max_rows: 50
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอด, field: amount, format: money}
+          - {label: เครดิตก่อน, field: before_credit, format: money}
+          - {label: เครดิตหลัง, field: after_credit, format: money}
+          - {label: ผู้ดำเนินการ, field: operator_name}
+      link: {label: เปิดจัดการเครดิต, path: "/transection/managecredit?menu=credit"}

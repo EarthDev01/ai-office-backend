@@ -1,0 +1,67 @@
+# R2 GET /api/ai/read/deposit-summary/:service — catalog §6 R2 + ai/read_deposit.go
+tool: deposit_summary
+cases:
+  - name: มีบัญชีฝาก 1 บัญชี + ตกค้าง
+    responses:
+      sum:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            date: "2026-09-24"
+            timezone: Asia/Bangkok
+            bank_accounts:
+              - {bank_code: KBANK, account_name: บจก. ตัวอย่าง, account_last4: "7890", deposit: 98000, remain: 1500, total: 99500, count: 57, insert_count: 2, insert_deposit: 1000, max_deposit: 2000000, today_deposit: 98000, deposit_limit_remaining: 1902000, last_statement_at: "2026-09-24T16:12:03+07:00"}
+            bank_totals: {accounts: 1, deposit: 98000, remain: 1500, total: 99500, count: 57, insert_count: 2, insert_deposit: 1000}
+            remain_items:
+              count: 3
+              amount: 1500
+              by_status_comment:
+                - {status: 2, comment: ไม่พบสมาชิก, count: 2, amount: 1000}
+                - {status: 3, comment: โปรโมชั่นผิดพลาด, count: 1, amount: 500}
+            credit_statements:
+              deposit: {by_status: [{status: 1, count: 400, amount: 97000, bonus: 4100}], count: 405, amount: 97900, bonus: 4100, success_count: 400, success_amount: 97000, success_bonus: 4100}
+              return_credit: {by_status: [], count: 0, amount: 0, bonus: 0, success_count: 0, success_amount: 0, success_bonus: 0}
+              delete_credit: {by_status: [], count: 0, amount: 0, bonus: 0, success_count: 0, success_amount: 0, success_bonus: 0}
+            fetched_at: "2026-09-24T14:32:00+07:00"
+    expect:
+      status: ok
+      calls: {sum: {path: /api/ai/read/deposit-summary/DEMO-SVC, query: {date: "2026-09-24"}}}
+      fields:
+        ยอดฝากเข้าบัญชี (สำเร็จ): "98,000.00 บาท"
+        ยอดตกค้าง: "1,500.00 บาท"
+        ยอดฝากทั้งหมด: "99,500.00 บาท"
+        รายการตกค้าง: "3 รายการ"
+        เติมเครดิตสำเร็จ: "400 รายการ"
+        รายการเติมเครดิตทั้งหมด: "405 รายการ"
+      table_rows: 1
+      table_cells: [[KBANK, บจก. ตัวอย่าง, "7890", "98,000.00", "1,500.00", "57 รายการ"]]
+      model_context: {has_remain: true, remain_statuses: [ตกค้าง, ตกค้างโปรโมชั่น], has_bank_accounts: true}
+      link: /Deposit?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: ข้ามเที่ยงคืน + วันที่ไม่มีรายการ = ศูนย์จริง ไม่ใช่ไม่พบ
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      sum:
+        body:
+          code: 0
+          payload:
+            date: "2026-09-25"
+            bank_accounts: []
+            bank_totals: {accounts: 0, deposit: 0, remain: 0, total: 0, count: 0, insert_count: 0, insert_deposit: 0}
+            remain_items: {count: 0, amount: 0, by_status_comment: []}
+            credit_statements:
+              deposit: {by_status: [], count: 0, amount: 0, bonus: 0, success_count: 0, success_amount: 0, success_bonus: 0}
+    expect:
+      status: ok
+      calls: {sum: {query: {date: "2026-09-25"}}}
+      fields: {ยอดฝากทั้งหมด: "0.00 บาท", รายการตกค้าง: "0 รายการ"}
+      table_rows: 0
+      model_context: {has_remain: false, has_bank_accounts: false}
+  - name: host ตอบผิดรูป (ไม่มี remain_items) = ดึงไม่ได้
+    responses:
+      sum: {body: {code: 0, payload: {date: "2026-09-24", bank_accounts: [], bank_totals: {accounts: 0, deposit: 0, remain: 0, total: 0, count: 0}, credit_statements: {deposit: {count: 0, amount: 0, success_count: 0, success_amount: 0, success_bonus: 0}}}}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: ระบบกำลังประมวลผล (429 HOST_BUSY)
+    responses:
+      sum: {status: 429, body: {code: 429, message: HOST_BUSY, payload: null}}
+    expect: {status: error, error_code: busy}

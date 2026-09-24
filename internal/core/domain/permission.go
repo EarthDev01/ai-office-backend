@@ -12,6 +12,17 @@ const (
 	PermOfficeDelete = "office.delete"
 	PermOfficeRotate = "office.rotate"
 	PermUserManage   = "user.manage"
+	PermAuditView    = "audit.view" // ดูประวัติการทำงานของผู้ใช้คอนโซล
+
+	// w-17 · ส่วนที่เพิ่มของคอนโซล (K1–K5)
+	PermSecretManage      = "secret.manage"      // ออก/หมุน/ยกเลิก secret_key ต่อ service
+	PermConversationRead  = "conversation.read"  // เปิดอ่านประวัติแชท (บันทึก access_log ทุกครั้ง)
+	PermVerificationWrite = "verification.write" // ตรวจคำตอบ ถูก/ผิด
+	PermQuotaView         = "quota.view"         // ดูโควตา/ต้นทุน/สรุป
+	PermQuotaManage       = "quota.manage"       // เพิ่มโควตาชั่วคราว
+	PermDeletionManage    = "deletion.manage"    // ลบข้อมูลตามคำขอ (PDPA)
+	PermSettingsManage    = "settings.manage"    // แก้ settings ระดับระบบ
+	PermAccessLogView     = "accesslog.view"     // ดูบันทึกการเข้าถึง
 )
 
 // roleKeyPattern: role key ต้องขึ้นต้นด้วยตัวอักษร a-z แล้วตามด้วย a-z0-9_- ยาว 2-30 ตัว
@@ -55,13 +66,16 @@ func DefaultRoleConfig() RoleConfig {
 		},
 		Matrix: map[string][]string{
 			string(RoleAdmin): {
-				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermOfficeRotate, PermUserManage,
+				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermOfficeRotate, PermUserManage, PermAuditView,
+				PermSecretManage, PermConversationRead, PermVerificationWrite, PermQuotaView, PermQuotaManage,
+				PermDeletionManage, PermSettingsManage, PermAccessLogView,
 			},
 			string(RoleOperator): {
 				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermOfficeRotate,
+				PermConversationRead, PermVerificationWrite, PermQuotaView,
 			},
 			string(RoleViewer): {
-				PermOfficeView,
+				PermOfficeView, PermQuotaView,
 			},
 		},
 	}
@@ -82,11 +96,24 @@ func PermissionCatalog() []struct {
 		{Key: PermOfficeDelete, Label: "ลบ office/service"},
 		{Key: PermOfficeRotate, Label: "เปลี่ยน public key"},
 		{Key: PermUserManage, Label: "จัดการผู้ใช้ และตั้งสิทธิ์ role"},
+		{Key: PermAuditView, Label: "ดูประวัติการทำงานของผู้ใช้"},
+		{Key: PermSecretManage, Label: "ออก/หมุน/ยกเลิก secret_key ของเว็บ"},
+		{Key: PermConversationRead, Label: "เปิดอ่านประวัติแชท (มีบันทึกการเข้าถึง)"},
+		{Key: PermVerificationWrite, Label: "ตรวจคำตอบ ถูก/ผิด"},
+		{Key: PermQuotaView, Label: "ดูโควตา ต้นทุน และสรุปการใช้งาน"},
+		{Key: PermQuotaManage, Label: "เพิ่มโควตาชั่วคราว"},
+		{Key: PermDeletionManage, Label: "ลบข้อมูลตามคำขอ (PDPA)"},
+		{Key: PermSettingsManage, Label: "แก้ตั้งค่าระดับระบบ"},
+		{Key: PermAccessLogView, Label: "ดูบันทึกการเข้าถึงข้อมูล"},
 	}
 }
 
 // Can เช็คว่า role (key) นี้มี permission key นี้ไหม
 func (c RoleConfig) Can(role string, perm string) bool {
+	// admin ได้ทุกสิทธิ์เสมอ — ตารางที่บันทึกไว้ก่อนเพิ่มสิทธิ์ใหม่ต้องไม่ทำให้ admin มองไม่เห็นเมนูใหม่
+	if role == string(RoleAdmin) {
+		return true
+	}
 	for _, p := range c.Matrix[role] {
 		if p == perm {
 			return true
@@ -97,6 +124,13 @@ func (c RoleConfig) Can(role string, perm string) bool {
 
 // For คืน permission key ทั้งหมดของ role นี้ (ใช้ตอบ /auth/me)
 func (c RoleConfig) For(role string) []string {
+	if role == string(RoleAdmin) {
+		all := []string{}
+		for _, p := range PermissionCatalog() {
+			all = append(all, p.Key)
+		}
+		return all
+	}
 	out := c.Matrix[role]
 	if out == nil {
 		return []string{}

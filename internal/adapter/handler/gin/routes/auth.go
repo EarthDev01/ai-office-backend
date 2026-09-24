@@ -210,6 +210,12 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	ResData(c, http.StatusOK, "OK", "", gin.H{"user": u, "permissions": perms, "role_label": label})
 }
 
+// Logout บันทึกการออกจากระบบ — FE เรียกก่อนล้าง token ฝั่งตัวเอง (ไม่สำเร็จก็ออกได้ตามปกติ)
+func (h *AuthHandler) Logout(c *gin.Context) {
+	h.auth.Logout(c.Request.Context())
+	ResData(c, http.StatusOK, "OK", "", nil)
+}
+
 type changePasswordReq struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`

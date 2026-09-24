@@ -1,0 +1,17 @@
+kind: sample-kind
+label: หลังบ้านทดสอบ
+page_auth:
+  token: {source: localStorage, key: tok, format: json-expiration, value_field: value, expiration_field: expiration}
+  service: {source: query, key: svc, encoding: base64}
+  host_api_base: "{origin}/api"
+  session_path: "/ai/session/{service}"
+host_api:
+  scoped_token_path: /api/ai/scoped-token
+  scoped_token_header: X-AI-Scoped-Token
+  envelope: {code_field: code, ok_codes: [0], data_field: data, message_field: message}
+  timeout_ms: 5000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support
+facts:
+  - {id: emergency_button, title: ปุ่มฉุกเฉิน, text: หลังบ้านนี้ไม่มีปุ่มสถานการณ์ฉุกเฉิน, keywords: [ฉุกเฉิน]}

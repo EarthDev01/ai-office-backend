@@ -1,0 +1,82 @@
+# office-v10x → office-api-v10 (module goofficev10)
+# ที่มา: office-v10x src/stores/auth.ts (setItemWithExpireV2 "auth_token" = {value, expiration: JWT exp หน่วยวินาที})
+#        src/services/helper-function.ts getItemWithExpireV2 (เทียบ expiration กับวินาที)
+#        src/stores/layout.ts setSelectedWeb → localStorage "web-service" (ชื่อ service ตรงตัว ไม่เข้ารหัส)
+#        src/services/base-url.ts → prod = location.origin + "/api"
+#        office-api-v10 route/ai.go (POST /api/ai/session/:service · POST /api/ai/scoped-token · /api/ai/read/*)
+kind: office-v10x
+label: หลังบ้าน v10x
+page_auth:
+  token: {source: localStorage, key: auth_token, format: json-expiration, value_field: value, expiration_field: expiration}
+  service: {source: localStorage, key: web-service, encoding: none}
+  host_api_base: "{origin}/api"
+  session_path: "/ai/session/{service}"
+  auth_scheme: Bearer
+host_api:
+  scoped_token_path: /api/ai/scoped-token
+  scoped_token_header: X-AI-Scoped-Token
+  envelope: {code_field: code, ok_codes: [0], data_field: data, message_field: message}
+  timeout_ms: 8000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support ในห้องแชทประจำของเว็บ
+facts:
+  - id: profit_report_pending
+    title: รายงานกำไรขาดทุนตามช่วงวัน
+    text: >-
+      ผู้ช่วยยังดึงรายงานกำไรขาดทุนตามช่วงวันให้ไม่ได้ เพราะหลังบ้านยังไม่ได้กำหนดสิทธิ์ของเมนูนี้ให้ผู้ช่วยใช้
+      ดูเองได้ที่เมนู "สรุปกำไรขาดทุน" (หน้า /report/profit) เลือกช่วงวันที่ต้องการ
+      ถ้าต้องการแค่ยอดฝาก ถอน โบนัส และกำไรรายวันเทียบวันก่อนหน้า ถามผู้ช่วยได้ (ใช้ข้อมูลเดียวกับหน้า Dashboard)
+    keywords: [กำไรขาดทุน, กำไร, ขาดทุน, รายงานกำไร, profit]
+    questions: [BQ-12]
+  - id: no_credit_forecast
+    title: คาดการณ์เวลาเครดิตหมด
+    text: >-
+      ระบบเก็บยอดเครดิตเอเจ้นไว้เพียงค่าล่าสุดค่าเดียว ไม่มีประวัติย้อนหลัง จึงประเมินไม่ได้ว่าเครดิตจะหมดเมื่อไหร่
+      ผู้ช่วยบอกได้แค่ยอดคงเหลือล่าสุดและเวลาที่อัปเดต ดูได้ที่แถบด้านบนของหลังบ้าน "เครดิตเอเจ้นคงเหลือ"
+    keywords: [เครดิตจะหมด, หมดเมื่อไหร่, พอใช้ถึง, คาดการณ์]
+    questions: [BQ-43]
+  - id: topup_system_credit
+    title: เติมเครดิตระบบ (เครดิตเอเจ้น / SMS)
+    text: >-
+      หลังบ้านนี้ไม่มีหน้าจอสำหรับเติมเครดิตระบบเอง และผู้ช่วยทำรายการแทนไม่ได้
+      ให้ติดต่อทีม support ในห้องแชทประจำของเว็บเพื่อขอเติม ถ้ามีบิลที่ต้องชำระ ดูได้ที่เมนู "บิลค่าใช้จ่าย"
+    keywords: [เติมเครดิตระบบ, เติมเครดิตเอเจ้น, เติม SMS, ซื้อเครดิต]
+    questions: [BQ-45]
+  - id: topup_not_arrived
+    title: เติมเครดิตระบบแล้วยังไม่เข้า
+    text: >-
+      ระบบไม่มีข้อมูลรายการเติมเครดิตระบบให้ผู้ช่วยตรวจ จึงบอกไม่ได้ว่ารายการเติมถึงไหนแล้ว
+      ที่ตรวจได้คือบิลที่ชำระแล้วแต่ยังรอคอนเฟิร์ม (ถามผู้ช่วยว่ามีบิลรอคอนเฟิร์มไหม หรือดูที่เมนู "บิลค่าใช้จ่าย")
+      ถ้าบิลยืนยันแล้วแต่เครดิตยังไม่เข้า ให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [เติมแล้วไม่เข้า, เครดิตไม่เข้า, จ่ายแล้วไม่เข้า]
+    questions: [BQ-46]
+  - id: no_ip_answer
+    title: IP ของผู้ทำรายการ
+    text: >-
+      ผู้ช่วยไม่แสดง IP ของผู้ทำรายการหรือพนักงาน ถ้าต้องการตรวจว่าใครเข้าระบบหรือแก้รายการ
+      ถามผู้ช่วยเรื่องประวัติการทำงานของพนักงานได้ หรือเปิดเมนู "ประวัติการทำงานของพนักงาน" (หน้า /worklog)
+    keywords: [IP, ไอพี, เข้าจากที่ไหน]
+    questions: [BQ-06, BQ-35]
+  - id: no_online_time
+    title: เวลาออนไลน์ล่าสุดของสมาชิก
+    text: >-
+      ระบบไม่มีเวลาออนไลน์ล่าสุดแบบนาทีของสมาชิก มีเพียงวันล่าสุดที่สมาชิกมีรายการ และเวลาฝากล่าสุด ซึ่งผู้ช่วยแสดงในการ์ดข้อมูลสมาชิก
+    keywords: [ออนไลน์ล่าสุด, เข้าเล่นล่าสุด, last login]
+    questions: [BQ-05]
+  - id: emergency_page
+    title: หน้าสถานการณ์ฉุกเฉิน
+    text: >-
+      หลังบ้านนี้มีหน้า "สถานการณ์ฉุกเฉิน" (หน้า /disable) เข้าได้จากปุ่มสีแดงท้ายเมนูด้านซ้าย ทุกคนที่ล็อกอินเข้าได้
+      ในหน้านี้มีปุ่ม DISABLE ซึ่งปิดการใช้งานบัญชีพนักงานของตัวเอง และปุ่ม SOS ซึ่งสั่งปิดระบบของเว็บที่เลือกทันที
+      ทั้งสองปุ่มมีผลจริงทันที ใช้เฉพาะเหตุฉุกเฉินและควรแจ้งหัวหน้าหรือทีม support ก่อน
+      ผู้ช่วยไม่กดปุ่มใดแทนและไม่แนะนำให้กดโดยไม่มีเหตุ
+    keywords: [ฉุกเฉิน, SOS, ปิดเว็บ, ปิดระบบ, disable]
+    questions: [BQ-55]
+  - id: assistant_scope
+    title: ผู้ช่วยทำอะไรได้บ้าง
+    text: >-
+      ผู้ช่วยเป็นระบบอัตโนมัติ อ่านข้อมูลหลังบ้านได้อย่างเดียว เช่น ยอดฝากถอน รายการค้าง ข้อมูลสมาชิก บัญชีธนาคาร โปรโมชั่น เครดิตระบบ และบิล
+      และบอกทางไปเมนูได้ แต่ทำรายการ แก้ค่า หรือเพิ่มเครดิตแทนไม่ได้ เรื่องเทคนิคหรือระบบขัดข้องให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [ทำอะไรได้, เป็นใคร, คุยกับคน, ติดต่อ support, ระบบล่ม]
+    questions: [BQ-52, BQ-53, BQ-54, BQ-56]

@@ -1,0 +1,45 @@
+tool: withdraw_pending_by_status
+cases:
+  - name: มีถอนค้าง 2 สถานะ
+    service: K11S
+    responses:
+      list:
+        body: {code: 0, message: ok, data: {rows: [{status: 10, count: 2, amount: 18500}, {status: 2, count: 7, amount: 142000}]}}
+    expect:
+      status: ok
+      calls:
+        list: {path: /api/ai/read/withdraw-pending/K11S, query: {date: "2026-09-24"}}
+      fields: {รวมทั้งหมด: "9 รายการ", ยอดรวมทั้งหมด: "160,500.00"}
+      table_rows: 2
+      table_cells:
+        - [รอโอน, "7 รายการ", "142,000.00"]
+        - [OTP ไม่ถูกต้อง, "2 รายการ", "18,500.00"]
+      model_context: {has_pending: true, statuses: [รอโอน, OTP ไม่ถูกต้อง]}
+      link: /withdraw?svc=SzExUw==
+  - name: ไม่มีค้าง = ไม่พบ ไม่ใช่ 0
+    responses:
+      list: {body: {code: 0, data: {rows: []}}}
+    expect: {status: not_found}
+  - name: host ตอบผิดรูป (ไม่มี amount) = ดึงไม่ได้ ไม่มีตัวเลขบางส่วน
+    responses:
+      list: {body: {code: 0, data: {rows: [{status: 2, count: 7}]}}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: host ล่ม
+    responses:
+      list: {status: 502, raw: "bad gateway"}
+    expect: {status: error, error_code: http_error}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      list: {body: {code: 0, data: {rows: []}}}
+    expect:
+      status: not_found
+      calls:
+        list: {query: {date: "2026-09-25"}}
+  - name: สถานะที่ไม่รู้จัก — การ์ดบอกรหัสตามจริง แต่โมเดลไม่เห็นตัวเลข
+    responses:
+      list: {body: {code: 0, data: {rows: [{status: 99, count: 1, amount: 500}]}}}
+    expect:
+      status: ok
+      table_cells: [["สถานะ 99 (ยังไม่มีคำอธิบาย)", "1 รายการ", "500.00"]]
+      model_context: {statuses: [สถานะที่ยังไม่มีคำอธิบายในระบบ]}

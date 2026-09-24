@@ -1,0 +1,171 @@
+# R9 member · R10 member-stats · R11 bank-member-pending (controller/ai_read.go)
+questions: [BQ-05, BQ-07, BQ-08, BQ-09]
+tools:
+  - name: member_lookup
+    description: >-
+      ข้อมูลสมาชิกรายคนตามยูสเซอร์เนม (ตรงตัว ไม่รองรับเบอร์โทร): วันสมัคร สถานะบัญชี เคยฝากไหม ฝากล่าสุด วันล่าสุดที่มีรายการ
+      บัญชีธนาคารและสถานะอนุมัติ · ระบบไม่มีเวลาออนไลน์ล่าสุดแบบนาที
+    questions: [BQ-05]
+    permission: member
+    freshness: summary
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: m
+        method: GET
+        path: /api/ai/read/member/{service}
+        query: {username: "{input.username}"}
+        cache_ttl: 30
+        timeout_ms: 25000
+        not_found_codes: [404]
+        schema:
+          type: object
+          required: [username, active, topup_status, bank_list]
+          properties:
+            username: {type: string}
+            full_name: {type: string}
+            date_regis: {type: string, nullable: true}
+            active: {type: integer}
+            topup_status: {type: integer}
+            rank: {type: integer}
+            last_deposit: {type: string, nullable: true}
+            overdue: {type: number}
+            last_active_date: {type: string, nullable: true}
+            bank_list:
+              type: array
+              items:
+                type: object
+                required: [bank_code, status]
+                properties:
+                  bank_code: {type: string}
+                  bank_name: {type: string}
+                  bank_number: {type: string}
+                  status: {type: integer}
+                  verify_status: {type: string}
+    values:
+      - {name: user, from: m, path: username}
+      - {name: fullname, from: m, path: full_name}
+      - {name: regis, from: m, path: date_regis}
+      - {name: acc_active, from: m, path: active}
+      - {name: topup, from: m, path: topup_status}
+      - {name: deposited, expr: "topup != 0"}
+      - {name: last_dep, from: m, path: last_deposit}
+      - {name: last_act, from: m, path: last_active_date}
+      - {name: overdue_amt, from: m, path: overdue}
+      - {name: member_rank, from: m, path: rank}
+      - {name: banks, from: m, path: bank_list}
+      - {name: pending_bank_count, from: m, path: bank_list, filter: "item.status == 0", agg: count}
+    card:
+      title: ข้อมูลสมาชิก
+      fields:
+        - {label: ยูสเซอร์เนม, value: user}
+        - {label: ชื่อ-นามสกุล, value: fullname}
+        - {label: วันสมัคร, value: regis, format: datetime}
+        - {label: สถานะบัญชี, value: acc_active, format: "status:member_active"}
+        - {label: เคยฝากเงิน, value: deposited, format: bool}
+        - {label: ฝากล่าสุด, value: last_dep, format: datetime}
+        - {label: วันล่าสุดที่มีรายการ (ในสามสิบวัน), value: last_act, format: date}
+        - {label: ยอดค้างชำระ, value: overdue_amt, format: money, suffix: " บาท"}
+        - {label: ระดับ (rank), value: member_rank, format: int}
+      table:
+        rows: banks
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ชื่อบัญชี, field: bank_name}
+          - {label: เลขบัญชี, field: bank_number}
+          - {label: สถานะอนุมัติ, field: status, format: "status:member_bank"}
+          - {label: ผลตรวจบัญชี, field: verify_status}
+      note: ระบบไม่มีเวลาออนไลน์ล่าสุดแบบนาที มีเพียงวันล่าสุดที่มีรายการและเวลาฝากล่าสุด
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: is_blocked, type: bool, expr: "acc_active == 99"}
+      - {name: is_unverified, type: bool, expr: "acc_active == 0"}
+      - {name: never_deposited, type: bool, expr: "topup == 0"}
+      - {name: has_pending_bank, type: bool, expr: "pending_bank_count > 0"}
+      - {name: bank_statuses, type: labels, from: banks, pluck: status, format: "status:member_bank"}
+
+  - name: member_stats
+    description: >-
+      จำนวนสมาชิกสมัครใหม่ในวันหรือช่วงวันที่ถาม จำนวนสมาชิกที่ยังไม่ยืนยันตัวตน และจำนวนสมาชิกทั้งหมดแยกตามสถานะบัญชี
+      · ใช้เมื่อถามสมาชิกใหม่วันนี้ หรือยังไม่ยืนยันตัวตนกี่คน · ไม่ระบุวัน = วันนี้
+    questions: [BQ-07, BQ-08]
+    permission: member
+    freshness: summary
+    input:
+      date_from: {type: date, description: วันแรกของช่วงที่นับสมัครใหม่ (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: s
+        method: GET
+        path: /api/ai/read/member-stats/{service}
+        query:
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [date_from, date_to, total, new_registered, unverified, by_active]
+          properties:
+            date_from: {type: string}
+            date_to: {type: string}
+            total: {type: integer}
+            new_registered: {type: integer}
+            unverified: {type: integer}
+            by_active:
+              type: array
+              items:
+                type: object
+                required: [count]
+                properties:
+                  active: {type: integer, nullable: true}
+                  count: {type: integer}
+    values:
+      - {name: from_day, from: s, path: date_from}
+      - {name: to_day, from: s, path: date_to}
+      - {name: new_count, from: s, path: new_registered}
+      - {name: unverified_count, from: s, path: unverified}
+      - {name: total_members, from: s, path: total}
+      - {name: rows, from: s, path: by_active, sort_by: count, order: desc}
+    card:
+      title: สถิติสมาชิก
+      fields:
+        - {label: ตั้งแต่วันที่, value: from_day, format: date}
+        - {label: ถึงวันที่, value: to_day, format: date}
+        - {label: สมัครใหม่ในช่วงนี้, value: new_count, format: int, suffix: " คน"}
+        - {label: ยังไม่ยืนยันตัวตน (ทั้งหมด), value: unverified_count, format: int, suffix: " คน"}
+        - {label: สมาชิกทั้งหมด (ไม่รวมที่ลบ), value: total_members, format: int, suffix: " คน"}
+      table:
+        rows: rows
+        columns:
+          - {label: สถานะบัญชี, field: active, format: "status:member_active"}
+          - {label: จำนวน, field: count, format: int, suffix: " คน"}
+      note: ยังไม่ยืนยันตัวตนนับเฉพาะบัญชีสถานะยังไม่ยืนยันตัวตน ไม่จำกัดวันสมัคร · สมาชิกใหม่ไม่นับบัญชีที่ลบแล้ว · ตัดวันตามเวลาไทย
+      link: {label: เปิดรายการสมาชิก, path: /member/memberlist}
+    model_context:
+      - {name: has_new, type: bool, expr: "new_count > 0"}
+      - {name: has_unverified, type: bool, expr: "unverified_count > 0"}
+
+  - name: bank_member_pending
+    description: จำนวนบัญชีธนาคารของสมาชิกที่รออนุมัติ (บัญชีรอตรวจสอบ) ของเว็บนี้ ณ ตอนนี้
+    questions: [BQ-09]
+    permission: member_approve_bank
+    freshness: summary
+    calls:
+      - id: c
+        method: GET
+        path: /api/ai/read/bank-member-pending/{service}
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: {type: object, required: [count], properties: {count: {type: integer}}}
+    values:
+      - {name: pending, from: c, path: count}
+    not_found: {when: "pending == 0", message: ตอนนี้ไม่มีบัญชีธนาคารของสมาชิกที่รออนุมัติ}
+    card:
+      title: บัญชีสมาชิกรอตรวจสอบ
+      fields:
+        - {label: รออนุมัติ, value: pending, format: int, suffix: " บัญชี"}
+      note: ไม่นับสมาชิกที่ถูกลบหรือถูกปิดกั้น
+      link: {label: เปิดอนุมัติบัญชีสมาชิก, path: /member/approvebank}
+    model_context:
+      - {name: has_pending_accounts, type: bool, expr: "pending > 0"}

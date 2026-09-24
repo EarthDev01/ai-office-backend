@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,7 +263,7 @@ func TestRolePermissions_ConfigurableRBAC(t *testing.T) {
 	// 2. admin grants viewer office.edit, and (deliberately) leaves admin without user.manage
 	putBody := `{"matrix":{` +
 		`"admin":["office.view"],` +
-		`"operator":["office.view","office.edit","office.delete","office.rotate"],` +
+		`"operator":["office.view","office.edit","office.delete"],` +
 		`"viewer":["office.view","office.edit"]` +
 		`}}`
 	wp := do(t, r, req{
@@ -445,5 +446,21 @@ func TestDynamicRoles_AdminBuiltinLocked(t *testing.T) {
 	}
 	if code := errCode(t, wDel); code != "ROLE_LOCKED" {
 		t.Fatalf("delete admin error code: want ROLE_LOCKED got %q", code)
+	}
+}
+
+// ทุก method ที่ route ของคอนโซลใช้ต้องอยู่ใน CORS preflight — ขาดตัวไหนเบราว์เซอร์จะบล็อกก่อนยิงจริง
+// (เคยพลาด: PUT /role-permissions ใช้จากหน้าคอนโซลไม่ได้เพราะ Allow-Methods ไม่มี PUT)
+func TestCORS_PreflightAllowsAllConsoleMethods(t *testing.T) {
+	r := newRouter(t)
+	for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		w := do(t, r, req{method: http.MethodOptions, path: "/api/ai/admin/role-permissions",
+			headers: [][2]string{{"Origin", "http://localhost:5173"}, {"Access-Control-Request-Method", m}}})
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("preflight %s: want 204 got %d", m, w.Code)
+		}
+		if !strings.Contains(w.Header().Get("Access-Control-Allow-Methods"), m) {
+			t.Fatalf("preflight: %s missing from Allow-Methods %q", m, w.Header().Get("Access-Control-Allow-Methods"))
+		}
 	}
 }

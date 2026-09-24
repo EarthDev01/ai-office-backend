@@ -1,0 +1,25 @@
+# R11 GET /api/ai/read/member-count/:service?date= — catalog §6 R11
+tool: member_new_count
+cases:
+  - name: สมาชิกใหม่วันนี้
+    responses:
+      cnt: {body: {code: 0, message: SUCCESS, payload: {date: "2026-09-24", timezone: Asia/Bangkok, new_members: 57, total_members: 48213, fetched_at: "2026-09-24T14:32:00+07:00"}}}
+    expect:
+      status: ok
+      calls: {cnt: {path: /api/ai/read/member-count/DEMO-SVC, query: {date: "2026-09-24"}}}
+      fields: {วันที่: 24/09/2026, สมาชิกใหม่: "57 คน", สมาชิกทั้งหมด: "48,213 คน"}
+      model_context: {has_new_members: true}
+      link: /Member?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: ข้ามเที่ยงคืน ศูนย์คนเป็นคำตอบจริง
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      cnt: {body: {code: 0, payload: {date: "2026-09-25", new_members: 0, total_members: 48213}}}
+    expect:
+      status: ok
+      calls: {cnt: {query: {date: "2026-09-25"}}}
+      fields: {สมาชิกใหม่: "0 คน"}
+      model_context: {has_new_members: false}
+  - name: host ผิดรูป (new_members เป็น string)
+    responses:
+      cnt: {body: {code: 0, payload: {date: "2026-09-24", new_members: "57", total_members: 1}}}
+    expect: {status: error, error_code: schema_mismatch}

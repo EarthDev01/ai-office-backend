@@ -1,0 +1,46 @@
+# R15 POST /api/ai/read/profit-loss-range/:service — catalog §6 R15 (H4) + ai/read_profitloss.go
+tool: profit_loss_range
+cases:
+  - name: ค่าเริ่มต้น = ต้นเดือนถึงวันนี้
+    responses:
+      pl:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            start_date: "2026-09-01"
+            end_date: "2026-09-24"
+            timezone: Asia/Bangkok
+            rows:
+              - {date: "2026-09-01", deposit: 160500, withdraw: 101000, bonus: 3900, profit: 59500, return_credit: 200, delete_credit: 0, insert_statement: 1500, insert_statement_old: 0, cancel_withdraw: 2000, count_deposit: 398, count_withdraw: 140, count_insert_statement: 3, source: snapshot}
+              - {date: "2026-09-02", deposit: 1000, withdraw: 2500, bonus: 0, profit: -1500, return_credit: 0, delete_credit: 0, insert_statement: 0, insert_statement_old: 0, cancel_withdraw: 0, count_deposit: 2, count_withdraw: 1, count_insert_statement: 0, source: live}
+            summary: {deposit: 161500, withdraw: 103500, bonus: 3900, profit: 58000, days_requested: 24, days_with_data: 2, days_from_snapshot: 1, days_live: 1, missing_dates: ["2026-09-07"]}
+            fetched_at: "2026-09-24T14:32:00+07:00"
+    expect:
+      status: ok
+      calls: {pl: {path: /api/ai/read/profit-loss-range/DEMO-SVC, body: {start_date: "2026-09-01", end_date: "2026-09-24"}}}
+      fields: {ตั้งแต่วันที่: 01/09/2026, ถึงวันที่: 24/09/2026, ยอดฝากรวม: "161,500.00 บาท", ยอดถอนรวม: "103,500.00 บาท", โบนัสรวม: "3,900.00 บาท", กำไร (ฝาก - ถอน): "58,000.00 บาท", วันที่มีข้อมูล: "2 วัน", จำนวนวันในช่วง: "24 วัน", วันที่ใช้ข้อมูลที่บันทึกไว้แล้ว: "1 วัน"}
+      table_rows: 2
+      table_cells: [[01/09/2026, "160,500.00", "101,000.00", "3,900.00", "59,500.00"], [02/09/2026, "1,000.00", "2,500.00", "0.00", "-1,500.00"]]
+      model_context: {is_profitable: true, has_missing_days: true}
+      link: /report?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: ระบุช่วงเอง
+    input: {from: "2026-08-01", to: "2026-08-31"}
+    responses:
+      pl: {body: {code: 0, payload: {start_date: "2026-08-01", end_date: "2026-08-31", rows: [{date: "2026-08-15", deposit: 10, withdraw: 20, bonus: 0, profit: -10, source: snapshot}], summary: {deposit: 10, withdraw: 20, bonus: 0, profit: -10, days_requested: 31, days_with_data: 1, days_from_snapshot: 1, missing_dates: []}}}}
+    expect:
+      status: ok
+      calls: {pl: {body: {start_date: "2026-08-01", end_date: "2026-08-31"}}}
+      model_context: {is_profitable: false, has_missing_days: false}
+  - name: ข้ามเที่ยงคืนวันแรกของเดือน = ต้นเดือนใหม่
+    now: "2026-09-30T17:05:00Z"
+    responses:
+      pl: {body: {code: 0, payload: {start_date: "2026-10-01", end_date: "2026-10-01", rows: [], summary: {deposit: 0, withdraw: 0, bonus: 0, profit: 0, days_requested: 1, days_with_data: 0, days_from_snapshot: 0, missing_dates: ["2026-10-01"]}}}}
+    expect:
+      status: not_found
+      calls: {pl: {body: {start_date: "2026-10-01", end_date: "2026-10-01"}}}
+  - name: ช่วงเกิน 62 วัน (host 400) = ดึงไม่ได้
+    input: {from: "2026-06-01", to: "2026-09-24"}
+    responses:
+      pl: {status: 400, body: {code: 400, message: BAD_REQUEST, error: ช่วงวันที่เกินกำหนด, payload: null}}
+    expect: {status: error, error_code: http_error}

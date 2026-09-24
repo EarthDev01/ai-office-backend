@@ -1,0 +1,49 @@
+# R16 GET /api/ai/read/menus/:service — catalog §6 R16 + ai/read_menu.go
+tool: menu_access_check
+cases:
+  - name: เมนูเปิดและมีสิทธิ์
+    input: {code: P001}
+    responses:
+      mn:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            submenu: {found: true, codes: [P001, P003, P015], user: [{code: P001, active: true, view: true}, {code: P003, active: false, view: null}, {code: P015, active: true, view: false}]}
+            mainmenu: {found: true, codes: [M003, M005], user: [{code: M003, active: false, view: null}, {code: M005, active: true, view: false}]}
+            permissions_source: live
+            fetched_at: "2026-09-24T14:32:00+07:00"
+    expect:
+      status: ok
+      calls: {mn: {path: /api/ai/read/menus/DEMO-SVC}}
+      fields: {รหัสเมนู: P001, เปิดใช้ในหลังบ้านนี้: ใช่, บัญชีของคุณมีสิทธิ์เมนูนี้: ใช่, มีสิทธิ์ดู (ใช้กับเมนูบริการเสริม): ใช่}
+      model_context: {menu_enabled: true, user_has_access: true, view_blocked: false}
+      link: /
+  - name: เมนูบริการเสริม มีสิทธิ์แต่ไม่มีสิทธิ์ดู
+    input: {code: P015}
+    responses:
+      mn: &base {body: {code: 0, payload: {submenu: {found: true, codes: [P001, P003, P015], user: [{code: P001, active: true, view: true}, {code: P003, active: false, view: null}, {code: P015, active: true, view: false}]}, mainmenu: {found: true, codes: [M003, M005], user: [{code: M003, active: false, view: null}, {code: M005, active: true, view: false}]}, permissions_source: live}}}
+    expect:
+      status: ok
+      fields: {มีสิทธิ์ดู (ใช้กับเมนูบริการเสริม): ไม่ใช่}
+      model_context: {menu_enabled: true, user_has_access: true, view_blocked: true}
+  - name: เมนูหลัก ไม่มีสิทธิ์
+    input: {code: M003}
+    responses: {mn: *base}
+    expect:
+      status: ok
+      fields: {เปิดใช้ในหลังบ้านนี้: ใช่, บัญชีของคุณมีสิทธิ์เมนูนี้: ไม่ใช่}
+      no_fields: [มีสิทธิ์ดู (ใช้กับเมนูบริการเสริม)]
+      model_context: {menu_enabled: true, user_has_access: false}
+  - name: เมนูไม่ได้เปิดในระบบนี้
+    input: {code: P019}
+    responses: {mn: *base}
+    expect:
+      status: ok
+      fields: {เปิดใช้ในหลังบ้านนี้: ไม่ใช่, บัญชีของคุณมีสิทธิ์เมนูนี้: ไม่ใช่}
+      model_context: {menu_enabled: false, user_has_access: false}
+  - name: ผู้ใช้ถูกปิดระหว่างทาง (403 USER_NOT_ALLOWED)
+    input: {code: P001}
+    responses:
+      mn: {status: 403, body: {code: 403, message: USER_NOT_ALLOWED}}
+    expect: {status: denied}

@@ -1,0 +1,28 @@
+tool: member_credit_live
+cases:
+  - name: เครดิตสมาชิกสด (response เดิมของ CheckCredit)
+    input: {username: user01}
+    responses:
+      c:
+        body:
+          code: 0
+          message: Success
+          count: 0
+          data: {OCode: "0", currentCredit: 512.75, payload: [{code: 1001, name: CREDIT, amount: 512.75, unit: THB, updated_at: 1790219702}], service: DEMO-SVC, username: user01}
+    expect:
+      status: ok
+      calls:
+        c: {path: /api/ai/read/credit-check/DEMO-SVC, body: {username: user01}}
+      fields: {ยูสเซอร์เนม: user01, เครดิตคงเหลือ: "512.75 เครดิต"}
+      model_context: {has_credit: true}
+      link: /member/user01
+  - name: ไม่พบยูส (code 1) = ไม่พบ
+    input: {username: nobody}
+    responses:
+      c: {body: {code: 1, message: ไม่พบข้อมูล ยูสน์นี้ในระบบ, data: null}}
+    expect: {status: not_found}
+  - name: ระบบเกมไม่ตอบ นานเกิน
+    input: {username: user01}
+    responses:
+      c: {error: timeout}
+    expect: {status: error, error_code: timeout}

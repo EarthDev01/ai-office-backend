@@ -1,0 +1,63 @@
+questions: [BQ-03]
+tools:
+  - name: withdraw_pending_by_status
+    description: รายการถอนที่ยังไม่สำเร็จ แยกตามสถานะ
+    permission: withdraw
+    freshness: summary
+    calls:
+      - id: list
+        method: GET
+        path: /api/ai/read/withdraw-pending/{service}
+        query: {date: "{date:today}"}
+        cache_ttl: 60
+        schema:
+          type: object
+          required: [rows]
+          properties:
+            rows:
+              type: array
+              items: {type: object, required: [status, count, amount], properties: {status: {type: integer}, count: {type: integer}, amount: {type: number}}}
+    values:
+      - {name: rows, from: list, path: rows, sort_by: count, order: desc}
+      - {name: total_count, from: list, path: rows, agg: sum, field: count}
+      - {name: total_amount, from: list, path: rows, agg: sum, field: amount}
+    not_found: {when: "empty(rows)", message: ไม่มีรายการถอนค้าง}
+    card:
+      title: รายการถอนที่ยังไม่สำเร็จ
+      table:
+        rows: rows
+        columns:
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: จำนวน, field: count, format: int, suffix: " รายการ"}
+          - {label: ยอดรวม, field: amount, format: money}
+      fields:
+        - {label: รวมทั้งหมด, value: total_count, format: int, suffix: " รายการ"}
+        - {label: ยอดรวมทั้งหมด, value: total_amount, format: money}
+      link: {label: เปิดรายการถอน, path: "/withdraw?svc={service_b64}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "total_count > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+  - name: member_lookup
+    description: ข้อมูลสมาชิกรายคน
+    permission: member
+    freshness: live
+    input:
+      username: {type: string, description: ชื่อผู้ใช้ของสมาชิก, required: true, pattern: "^[A-Za-z0-9_.@-]{2,40}$"}
+    calls:
+      - id: m
+        method: GET
+        path: /api/ai/read/member/{service}
+        query: {username: "{input.username}"}
+        not_found_codes: [1, 404]
+        schema: {type: object, required: [username], properties: {username: {type: string}, date_regis: {type: string}}}
+    values:
+      - {name: username, from: m, path: username}
+      - {name: regis, from: m, path: date_regis}
+    card:
+      title: ข้อมูลสมาชิก
+      fields:
+        - {label: ยูสเซอร์เนม, value: username}
+        - {label: วันสมัคร, value: regis, format: datetime}
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: found_note, type: text, text: แสดงข้อมูลสมาชิกในการ์ดแล้ว}

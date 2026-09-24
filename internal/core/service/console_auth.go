@@ -46,6 +46,7 @@ type ConsoleAuth struct {
 	totp    port.TOTPProvider
 	tickets port.TicketIssuer
 	perms   *PermissionService // role นี้ยังมีอยู่ไหม — เช็คตอน CreateUser/PatchUser
+	audit   port.AuditRecorder
 	now     func() time.Time
 }
 
@@ -55,9 +56,33 @@ func NewConsoleAuth(
 	totp port.TOTPProvider,
 	tickets port.TicketIssuer,
 	perms *PermissionService,
+	audit port.AuditRecorder, // nil ได้ (ไม่บันทึกประวัติ)
 	now func() time.Time,
 ) *ConsoleAuth {
-	return &ConsoleAuth{repo: repo, tokens: tokens, totp: totp, tickets: tickets, perms: perms, now: now}
+	return &ConsoleAuth{repo: repo, tokens: tokens, totp: totp, tickets: tickets, perms: perms, audit: auditOr(audit), now: now}
+}
+
+// recordAs บันทึกเหตุการณ์ในนามของ user ที่ระบุตรง ๆ — ใช้ในขั้น login ที่ยังไม่มี session ใน context
+func (a *ConsoleAuth) recordAs(ctx context.Context, u domain.ConsoleUser, e domain.AuditEntry) {
+	e.ActorID, e.Actor, e.ActorRole = u.ID, u.Username, string(u.Role)
+	a.audit.Record(ctx, e)
+}
+
+// loginFailed บันทึก login ไม่สำเร็จ — user อาจไม่มีอยู่จริง (ID ว่าง) จึงใช้ username ที่พิมพ์มา
+func (a *ConsoleAuth) loginFailed(ctx context.Context, u domain.ConsoleUser, reason, why string) {
+	a.recordAs(ctx, u, domain.AuditEntry{
+		Action: domain.AuditAuthLoginFailed, Status: domain.AuditFailure, Reason: reason,
+		TargetType: "user", TargetID: u.ID, TargetLabel: u.Username,
+		Summary: fmt.Sprintf("เข้าสู่ระบบไม่สำเร็จ (%s) — username %q", why, u.Username),
+	})
+}
+
+// userLabel ใช้ใน summary ของ user management: "ชื่อ (username)"
+func userLabel(u domain.ConsoleUser) string {
+	if u.DisplayName != "" && u.DisplayName != u.Username {
+		return fmt.Sprintf("%s (%s)", u.DisplayName, u.Username)
+	}
+	return u.Username
 }
 
 // NeedsSetup: ยังไม่มี user เลย → ต้อง first-run register
@@ -98,6 +123,10 @@ func (a *ConsoleAuth) Register(ctx context.Context, username, display, password 
 	if err := a.repo.Create(ctx, user); err != nil {
 		return LoginResult{}, err
 	}
+	a.recordAs(ctx, user, domain.AuditEntry{
+		Action: domain.AuditAuthSetup, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("ตั้งค่าระบบครั้งแรก — สร้างผู้ดูแลคนแรก %s", userLabel(user)),
+	})
 	// 2FA บังคับ → เริ่ม enroll ทันที
 	return a.beginEnroll(user)
 }
@@ -108,26 +137,41 @@ func (a *ConsoleAuth) Login(ctx context.Context, username, password string) (Log
 	user, err := a.repo.ByUsername(ctx, uname)
 	if err != nil {
 		if errors.Is(err, port.ErrUserNotFound) {
+			a.loginFailed(ctx, domain.ConsoleUser{Username: uname}, "UNKNOWN_USER", "ไม่พบ username นี้")
 			return LoginResult{}, ErrInvalidCredentials
 		}
 		return LoginResult{}, err
 	}
 	now := a.now()
 	if user.Locked(now) {
+		a.loginFailed(ctx, user, "ACCOUNT_LOCKED", "บัญชีถูกล็อกชั่วคราว")
 		return LoginResult{}, ErrAccountLocked
 	}
 	if user.Status == domain.StatusDisabled {
+		a.loginFailed(ctx, user, "ACCOUNT_DISABLED", "บัญชีถูกปิดใช้งาน")
 		return LoginResult{}, ErrAccountDisabled
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		user.FailedAttempts++
+		attempt := user.FailedAttempts
+		locked := false
 		if user.FailedAttempts >= 5 {
 			user.LockedUntil = now.Add(15 * time.Minute)
 			user.FailedAttempts = 0
+			locked = true
 		}
 		user.UpdatedAt = now
 		if err := a.repo.Update(ctx, user); err != nil {
 			return LoginResult{}, err
+		}
+		a.loginFailed(ctx, user, "INVALID_CREDENTIALS", fmt.Sprintf("รหัสผ่านผิด ครั้งที่ %d/5", attempt))
+		if locked {
+			a.recordAs(ctx, user, domain.AuditEntry{
+				Action: domain.AuditAuthLocked, Status: domain.AuditFailure, Reason: "TOO_MANY_ATTEMPTS",
+				TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+				Summary: fmt.Sprintf("บัญชี %s ถูกล็อก 15 นาที เพราะใส่รหัสผ่านผิด 5 ครั้งติด", userLabel(user)),
+				Meta:    map[string]string{"locked_until": user.LockedUntil.Format(time.RFC3339)},
+			})
 		}
 		return LoginResult{}, ErrInvalidCredentials
 	}
@@ -175,6 +219,7 @@ func (a *ConsoleAuth) VerifyTOTP(ctx context.Context, ticket, code string) (Logi
 	switch t.Stage {
 	case "enroll":
 		if !a.totp.Validate(t.PendingSecret, code) {
+			a.loginFailed(ctx, user, "INVALID_2FA", "รหัสยืนยัน 2FA ตอนตั้งค่าไม่ถูกต้อง")
 			return LoginResult{}, ErrInvalid2FA
 		}
 		user.TOTPSecret = t.PendingSecret
@@ -188,32 +233,68 @@ func (a *ConsoleAuth) VerifyTOTP(ctx context.Context, ticket, code string) (Logi
 		if err != nil {
 			return LoginResult{}, err
 		}
+		a.recordAs(ctx, user, domain.AuditEntry{
+			Action: domain.AuditAuth2FAEnrolled, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+			Summary: fmt.Sprintf("%s ตั้งค่า 2FA สำเร็จ และได้รับ recovery code ชุดใหม่", userLabel(user)),
+		})
+		a.recordLogin(ctx, user, "2FA (ตั้งค่าครั้งแรก)")
 		return LoginResult{Stage: "done", Token: token, User: user, RecoveryCodes: plain}, nil
 
 	case "totp":
 		ok := a.totp.Validate(user.TOTPSecret, code)
+		usedRecovery := false
 		if !ok {
 			// ลอง recovery code (one-time use)
 			for i, h := range user.RecoveryHashes {
 				if bcrypt.CompareHashAndPassword([]byte(h), []byte(code)) == nil {
 					user.RecoveryHashes = append(user.RecoveryHashes[:i], user.RecoveryHashes[i+1:]...)
 					ok = true
+					usedRecovery = true
 					break
 				}
 			}
 		}
 		if !ok {
+			a.loginFailed(ctx, user, "INVALID_2FA", "รหัส 2FA ไม่ถูกต้อง")
 			return LoginResult{}, ErrInvalid2FA
 		}
 		token, err := a.finalize(ctx, &user)
 		if err != nil {
 			return LoginResult{}, err
 		}
+		method := "รหัส 2FA"
+		if usedRecovery {
+			method = "recovery code"
+			a.recordAs(ctx, user, domain.AuditEntry{
+				Action: domain.AuditAuthRecoveryUsed, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+				Summary: fmt.Sprintf("%s ใช้ recovery code เข้าสู่ระบบ — เหลืออีก %d รหัส", userLabel(user), len(user.RecoveryHashes)),
+				Meta:    map[string]string{"remaining": fmt.Sprint(len(user.RecoveryHashes))},
+			})
+		}
+		a.recordLogin(ctx, user, method)
 		return LoginResult{Stage: "done", Token: token, User: user}, nil
 
 	default:
 		return LoginResult{}, ErrInvalidTicket
 	}
+}
+
+func (a *ConsoleAuth) recordLogin(ctx context.Context, user domain.ConsoleUser, method string) {
+	a.recordAs(ctx, user, domain.AuditEntry{
+		Action: domain.AuditAuthLogin, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("%s เข้าสู่ระบบ (ยืนยันด้วย %s)", userLabel(user), method),
+		Meta:    map[string]string{"method": method},
+	})
+}
+
+// Logout บันทึกการออกจากระบบ — session เป็น JWT ไร้สถานะ ฝั่ง server จึงมีแค่การบันทึก
+// (token เดิมยังใช้ได้จนหมดอายุ ถ้าต้องการ revoke จริงต้องมี denylist เพิ่ม)
+func (a *ConsoleAuth) Logout(ctx context.Context) {
+	actor, _ := domain.AuditActorFrom(ctx)
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditAuthLogout, TargetType: "user", TargetID: actor.ID, TargetLabel: actor.Username,
+		Summary: fmt.Sprintf("%s ออกจากระบบ", actor.Username),
+	})
 }
 
 // finalize: 2FA ผ่านแล้ว — ตั้ง LastLoginAt, persist, ออก session token
@@ -259,6 +340,15 @@ func (a *ConsoleAuth) CreateUser(ctx context.Context, actorUsername, username, d
 	if err := a.repo.Create(ctx, user); err != nil {
 		return domain.ConsoleUser{}, err
 	}
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditUserCreate, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("เพิ่มผู้ใช้ %s บทบาท %s", userLabel(user), user.Role),
+		Changes: []domain.FieldChange{
+			{Field: "username", After: user.Username},
+			{Field: "display_name", After: user.DisplayName},
+			{Field: "role", After: string(user.Role)},
+		},
+	})
 	return user, nil
 }
 
@@ -303,6 +393,7 @@ func (a *ConsoleAuth) PatchUser(ctx context.Context, id string, display *string,
 		}
 	}
 
+	before := user
 	if display != nil {
 		user.DisplayName = *display
 	}
@@ -315,6 +406,23 @@ func (a *ConsoleAuth) PatchUser(ctx context.Context, id string, display *string,
 	user.UpdatedAt = a.now()
 	if err := a.repo.Update(ctx, user); err != nil {
 		return domain.ConsoleUser{}, err
+	}
+	changes := []domain.FieldChange{}
+	if before.DisplayName != user.DisplayName {
+		changes = append(changes, domain.FieldChange{Field: "display_name", Before: before.DisplayName, After: user.DisplayName})
+	}
+	if before.Role != user.Role {
+		changes = append(changes, domain.FieldChange{Field: "role", Before: string(before.Role), After: string(user.Role)})
+	}
+	if before.Status != user.Status {
+		changes = append(changes, domain.FieldChange{Field: "status", Before: before.Status, After: user.Status})
+	}
+	if len(changes) > 0 {
+		a.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditUserUpdate, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+			Summary: fmt.Sprintf("แก้ไขผู้ใช้ %s %d รายการ: %s", userLabel(user), len(changes), changedFieldNames(changes)),
+			Changes: changes,
+		})
 	}
 	return user, nil
 }
@@ -332,11 +440,23 @@ func (a *ConsoleAuth) ResetPassword(ctx context.Context, id, newPassword string)
 	if err != nil {
 		return err
 	}
+	wasLocked := user.Locked(a.now())
 	user.PasswordHash = string(hash)
 	user.FailedAttempts = 0
 	user.LockedUntil = time.Time{}
 	user.UpdatedAt = a.now()
-	return a.repo.Update(ctx, user)
+	if err := a.repo.Update(ctx, user); err != nil {
+		return err
+	}
+	summary := fmt.Sprintf("ตั้งรหัสผ่านใหม่ให้ %s", userLabel(user))
+	if wasLocked {
+		summary += " และปลดล็อกบัญชี"
+	}
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditUserResetPassword, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: summary,
+	})
+	return nil
 }
 
 // ChangePassword (self): เปลี่ยน password โดยต้องรู้ password เดิม
@@ -346,6 +466,11 @@ func (a *ConsoleAuth) ChangePassword(ctx context.Context, userID, oldPassword, n
 		return err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)) != nil {
+		a.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditAuthPasswordChanged, Status: domain.AuditFailure, Reason: "INVALID_CREDENTIALS",
+			TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+			Summary: fmt.Sprintf("%s เปลี่ยนรหัสผ่านไม่สำเร็จ — รหัสผ่านเดิมไม่ถูกต้อง", userLabel(user)),
+		})
 		return ErrInvalidCredentials
 	}
 	if !domain.ValidPassword(newPassword) {
@@ -357,7 +482,14 @@ func (a *ConsoleAuth) ChangePassword(ctx context.Context, userID, oldPassword, n
 	}
 	user.PasswordHash = string(hash)
 	user.UpdatedAt = a.now()
-	return a.repo.Update(ctx, user)
+	if err := a.repo.Update(ctx, user); err != nil {
+		return err
+	}
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditAuthPasswordChanged, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("%s เปลี่ยนรหัสผ่านของตัวเอง", userLabel(user)),
+	})
+	return nil
 }
 
 // Reset2FA (admin): ล้าง 2FA — user จะต้อง enroll ใหม่ตอน login ครั้งถัดไป
@@ -370,7 +502,14 @@ func (a *ConsoleAuth) Reset2FA(ctx context.Context, id string) error {
 	user.TOTPEnrolled = false
 	user.RecoveryHashes = nil
 	user.UpdatedAt = a.now()
-	return a.repo.Update(ctx, user)
+	if err := a.repo.Update(ctx, user); err != nil {
+		return err
+	}
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditUserReset2FA, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("รีเซ็ต 2FA ของ %s — ต้องตั้งค่าใหม่ตอนเข้าสู่ระบบครั้งถัดไป", userLabel(user)),
+	})
+	return nil
 }
 
 // Delete (admin): ลบ user พร้อม self-delete + last-admin guard
@@ -391,7 +530,15 @@ func (a *ConsoleAuth) Delete(ctx context.Context, actorID, id string) error {
 			return ErrLastAdmin
 		}
 	}
-	return a.repo.Delete(ctx, id)
+	if err := a.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	a.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditUserDelete, TargetType: "user", TargetID: target.ID, TargetLabel: target.Username,
+		Summary: fmt.Sprintf("ลบผู้ใช้ %s (บทบาท %s)", userLabel(target), target.Role),
+		Meta:    map[string]string{"display_name": target.DisplayName, "role": string(target.Role)},
+	})
+	return nil
 }
 
 // countActiveAdmins: นับ admin ที่ status active เท่านั้น

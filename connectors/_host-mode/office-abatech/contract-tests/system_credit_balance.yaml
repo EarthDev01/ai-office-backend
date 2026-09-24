@@ -1,0 +1,28 @@
+# R19 GET /api/ai/read/agent-balance/:service?reload=1 — catalog §6 R19 + ai/read_system.go
+tool: system_credit_balance
+cases:
+  - name: รีเฟรชสำเร็จ
+    responses:
+      ag: {body: {code: 0, message: SUCCESS, payload: {found: true, amount: 152340.5, code: 1001, name: Credit, unit: THB, updated_at: 1790222000, reload: {requested: true, ok: true}, fetched_at: "2026-09-24T14:32:00+07:00", source: snapshot_db}}}
+    expect:
+      status: ok
+      calls: {ag: {path: /api/ai/read/agent-balance/DEMO-SVC, query: {reload: "1"}}}
+      fields: {เครดิตระบบคงเหลือ: "152,340.50", หน่วย: THB, รีเฟรชยอดล่าสุดสำเร็จ: ใช่, อัปเดตจากผู้ให้บริการเมื่อ: "24/09/2026 10:53"}
+      model_context: {refresh_ok: true}
+      link: /DashboardOnce?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: รีเฟรชไม่สำเร็จ ใช้ค่าที่บันทึกไว้
+    responses:
+      ag: {body: {code: 0, payload: {found: true, amount: 5000, code: 1001, name: Credit, unit: THB, updated_at: 0, reload: {requested: true, ok: false, error: timeout}}}}
+    expect:
+      status: ok
+      fields: {เครดิตระบบคงเหลือ: "5,000.00", รีเฟรชยอดล่าสุดสำเร็จ: ไม่ใช่}
+      no_fields: [อัปเดตจากผู้ให้บริการเมื่อ]
+      model_context: {refresh_ok: false}
+  - name: ยังไม่เคยมีข้อมูล = ไม่พบ ไม่ใช่ศูนย์
+    responses:
+      ag: {body: {code: 0, payload: {found: false, reload: {requested: true, ok: false, error: unreachable}}}}
+    expect: {status: not_found}
+  - name: host 500
+    responses:
+      ag: {status: 500, body: {code: 500, message: INTERNAL_ERROR, payload: null}}
+    expect: {status: error, error_code: http_error}

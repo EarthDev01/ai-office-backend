@@ -1,13 +1,16 @@
-import type { Bootstrap } from './types'
+import type { Bootstrap, Card, HistoryItem } from './types'
 
 export interface UI {
   launcher: HTMLButtonElement
   panel: HTMLDivElement
-  head: { avatar: HTMLDivElement; name: HTMLDivElement; site: HTMLDivElement }
+  head: { avatar: HTMLDivElement; name: HTMLDivElement; site: HTMLDivElement; history: HTMLButtonElement }
   log: HTMLDivElement
-  input: HTMLInputElement
+  hist: { box: HTMLDivElement; list: HTMLDivElement; back: HTMLButtonElement; fresh: HTMLButtonElement }
+  input: HTMLTextAreaElement
   send: HTMLButtonElement
 }
+
+export const MAX_QUESTION = 2000
 
 export function buildUI(root: ShadowRoot): UI {
   const launcher = el('button', 'launcher') as HTMLButtonElement
@@ -16,53 +19,217 @@ export function buildUI(root: ShadowRoot): UI {
 
   const panel = el('div', 'panel') as HTMLDivElement
   panel.dataset.open = 'false'
+  panel.setAttribute('role', 'dialog')
+  panel.setAttribute('aria-label', 'ผู้ช่วยหลังบ้าน')
 
   const head = el('div', 'head')
   const avatar = el('div', 'avatar') as HTMLDivElement
-  const nameWrap = el('div')
+  const nameWrap = el('div', 'namewrap')
   const name = el('div', 'name') as HTMLDivElement
   nameWrap.appendChild(name)
   const site = el('div', 'site') as HTMLDivElement
+  site.title = 'เว็บที่กำลังคุยอยู่'
+  const history = el('button', 'hbtn') as HTMLButtonElement
+  history.type = 'button'
+  history.textContent = 'ประวัติ'
+  history.setAttribute('aria-label', 'ประวัติ 7 วัน')
   const close = el('button', 'x') as HTMLButtonElement
   close.type = 'button'
   close.textContent = '×'
   close.setAttribute('aria-label', 'ปิด')
-  head.append(avatar, nameWrap, site, close)
+  head.append(avatar, nameWrap, site, history, close)
 
   const log = el('div', 'log') as HTMLDivElement
+  log.setAttribute('aria-live', 'polite')
+
+  // รายการประวัติ — ทับ log ไว้ ไม่เปลี่ยนห้องจนกว่าจะเลือก
+  const box = el('div', 'hist') as HTMLDivElement
+  box.hidden = true
+  const hhead = el('div', 'hist-head')
+  const htitle = el('div', 'hist-title')
+  htitle.textContent = 'ประวัติ 7 วันของเว็บนี้'
+  const back = el('button', 'lnk') as HTMLButtonElement
+  back.type = 'button'
+  back.textContent = '← กลับ'
+  hhead.append(htitle, back)
+  const list = el('div', 'hist-list') as HTMLDivElement
+  const fresh = el('button', 'nb') as HTMLButtonElement
+  fresh.type = 'button'
+  fresh.textContent = 'เริ่มห้องใหม่'
+  box.append(hhead, list, fresh)
 
   const foot = el('div', 'foot')
-  const input = el('input') as HTMLInputElement
-  input.type = 'text'
+  const input = el('textarea') as HTMLTextAreaElement
+  input.rows = 1
+  input.maxLength = MAX_QUESTION
   input.placeholder = 'พิมพ์คำถาม…'
-  const send = el('button') as HTMLButtonElement
+  input.setAttribute('aria-label', 'คำถาม')
+  const send = el('button', 'send') as HTMLButtonElement
   send.type = 'button'
   send.textContent = '↑'
+  send.setAttribute('aria-label', 'ส่ง')
   foot.append(input, send)
 
-  panel.append(head, log, foot)
+  panel.append(head, log, box, foot)
   root.append(launcher, panel)
 
   close.addEventListener('click', () => (panel.dataset.open = 'false'))
 
-  return { launcher, panel, head: { avatar, name, site }, log, input, send }
+  return { launcher, panel, head: { avatar, name, site, history }, log, hist: { box, list, back, fresh }, input, send }
 }
 
 /** ข้อความทุกชิ้นลงด้วย textContent — ไม่มี innerHTML กับข้อความที่ไม่ได้มาจากเรา */
-export function addBubble(log: HTMLDivElement, who: 'me' | 'ai', text: string) {
+export function addBubble(log: HTMLDivElement, who: 'me' | 'ai', text: string, extra = ''): HTMLDivElement {
   const row = el('div', 'row ' + who)
-  const b = el('div', 'bubble')
-  b.textContent = text
+  const b = el('div', 'bubble' + (extra ? ' ' + extra : '')) as HTMLDivElement
+  const t = el('div', 'txt')
+  t.textContent = text
+  b.appendChild(t)
   row.appendChild(b)
   log.appendChild(row)
-  log.scrollTop = log.scrollHeight
+  scroll(log)
+  return b
 }
 
-export function addNote(log: HTMLDivElement, text: string) {
-  const n = el('div', 'note')
+/** ข้อความระบบกลางห้อง (เปลี่ยนเว็บ · ห้องปิด · อ่านอย่างเดียว) */
+export function addSys(log: HTMLDivElement, text: string): HTMLDivElement {
+  const n = el('div', 'sys') as HTMLDivElement
   n.textContent = text
   log.appendChild(n)
-  log.scrollTop = log.scrollHeight
+  scroll(log)
+  return n
+}
+
+/** แถบ "กำลังดึงข้อมูล…" — แทนที่ข้อความได้ตาม status ที่ server ส่ง */
+export function addLoader(log: HTMLDivElement, text: string): { set(t: string): void; remove(): void } {
+  const row = el('div', 'row ai')
+  const b = el('div', 'bubble load')
+  const t = el('span')
+  t.textContent = text
+  const dots = el('span', 'dots')
+  dots.append(el('span'), el('span'), el('span'))
+  b.append(t, dots)
+  row.appendChild(b)
+  log.appendChild(row)
+  scroll(log)
+  return {
+    set: (s) => (t.textContent = s),
+    remove: () => row.remove(),
+  }
+}
+
+/**
+ * การ์ดข้อมูล — ค่าจากระบบตรง ๆ ไม่ผ่านโมเดล
+ * ต้องมีเวลาที่ดึง + ลิงก์ไปหน้าจริงเสมอ (spec §8 แถวสุดท้าย)
+ */
+export function renderCard(card: Card): HTMLDivElement {
+  const box = el('div', 'datacard k-' + safeClass(card.kind)) as HTMLDivElement
+  if (card.title) {
+    const t = el('div', 'dc-title')
+    t.textContent = card.title
+    box.appendChild(t)
+  }
+  for (const f of card.fields ?? []) {
+    const r = el('div', 'dc-row')
+    const l = el('span')
+    l.textContent = f.label
+    const v = el('b')
+    v.textContent = f.display
+    r.append(l, v)
+    box.appendChild(r)
+  }
+  if (card.table && card.table.rows?.length) {
+    const wrap = el('div', 'dc-tablewrap')
+    const tbl = el('table', 'dc-table')
+    const thead = el('thead')
+    const hr = el('tr')
+    for (const c of card.table.columns ?? []) {
+      const th = el('th')
+      th.textContent = c.label
+      hr.appendChild(th)
+    }
+    thead.appendChild(hr)
+    const tbody = el('tbody')
+    for (const row of card.table.rows) {
+      const tr = el('tr')
+      for (const cell of row) {
+        const td = el('td')
+        td.textContent = cell?.display ?? ''
+        tr.appendChild(td)
+      }
+      tbody.appendChild(tr)
+    }
+    tbl.append(thead, tbody)
+    wrap.appendChild(tbl)
+    box.appendChild(wrap)
+  }
+  if (card.note) {
+    const n = el('div', 'dc-note')
+    n.textContent = card.note
+    box.appendChild(n)
+  }
+  const src = el('div', 'src')
+  const at = el('span')
+  at.textContent = card.kind === 'reference' ? 'จากคู่มือของระบบ' : 'ข้อมูล ณ ' + formatFetched(card.fetched_at) + (card.cached ? ' · ค่าที่ดึงไว้ไม่เกิน 1 นาที' : '')
+  src.appendChild(at)
+  const href = safeHref(card.link?.path)
+  if (card.link && href) {
+    const a = el('a') as HTMLAnchorElement
+    a.href = href
+    a.textContent = (card.link.label || 'เปิดหน้าจริง') + ' →'
+    a.target = '_self'
+    a.rel = 'noopener'
+    src.appendChild(a)
+  }
+  box.appendChild(src)
+  return box
+}
+
+export function renderHistory(list: HTMLDivElement, items: HistoryItem[], onPick: (id: string) => void) {
+  list.textContent = ''
+  if (!items.length) {
+    const e = el('div', 'hist-empty')
+    e.textContent = 'ยังไม่มีประวัติใน 7 วันที่ผ่านมา'
+    list.appendChild(e)
+    return
+  }
+  for (const it of items) {
+    const b = el('button', 'hist-item') as HTMLButtonElement
+    b.type = 'button'
+    const t = el('span', 'hist-t')
+    t.textContent = it.title || '(ไม่มีหัวข้อ)'
+    const m = el('small')
+    m.textContent = formatFetched(it.last_message_at || it.opened_at) + (it.closed ? ' · ปิดแล้ว' : '')
+    b.append(t, m)
+    b.addEventListener('click', () => onPick(it.id))
+    list.appendChild(b)
+  }
+}
+
+/** เวลาไทยเสมอ (หลังบ้านทุกตัวตัดวันตาม Asia/Bangkok) · วันนี้โชว์แค่เวลา */
+export function formatFetched(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '-'
+  const opt = { timeZone: 'Asia/Bangkok' } as const
+  try {
+    const time = d.toLocaleTimeString('th-TH', { ...opt, hour: '2-digit', minute: '2-digit', hour12: false })
+    const day = d.toLocaleDateString('en-CA', opt)
+    const today = new Date().toLocaleDateString('en-CA', opt)
+    if (day === today) return time
+    const [, mm, dd] = day.split('-')
+    return `${dd}/${mm} ${time}`
+  } catch {
+    return d.toISOString().slice(0, 16).replace('T', ' ')
+  }
+}
+
+/** ลิงก์ในการ์ดต้องเป็น path ในหลังบ้านเดียวกัน — กัน javascript: / โดเมนอื่น */
+export function safeHref(path: string | undefined): string {
+  if (!path) return ''
+  const p = path.trim()
+  if (p.startsWith('#')) return p
+  if (!p.startsWith('/') || p.startsWith('//') || p.includes('\\')) return ''
+  return p
 }
 
 /** วางปุ่มลอยและ panel ตาม placement ที่ server ส่งมา */
@@ -103,6 +270,10 @@ export function applyAppearance(ui: UI, b: Bootstrap) {
   }
 }
 
+export function scroll(log: HTMLElement) {
+  log.scrollTop = log.scrollHeight
+}
+
 function img(src: string): HTMLImageElement {
   const i = document.createElement('img')
   i.src = src
@@ -111,11 +282,15 @@ function img(src: string): HTMLImageElement {
   return i
 }
 
+function safeClass(s: string) {
+  return String(s || '').replace(/[^a-z_]/g, '')
+}
+
 function px(n: number) {
   return `${n | 0}px`
 }
 
-function el(tag: string, cls?: string): HTMLElement {
+export function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag)
   if (cls) e.className = cls
   return e

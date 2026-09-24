@@ -1,0 +1,95 @@
+# BQ-01 · host R1 GET /api/ai/read/dashboard-summary/:service (AIRequire any_of P001)
+# ตัวเลขชุดเดียวกับการ์ดแท็บ "รายงานภาพรวม" · host คิด "วันก่อนหน้า" ใหม่เอง (แก้ KI-1)
+questions: [BQ-01]
+tools:
+  - name: dashboard_today_vs_yesterday
+    description: >-
+      ยอดฝาก ยอดถอน โบนัส และกำไร (ฝากลบถอน) ของวันที่เลือก (ค่าเริ่มต้นวันนี้) เทียบกับวันก่อนหน้า พร้อมส่วนต่าง
+      ใช้เมื่อถามยอดวันนี้ ยอดเมื่อวาน หรือเทียบวันต่อวัน
+    permission: dashboard
+    freshness: live
+    input:
+      date: {type: date, description: วันที่ต้องการดู ไม่ใส่ = วันนี้ (ห้ามเป็นวันในอนาคต)}
+    calls:
+      - id: dash
+        method: GET
+        path: /api/ai/read/dashboard-summary/{service}
+        query: {date: "{date:input.date|date:today}"}
+        cache_ttl: 0
+        schema:
+          type: object
+          required: [date, compare_date, current, previous, change]
+          properties:
+            date: {type: string}
+            compare_date: {type: string}
+            is_today: {type: boolean}
+            current: &day
+              type: object
+              required: [deposit, deposit_count, withdraw, withdraw_count, bonus, profit]
+              properties:
+                deposit: {type: number}
+                deposit_count: {type: integer}
+                deposit_accounts: {type: integer}
+                deposit_avg: {type: number}
+                withdraw: {type: number}
+                withdraw_count: {type: integer}
+                withdraw_members: {type: integer}
+                bonus: {type: number}
+                bonus_count: {type: integer}
+                profit: {type: number}
+            previous: *day
+            change:
+              type: object
+              required: [deposit, withdraw, bonus, profit]
+              properties:
+                deposit: &chg {type: object, required: [diff], properties: {diff: {type: number}, pct: {type: number, nullable: true}}}
+                withdraw: *chg
+                bonus: *chg
+                profit: *chg
+            fetched_at: {type: string}
+    values:
+      - {name: day, from: dash, path: date}
+      - {name: prev_day, from: dash, path: compare_date}
+      - {name: dep, from: dash, path: current.deposit}
+      - {name: dep_prev, from: dash, path: previous.deposit}
+      - {name: dep_diff, from: dash, path: change.deposit.diff}
+      - {name: dep_pct, from: dash, path: change.deposit.pct}
+      - {name: dep_cnt, from: dash, path: current.deposit_count}
+      - {name: wd, from: dash, path: current.withdraw}
+      - {name: wd_prev, from: dash, path: previous.withdraw}
+      - {name: wd_diff, from: dash, path: change.withdraw.diff}
+      - {name: wd_cnt, from: dash, path: current.withdraw_count}
+      - {name: bonus_amt, from: dash, path: current.bonus}
+      - {name: bonus_prev, from: dash, path: previous.bonus}
+      - {name: profit_amt, from: dash, path: current.profit}
+      - {name: profit_prev, from: dash, path: previous.profit}
+      - {name: profit_diff, from: dash, path: change.profit.diff}
+      - {name: today_flag, from: dash, path: is_today}
+    card:
+      title: ยอดฝาก-ถอน เทียบวันก่อนหน้า
+      fields:
+        - {label: วันที่, value: day, format: date}
+        - {label: เทียบกับวันที่, value: prev_day, format: date}
+        - {label: ยอดฝาก, value: dep, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก วันก่อนหน้า, value: dep_prev, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก ต่างจากวันก่อนหน้า, value: dep_diff, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก เปลี่ยนแปลง, value: dep_pct, format: percent, when: "dep_pct != null"}
+        - {label: จำนวนรายการฝาก, value: dep_cnt, format: int, suffix: " รายการ"}
+        - {label: ยอดถอน, value: wd, format: money, suffix: " บาท"}
+        - {label: ยอดถอน วันก่อนหน้า, value: wd_prev, format: money, suffix: " บาท"}
+        - {label: ยอดถอน ต่างจากวันก่อนหน้า, value: wd_diff, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการถอน, value: wd_cnt, format: int, suffix: " รายการ"}
+        - {label: โบนัส, value: bonus_amt, format: money, suffix: " บาท"}
+        - {label: โบนัส วันก่อนหน้า, value: bonus_prev, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝาก - ถอน), value: profit_amt, format: money, suffix: " บาท"}
+        - {label: กำไร วันก่อนหน้า, value: profit_prev, format: money, suffix: " บาท"}
+        - {label: กำไร ต่างจากวันก่อนหน้า, value: profit_diff, format: money, suffix: " บาท"}
+      note: ยอดฝาก = เงินเข้าบัญชีฝาก · กำไร = ยอดฝากลบยอดถอน (ไม่หักโบนัส) ตามการ์ดรายงานภาพรวม · วันตามเวลาไทย
+      link: {label: เปิดรายงานภาพรวม, path: "/DashboardOnce?service={service_b64}&web={service}"}
+    model_context:
+      - {name: selected_day_is_today, type: bool, expr: "today_flag == true"}
+      - {name: deposit_increased, type: bool, expr: "dep_diff > 0"}
+      - {name: withdraw_increased, type: bool, expr: "wd_diff > 0"}
+      - {name: profit_increased, type: bool, expr: "profit_diff > 0"}
+      - {name: profit_negative, type: bool, expr: "profit_amt < 0"}
+      - {name: note, type: text, text: ตัวเลขทั้งหมดแสดงในการ์ดแล้ว ให้สรุปแนวโน้มเป็นคำพูดโดยไม่ต้องพิมพ์ตัวเลข}

@@ -46,20 +46,60 @@ func (r *officeRepo) load() error {
 	if err != nil {
 		return err
 	}
-	var list []domain.Office
+	var list []persistOffice
 	if err := json.Unmarshal(b, &list); err != nil {
 		return err
 	}
-	for _, o := range list {
+	for _, p := range list {
+		o := p.toDomain()
 		r.items[o.ID] = o
 	}
 	return nil
 }
 
+// persistOffice = รูปที่เขียนลงไฟล์ — domain ซ่อน hash ของ secret ด้วย json:"-" (ไม่ให้หลุดไปคอนโซล)
+// แต่ไฟล์ต้องเก็บไว้ ไม่งั้นรีสตาร์ตแล้ว secret หาย
+type persistOffice struct {
+	domain.Office
+	Services []persistService `json:"services"`
+}
+
+type persistService struct {
+	domain.Service
+	AllowAll          *bool  `json:"allow_all"` // ไม่มี field (ไฟล์รุ่นเก่า) = true ตามค่าเริ่มต้น D-74
+	SecretKeyHash     string `json:"secret_key_hash,omitempty"`
+	SecretKeyPrevHash string `json:"secret_key_prev_hash,omitempty"`
+}
+
+func fromDomain(o domain.Office) persistOffice {
+	p := persistOffice{Office: o, Services: make([]persistService, len(o.Services))}
+	for i, s := range o.Services {
+		allow := s.AllowAll
+		p.Services[i] = persistService{Service: s, AllowAll: &allow, SecretKeyHash: s.SecretKeyHash, SecretKeyPrevHash: s.SecretKeyPrevHash}
+	}
+	return p
+}
+
+func (p persistOffice) toDomain() domain.Office {
+	o := p.Office
+	o.Services = make([]domain.Service, len(p.Services))
+	for i, ps := range p.Services {
+		s := ps.Service
+		s.AllowAll = ps.AllowAll == nil || *ps.AllowAll
+		s.SecretKeyHash = ps.SecretKeyHash
+		s.SecretKeyPrevHash = ps.SecretKeyPrevHash
+		if s.Quota.TempIncreases == nil {
+			s.Quota.TempIncreases = []domain.TempIncrease{}
+		}
+		o.Services[i] = s
+	}
+	return o
+}
+
 func (r *officeRepo) flush() error {
-	list := make([]domain.Office, 0, len(r.items))
+	list := make([]persistOffice, 0, len(r.items))
 	for _, o := range r.items {
-		list = append(list, o)
+		list = append(list, fromDomain(o))
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 
@@ -72,7 +112,7 @@ func (r *officeRepo) flush() error {
 	}
 	// เขียนไฟล์ชั่วคราวก่อนแล้ว rename — กันไฟล์พังถ้าดับกลางคัน
 	tmp := r.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, r.path)
@@ -107,6 +147,27 @@ func (r *officeRepo) GetByPublicKey(ctx context.Context, key string) (domain.Off
 	}
 	for _, o := range r.items {
 		if o.PublicKey == key {
+			return o, nil
+		}
+	}
+	return domain.Office{}, domain.ErrNotFound
+}
+
+// GetByOrigin — เรียง id ให้ผลนิ่ง เผื่อข้อมูลเก่ามีโดเมนซ้ำค้างอยู่ (ของใหม่ถูกกันไว้ที่ service แล้ว)
+func (r *officeRepo) GetByOrigin(ctx context.Context, origin string) (domain.Office, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if origin == "" {
+		return domain.Office{}, domain.ErrNotFound
+	}
+	ids := make([]string, 0, len(r.items))
+	for id := range r.items {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		o := r.items[id]
+		if o.AllowsOrigin(origin) {
 			return o, nil
 		}
 	}

@@ -1,5 +1,6 @@
 .env
 data/*.json
+data/*.jsonl
 node_modules/
 widget/node_modules/
 .DS_Store

@@ -1,0 +1,40 @@
+# mirror AIRequire ของ office-api-v10 route/ai.go aiReadRoutes() ตรงตัว (codes ใน aihost/rules.go)
+# ชื่อเมนูที่บอกผู้ใช้ = ชื่อหน้า/แท็บที่พบในโค้ด office-v10x (ชื่อ sidebar จริงมาจาก SUPERCOM — ดู NOTES.md)
+rules:
+  # R1 all_of(any_of(DASHBOARDALL),min_level(6))
+  dashboard: {all_of: [DASHBOARDALL], min_level: 6, menu: Dashboard, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ Dashboard และตั้งระดับบัญชีให้ถึงเกณฑ์ที่เห็น Dashboard}
+  # R2 R3 R4 any_of(TRANSECTION_DEPOSIT)
+  deposit: {any_of: [TRANSECTION_DEPOSIT], menu: รายการฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูเมนูรายการฝาก}
+  # R5 R6 R7 R8 any_of(TRANSECTION_WITHDRAW)
+  withdraw: {any_of: [TRANSECTION_WITHDRAW], menu: รายการถอน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูเมนูรายการถอน}
+  # R9 R10 any_of(MEMBER_INFO)
+  member: {any_of: [MEMBER_INFO], menu: รายการสมาชิก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์ดูข้อมูลสมาชิก}
+  # R11 any_of(MEMBER_APPROVE_BANK)
+  member_approve_bank: {any_of: [MEMBER_APPROVE_BANK], menu: อนุมัติบัญชีสมาชิก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูอนุมัติบัญชีสมาชิก}
+  # R12 all_of(any_of(BANK_MANAGE),any_of(BANK_MANAGE_DEPOSIT))
+  bank_deposit: {all_of: [BANK_MANAGE, BANK_MANAGE_DEPOSIT], menu: จัดการบัญชีธนาคาร › จัดการบัญชีฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร และแท็บจัดการบัญชีฝาก}
+  # R13 all_of(any_of(BANK_MANAGE),any_of(BANK_MANAGE_WITHDRAW))
+  bank_withdraw: {all_of: [BANK_MANAGE, BANK_MANAGE_WITHDRAW], menu: จัดการบัญชีธนาคาร › จัดการบัญชีถอน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร และแท็บจัดการบัญชีถอน}
+  # หน้า /statement/managebank เอง (ใช้กรองเมนูใน lookup_menu เท่านั้น — ไม่มี tool ใช้)
+  bank_manage: {any_of: [BANK_MANAGE], menu: จัดการบัญชีธนาคาร, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการบัญชีธนาคาร}
+  # R14 any_of(SETTING_BONUS)
+  bonus: {any_of: [SETTING_BONUS], menu: โบนัส/โปรโมชั่น, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูตั้งค่าโบนัส}
+  # R16 any_of(SYSTEM_WORKLOG)
+  worklog: {any_of: [SYSTEM_WORKLOG], menu: ประวัติการทำงานของพนักงาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูประวัติการทำงานของพนักงาน}
+  # R17 R18 R19 logged_in (navbar แสดงให้ทุกคน — D-91)
+  credit_system: {logged_in: true, menu: แถบด้านบน เครดิตเอเจ้น / เครดิต Sms, grant_hint: เข้าสู่ระบบหลังบ้านใหม่อีกครั้ง}
+  # R20 any_of(SYSTEM_BILL)
+  bill: {any_of: [SYSTEM_BILL], menu: บิลค่าใช้จ่าย, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูบิลค่าใช้จ่าย}
+  # R21 all_of(any_of(TRANSECTION_MANAGECREDIT),any_of(TRANSECTION_MANAGECREDIT_CHECK,TRANSECTION_MANAGECREDIT_CHECKPOCKET))
+  credit_check: {all_of: [TRANSECTION_MANAGECREDIT], any_of: [TRANSECTION_MANAGECREDIT_CHECK, TRANSECTION_MANAGECREDIT_CHECKPOCKET], menu: จัดการเครดิต › เช็คเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต และสิทธิ์เช็คเครดิต}
+  # R22 R23 any_of(TRANSECTION_MANAGECREDIT)
+  manage_credit: {any_of: [TRANSECTION_MANAGECREDIT], menu: จัดการเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต}
+  # R15 any_of(REPORT_PROFIT_CODE_TBD) — host ปฏิเสธเสมอ · ไม่มี tool ใช้ (ใช้กรองเมนู /report/profit ไม่ได้ จึงใช้ logged_in ด้านล่าง)
+  # หน้าที่ UI ไม่กั้นด้วย code (รายงาน, สถานการณ์ฉุกเฉิน) — ทุกคนที่ล็อกอิน
+  logged_in: {logged_in: true, menu: หลังบ้าน, grant_hint: เข้าสู่ระบบหลังบ้านใหม่อีกครั้ง}
+  # หน้าที่มี code แต่ไม่มี tool (ใช้กรองเมนูใน lookup_menu)
+  member_block: {any_of: [MEMBER_BLOCKINFO], menu: สมาชิก Block, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูสมาชิก Block}
+  employee: {any_of: [SYSTEM_EMPLOYEE], menu: ระบบจัดการพนักงาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูระบบจัดการพนักงาน}
+  role: {any_of: [SYSTEM_ROLE], menu: ตั้งค่าสิทธิ์การใช้งาน, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูตั้งค่าสิทธิ์การใช้งาน}
+  deposit_insert: {any_of: [TRANSECTION_INSERT], menu: เพิ่มรายการฝาก, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เพิ่มรายการฝาก}
+  credit_add: {all_of: [TRANSECTION_MANAGECREDIT], any_of: [TRANSECTION_MANAGECREDIT_RETURN, TRANSECTION_MANAGECREDIT_DELETE], menu: จัดการเครดิต › จัดการเครดิต, grant_hint: ให้ผู้ดูแลระบบของเว็บเปิดสิทธิ์เมนูจัดการเครดิต และสิทธิ์เพิ่มหรือลบเครดิต}

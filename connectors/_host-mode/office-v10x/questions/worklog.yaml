@@ -1,0 +1,71 @@
+# R16 GET /api/ai/read/worklog/:service (controller/ai_read.go AIReadWorklog) · OFFICE work_logs บังคับ service ของ path · ไม่ส่ง ip/data/data_old
+questions: [BQ-35]
+tools:
+  - name: worklog_search
+    description: >-
+      ประวัติการทำงานของพนักงานในเว็บนี้ (ใครแก้อะไร เมื่อไหร่) เรียงใหม่ไปเก่า ค้นด้วยคำ (ชื่อยูสสมาชิก ชื่อหน้าจอ การกระทำ)
+      หรือยูสเซอร์เนมพนักงาน · include_login = true เพื่อรวมประวัติเข้า/ออกระบบของพนักงาน · ไม่ระบุวัน = วันนี้ · ไม่แสดง IP
+    permission: worklog
+    freshness: summary
+    input:
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+      search: {type: string, description: คำค้นในการกระทำ หน้าจอ รายละเอียด หรือชื่อพนักงาน เช่น ยูสเซอร์เนมสมาชิก, pattern: "^[^\\x00-\\x1f]{1,100}$", max_len: 100}
+      operator_username: {type: string, description: ยูสเซอร์เนมของพนักงานที่ทำรายการ ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      include_login: {type: boolean, description: true = รวมประวัติเข้าและออกระบบของพนักงาน}
+    calls:
+      - id: w
+        method: GET
+        path: /api/ai/read/worklog/{service}
+        query:
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+          search: "{input.search}"
+          operator_username: "{input.operator_username}"
+          include_login: "{input.include_login}"
+          limit: "20"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              items:
+                type: object
+                required: [datetime, action, operator_name]
+                properties:
+                  datetime: {type: string, nullable: true}
+                  action: {type: string}
+                  form: {type: string}
+                  description: {type: string}
+                  operator_name: {type: string}
+                  operator_username: {type: string}
+    values:
+      - {name: rows, from: w, path: data}
+      - {name: match_count, from: w, path: count}
+      - {name: shown_count, expr: "len(rows)"}
+    not_found: {when: "empty(rows)", message: ไม่พบประวัติการทำงานตามที่ค้นในช่วงวันที่ถาม}
+    card:
+      title: ประวัติการทำงานของพนักงาน
+      fields:
+        - {label: พบทั้งหมด, value: match_count, format: int, suffix: " รายการ"}
+        - {label: แสดงในการ์ด, value: shown_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: พนักงาน, field: operator_name}
+          - {label: การกระทำ, field: action}
+          - {label: หน้าจอ, field: form}
+          - {label: รายละเอียด, field: description}
+      note: ผู้ช่วยไม่แสดง IP · ประวัติเข้าระบบเป็นระดับหลังบ้านทั้งชุด ไม่แยกตามเว็บ
+      link: {label: เปิดประวัติการทำงานของพนักงาน, path: /worklog}
+    model_context:
+      - {name: more_than_shown, type: bool, expr: "match_count > shown_count"}
+      - {name: note_detail, type: text, text: รายละเอียดว่าใครทำอะไรอยู่ในการ์ดแล้ว ผู้ช่วยไม่แสดง IP}

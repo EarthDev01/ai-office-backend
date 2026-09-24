@@ -1,0 +1,33 @@
+# R6 GET /api/ai/read/withdraw-oldest-pending/:service — catalog §6 R6 + ai/read_withdraw.go listJSON
+tool: withdraw_oldest_pending
+cases:
+  - name: มีรายการค้าง
+    input: {days: 3}
+    responses:
+      old:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            window: {days: 3, start_date: "2026-09-22", end_date: "2026-09-24", start: "2026-09-22T00:00:00+07:00", end: "2026-09-24T14:32:00+07:00"}
+            statuses: "not_in(1,4,11)"
+            items:
+              - {id: 66f2c3d4e5f60718293a4b5c, datetime: "2026-09-22T11:01:00+07:00", update_time: "2026-09-22T11:01:00+07:00", username: abc0812345678, amount: 1000, status: 13, channel: AUTO, operator_name: "", comment: "", is_checked: 0, is_peer_to_peer: false, actual_amount: 0, remain_amount: 0, remainder_status: "", withdraw_mode: "", manual_override_status: 0, age_minutes: 3239}
+            pending_count: 6
+            pending_count_capped: false
+    expect:
+      status: ok
+      calls: {old: {path: /api/ai/read/withdraw-oldest-pending/DEMO-SVC, query: {days: "3", limit: "10"}}}
+      fields: {ช่วงที่ดู ตั้งแต่: 22/09/2026, ถึง: 24/09/2026, ค้างทั้งหมดในช่วงนี้: "6 รายการ"}
+      table_rows: 1
+      table_cells: [["22/09/2026 11:01", abc0812345678, "1,000.00", ตรวจสอบยอดธนาคาร, "3,239 นาที"]]
+      model_context: {statuses: [ตรวจสอบยอดธนาคาร]}
+      link: /Withdraw?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: ค่าเริ่มต้น (ไม่ส่ง days) + ไม่มีค้าง = ไม่พบ
+    responses:
+      old: {body: {code: 0, payload: {window: {days: 7, start_date: "2026-09-18", end_date: "2026-09-24"}, items: [], pending_count: 0}}}
+    expect: {status: not_found, calls: {old: {query: {days: ""}}}}
+  - name: host ล่ม
+    responses:
+      old: {status: 502, raw: "bad gateway"}
+    expect: {status: error, error_code: http_error}

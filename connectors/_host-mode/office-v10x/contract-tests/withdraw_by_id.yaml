@@ -1,0 +1,62 @@
+tool: withdraw_by_id
+cases:
+  - name: รายการถอนพร้อม timeline (ตัวอย่าง catalog R8)
+    input: {id: 66f2a2d1e4b0a1b2c3d4e5f7}
+    responses:
+      w:
+        body:
+          code: 0
+          message: SUCCESS
+          timeline_truncated: false
+          data:
+            id: 66f2a2d1e4b0a1b2c3d4e5f7
+            datetime: "2026-09-24T09:58:11+07:00"
+            update_time: "2026-09-24T10:03:40+07:00"
+            username: user01
+            amount: 500
+            before_credit: 800
+            after_credit: 300
+            status: 13
+            withdraw_from: MAIN
+            channel: AUTO
+            operator_name: somchai
+            comment: รอตรวจสอบยอด
+            bank_code: SCB
+            bank_name: นาย ก
+            acc_bank_code: KBANK
+            acc_bank_name: บจก. เว็บ
+            user_type: member
+            is_peer_to_peer: false
+            remainder_status: ""
+            credit_return: false
+            timeline:
+              - {datetime: "2026-09-24T09:58:11+07:00", status: 2, action: สร้างรายการ, comment: "", operator_name: AUTO}
+              - {datetime: "2026-09-24T10:03:40+07:00", status: 13, action: เปลี่ยนสถานะ, comment: รอตรวจสอบยอด, operator_name: somchai}
+    expect:
+      status: ok
+      calls:
+        w: {path: /api/ai/read/withdraw/DEMO-SVC, query: {id: 66f2a2d1e4b0a1b2c3d4e5f7}}
+      fields:
+        สร้างเมื่อ: "24/09/2026 09:58"
+        ยูสเซอร์เนม: user01
+        ยอดถอน: "500.00 บาท"
+        สถานะ: รบกวนตรวจสอบยอดที่ธนาคาร
+        ผู้ดำเนินการล่าสุด: somchai
+        บัญชีถอนของเว็บ: KBANK
+        หมายเหตุ: รอตรวจสอบยอด
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 09:58", เตรียมการโอนเงิน, สร้างรายการ, AUTO, ""]
+        - ["24/09/2026 10:03", รบกวนตรวจสอบยอดที่ธนาคาร, เปลี่ยนสถานะ, somchai, รอตรวจสอบยอด]
+      model_context: {is_success: false, needs_bank_check: true, timeline_statuses: [เตรียมการโอนเงิน, รบกวนตรวจสอบยอดที่ธนาคาร]}
+      link: /transection/withdraw
+  - name: host ตอบ 404 = ไม่พบ
+    input: {id: 66f2a2d1e4b0a1b2c3d4e5ff}
+    responses:
+      w: {status: 404, body: {code: 404, message: NOT_FOUND, data: null}}
+    expect: {status: not_found}
+  - name: ไม่มี timeline = ผิดรูป
+    input: {id: 66f2a2d1e4b0a1b2c3d4e5f7}
+    responses:
+      w: {body: {code: 0, data: {id: x, datetime: null, username: user01, amount: 500, status: 1}}}
+    expect: {status: error, error_code: schema_mismatch}

@@ -1,0 +1,34 @@
+questions: [BQ-03]
+tools:
+  - name: withdraw_pending_by_status
+    description: รายการถอนที่ยังไม่สำเร็จ แยกตามสถานะ (API เดิมของหลังบ้าน)
+    permission: withdraw
+    freshness: summary
+    calls:
+      - id: list
+        method: GET
+        path: /GetWithdrawList/{service}
+        query: {date: "{date:today}"}
+        schema:
+          type: object
+          required: [rows]
+          properties:
+            rows:
+              type: array
+              items: {type: object, required: [status, count, amount], properties: {status: {type: integer}, count: {type: integer}, amount: {type: number}}}
+    values:
+      - {name: rows, from: list, path: rows, sort_by: count, order: desc}
+      - {name: total_count, from: list, path: rows, agg: sum, field: count}
+    not_found: {when: "empty(rows)", message: ไม่มีรายการถอนค้าง}
+    card:
+      title: รายการถอนที่ยังไม่สำเร็จ
+      table:
+        rows: rows
+        columns:
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: ยอดรวม, field: amount, format: money}
+      fields:
+        - {label: รวมทั้งหมด, value: total_count, format: int, suffix: " รายการ"}
+      link: {label: เปิดรายการถอน, path: "/withdraw?svc={service_b64}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "total_count > 0"}

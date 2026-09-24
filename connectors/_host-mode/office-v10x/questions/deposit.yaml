@@ -1,0 +1,202 @@
+# R2 deposit-summary · R3 deposit-list · R4 deposit (controller/ai_read.go)
+questions: [BQ-02, BQ-06]
+tools:
+  - name: deposit_summary
+    description: >-
+      จำนวนรายการฝากและยอดรวมของวันหรือช่วงวัน แยกตามสถานะ พร้อมยอดฝากตกค้าง (รายการเงินเข้าที่ยังไม่กลายเป็นรายการฝาก)
+      · ใช้เมื่อถามว่าวันนี้ฝากกี่รายการ ยอดเท่าไหร่ มีตกค้างไหม · ไม่ระบุวัน = วันนี้
+    questions: [BQ-02]
+    permission: deposit
+    freshness: summary
+    input:
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: s
+        method: GET
+        path: /api/ai/read/deposit-summary/{service}
+        query:
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [total, success, by_status, by_channel, remain]
+          properties:
+            total: &ca {type: object, required: [count, amount], properties: {count: {type: integer}, amount: {type: number}}}
+            success: *ca
+            remain: *ca
+            by_status:
+              type: array
+              items: {type: object, required: [status, count, amount], properties: {status: {type: integer}, count: {type: integer}, amount: {type: number}}}
+            by_channel:
+              type: array
+              items: {type: object, required: [channel, count, amount], properties: {channel: {type: string}, count: {type: integer}, amount: {type: number}}}
+    values:
+      - {name: rows, from: s, path: by_status, sort_by: count, order: desc}
+      - {name: total_count, from: s, path: total.count}
+      - {name: total_amount, from: s, path: total.amount}
+      - {name: success_count, from: s, path: success.count}
+      - {name: success_amount, from: s, path: success.amount}
+      - {name: remain_count, from: s, path: remain.count}
+      - {name: remain_amount, from: s, path: remain.amount}
+    not_found: {when: "total_count == 0 && remain_count == 0", message: ไม่มีรายการฝากและไม่มียอดตกค้างในช่วงวันที่ถาม}
+    card:
+      title: สรุปรายการฝาก
+      fields:
+        - {label: รายการฝากทั้งหมด, value: total_count, format: int, suffix: " รายการ"}
+        - {label: ยอดฝากทั้งหมด, value: total_amount, format: money, suffix: " บาท"}
+        - {label: ฝากสำเร็จ, value: success_count, format: int, suffix: " รายการ"}
+        - {label: ยอดฝากสำเร็จ, value: success_amount, format: money, suffix: " บาท"}
+        - {label: ตกค้าง, value: remain_count, format: int, suffix: " รายการ"}
+        - {label: ยอดตกค้าง, value: remain_amount, format: money, suffix: " บาท"}
+      table:
+        rows: rows
+        columns:
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: จำนวน, field: count, format: int, suffix: " รายการ"}
+          - {label: ยอดรวม, field: amount, format: money}
+      note: รายการฝากทั้งหมดรวมรายการเพิ่มหรือลบเครดิตมือด้วย เท่ากับตัวเลขหัวตารางหน้ารายการฝาก
+      link: {label: เปิดรายการฝาก, path: /transection/deposit}
+    model_context:
+      - {name: has_remain, type: bool, expr: "remain_count > 0"}
+      - {name: has_unfinished, type: bool, expr: "total_count > success_count"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
+
+  - name: deposit_find
+    description: >-
+      ค้นรายการฝากตามยูสเซอร์เนม (ตรงตัว) ยอดเงิน และช่วงวัน เรียงใหม่ไปเก่า แสดงสถานะ ผู้ดำเนินการ และหมายเหตุ
+      · ใช้เมื่อถามว่ารายการฝากของยูสนี้สถานะอะไร ใครทำ · ไม่ระบุวัน = วันนี้ · ไม่แสดง IP
+    questions: [BQ-06]
+    permission: deposit
+    freshness: summary
+    input:
+      username: {type: string, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      amount: {type: number, description: ยอดฝากตรงตัว (บาท) ถ้าผู้ใช้บอก, min: 0.01}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: l
+        method: GET
+        path: /api/ai/read/deposit-list/{service}
+        query:
+          username: "{input.username}"
+          amount: "{input.amount}"
+          from: "{date:input.date_from|date:today}"
+          to: "{date:input.date_to|date:input.date_from|date:today}"
+          limit: "20"
+        envelope: raw
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              items:
+                type: object
+                required: [id, datetime, username, amount, status]
+                properties:
+                  id: {type: string}
+                  datetime: {type: string, nullable: true}
+                  username: {type: string}
+                  amount: {type: number}
+                  bonus: {type: number}
+                  status: {type: integer}
+                  channel: {type: string}
+                  operator_name: {type: string}
+                  comment: {type: string}
+    values:
+      - {name: rows, from: l, path: data}
+      - {name: match_count, from: l, path: count}
+      - {name: shown_count, expr: "len(rows)"}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการฝากตามที่ค้นในช่วงวันที่ถาม}
+    card:
+      title: รายการฝากที่ค้นพบ
+      fields:
+        - {label: พบทั้งหมด, value: match_count, format: int, suffix: " รายการ"}
+        - {label: แสดงในการ์ด, value: shown_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยูสเซอร์เนม, field: username}
+          - {label: ยอดฝาก, field: amount, format: money}
+          - {label: โบนัส, field: bonus, format: money}
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: ช่องทาง, field: channel}
+          - {label: ผู้ดำเนินการ, field: operator_name}
+          - {label: หมายเหตุ, field: comment}
+      link: {label: เปิดรายการฝาก, path: /transection/deposit}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
+      - {name: more_than_shown, type: bool, expr: "match_count > shown_count"}
+
+  - name: deposit_by_id
+    description: รายละเอียดรายการฝาก 1 รายการตามรหัสรายการ (ObjectID ยาวยี่สิบสี่ตัวอักษร) ที่ผู้ใช้ให้มา · สถานะ ผู้ดำเนินการ หมายเหตุ
+    questions: [BQ-06]
+    permission: deposit
+    freshness: summary
+    input:
+      id: {type: string, required: true, description: รหัสรายการฝาก (ObjectID), pattern: "^[0-9a-fA-F]{24}$"}
+    calls:
+      - id: d
+        method: GET
+        path: /api/ai/read/deposit/{service}
+        query: {id: "{input.id}"}
+        timeout_ms: 25000
+        not_found_codes: [404]
+        schema:
+          type: object
+          required: [id, datetime, username, amount, status]
+          properties:
+            id: {type: string}
+            datetime: {type: string, nullable: true}
+            username: {type: string}
+            amount: {type: number}
+            bonus: {type: number}
+            bonus_name: {type: string}
+            before_credit: {type: number}
+            after_credit: {type: number}
+            channel: {type: string}
+            status: {type: integer}
+            operator_name: {type: string}
+            comment: {type: string}
+            bank_code: {type: string}
+    values:
+      - {name: dt, from: d, path: datetime}
+      - {name: user, from: d, path: username}
+      - {name: amt, from: d, path: amount}
+      - {name: bns, from: d, path: bonus}
+      - {name: bns_name, from: d, path: bonus_name}
+      - {name: before, from: d, path: before_credit}
+      - {name: after, from: d, path: after_credit}
+      - {name: chan, from: d, path: channel}
+      - {name: st, from: d, path: status}
+      - {name: op, from: d, path: operator_name}
+      - {name: cmt, from: d, path: comment}
+      - {name: bank, from: d, path: bank_code}
+    card:
+      title: รายละเอียดรายการฝาก
+      fields:
+        - {label: เวลา, value: dt, format: datetime}
+        - {label: ยูสเซอร์เนม, value: user}
+        - {label: ยอดฝาก, value: amt, format: money, suffix: " บาท"}
+        - {label: โบนัส, value: bns, format: money, suffix: " บาท"}
+        - {label: ชื่อโบนัส, value: bns_name, when: "!empty(bns_name)"}
+        - {label: เครดิตก่อน, value: before, format: money}
+        - {label: เครดิตหลัง, value: after, format: money}
+        - {label: ช่องทาง, value: chan}
+        - {label: ธนาคาร, value: bank, when: "!empty(bank)"}
+        - {label: สถานะ, value: st, format: "status:deposit"}
+        - {label: ผู้ดำเนินการ, value: op}
+        - {label: หมายเหตุ, value: cmt, when: "!empty(cmt)"}
+      link: {label: เปิดรายการฝาก, path: /transection/deposit}
+    model_context:
+      - {name: is_success, type: bool, expr: "st == 1"}
+      - {name: is_waiting, type: bool, expr: "in(st, 2, 5)"}
+      - {name: game_outstanding, type: bool, expr: "st == 6"}

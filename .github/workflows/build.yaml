@@ -1,0 +1,133 @@
+name: CI/CD Pipeline
+
+# รูปแบบเดียวกับ service อื่นในสาย mootui: develop → dev · main → uat · tag v* → prd (re-tag :uat)
+# เพิ่มจากของเดิม: job test ต้องผ่านก่อน build (connector ผิดรูป = boot ไม่ขึ้น จึงต้องจับตั้งแต่ CI)
+
+env:
+  NAME: ai-office-backend
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - releases/**
+    tags:
+      - v*
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Widget test + build
+        working-directory: widget
+        run: |
+          npm ci --no-audit --no-fund
+          npm run type-check
+          npm run build
+          npm test
+
+      - name: Go vet + test (รวม plugin lint · contract test ของ connector จริง)
+        run: |
+          go vet ./...
+          go test ./... -count=1
+
+      - name: Connector check
+        run: go run ./_cmd/connector-check connectors/office-v10x connectors/office-abatech
+
+  build:
+    if: ${{ github.event_name == 'push' }}
+    needs: test
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up variables
+        id: variables
+        run: |
+          if [[ $GITHUB_REF == "refs/heads/main" ]]; then
+            echo "env_name=uat" >> $GITHUB_OUTPUT
+            echo "image_tag=uat" >> $GITHUB_OUTPUT
+          elif [[ $GITHUB_EVENT_NAME == "push" && $GITHUB_REF == "refs/tags/"* ]]; then
+            echo "env_name=prd" >> $GITHUB_OUTPUT
+            echo "image_tag=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
+          elif [[ $GITHUB_REF == "refs/heads/develop" ]]; then
+            echo "env_name=dev" >> $GITHUB_OUTPUT
+            echo "image_tag=dev" >> $GITHUB_OUTPUT
+          else
+            echo "env_name=$GITHUB_REF" >> $GITHUB_OUTPUT
+            echo "image_tag=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate a config.json
+        if: ${{ startsWith(github.ref, 'refs/heads/') }}
+        run: |
+          echo "{\"auths\":{\"${{secrets.JFROG_SERVER}}\":{\"auth\":\"$(printf "%s:%s" "${{secrets.JFROG_USERNAME}}" "${{secrets.JFROG_PASSWORD}}" | base64 | tr -d '\n')\"}}}" > config.json
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build an image
+        if: ${{ startsWith(github.ref, 'refs/heads/') }}
+        run: |
+          docker run \
+            -v $(pwd):/workspace \
+            -v $(pwd)/config.json:/kaniko/.docker/config.json:ro \
+            -v /tmp/.buildx-cache:/cache \
+            gcr.io/kaniko-project/executor:latest \
+              --context dir:///workspace/ \
+              --dockerfile Dockerfile \
+              --destination "${{secrets.JFROG_PATH}}/$NAME:${{ steps.variables.outputs.image_tag }}" \
+              --cache=true \
+              --cache-dir=/cache
+
+      - name: Remove registry credentials
+        if: ${{ always() }}
+        run: rm -f config.json
+
+      - name: Deploy for UAT & Develop
+        if: ${{ startsWith(github.ref, 'refs/heads/') }}
+        run: |
+          curl --location ${{secrets.API_DEPLOY_DEV}} --header 'Content-Type:application/x-www-form-urlencoded' --data-urlencode 'env=${{ steps.variables.outputs.image_tag }}'
+
+  tagging:
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Tag Docker image
+        run: |
+          echo ${{secrets.JFROG_PASSWORD}} | docker login ${{secrets.JFROG_SERVER}} -u ${{secrets.JFROG_USERNAME}} --password-stdin
+          docker pull ${{secrets.JFROG_PATH}}/$NAME:uat
+          docker tag ${{secrets.JFROG_PATH}}/$NAME:uat ${{secrets.JFROG_PATH}}/$NAME:${{ github.ref_name }}
+          docker push ${{secrets.JFROG_PATH}}/$NAME:${{ github.ref_name }}
+
+  updateImage:
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs: tagging
+    runs-on: self-hosted
+    steps:
+      - name: Update Image
+        run: |
+          curl --location ${{secrets.API_UPDATE_IMAGE}} --header 'Content-Type:application/x-www-form-urlencoded' --data-urlencode 'image_name=${{secrets.JFROG_PATH}}/${{env.NAME}}' --data-urlencode 'tag=${{ github.ref_name }}'

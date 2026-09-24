@@ -1,0 +1,41 @@
+# R17 GET /api/ai/read/working-log/:service — catalog §6 R17 + ai/read_log.go
+tool: staff_working_log
+cases:
+  - name: ใครแก้ของสมาชิกคนนี้
+    input: {username: user01, date: "2026-09-23"}
+    responses:
+      wl:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            start_date: "2026-09-23"
+            end_date: "2026-09-23"
+            timezone: Asia/Bangkok
+            items:
+              - {datetime: "2026-09-23T11:12:09+07:00", operator_name: Admin A, action: แจกโบนัสฟรี, change: "50", username: user01, detail: "แจกโบนัสฟรี user : user01 จำนวน 50 ยอดเทิร์น : 0 ถอนได้สูงสุด : 0 สาเหตุ : ชดเชย", description: ""}
+            count: 1
+            truncated: false
+            limit: 50
+            sort: datetime_desc
+            fetched_at: "2026-09-24T14:32:00+07:00"
+    expect:
+      status: ok
+      calls: {wl: {path: /api/ai/read/working-log/DEMO-SVC, query: {date: "2026-09-23", username: user01, operator: "", action: "", start_date: "", end_date: "", limit: "50"}}}
+      fields: {ตั้งแต่วันที่: 23/09/2026, ถึงวันที่: 23/09/2026}
+      no_fields: [มีรายการมากกว่าที่แสดง]
+      table_cells: [["23/09/2026 11:12", Admin A, แจกโบนัสฟรี, user01, "50", "แจกโบนัสฟรี user : user01 จำนวน 50 ยอดเทิร์น : 0 ถอนได้สูงสุด : 0 สาเหตุ : ชดเชย"]]
+      model_context: {has_more_rows: false}
+      link: /Logs/Working
+  - name: ช่วงวันที่ + ชื่อพนักงานภาษาไทย + ไม่พบ
+    input: {start_date: "2026-09-01", end_date: "2026-09-07", operator: สมชาย, action: คืนเครดิต}
+    responses:
+      wl: {body: {code: 0, payload: {start_date: "2026-09-01", end_date: "2026-09-07", items: [], count: 0, truncated: false, limit: 50}}}
+    expect:
+      status: not_found
+      calls: {wl: {query: {start_date: "2026-09-01", end_date: "2026-09-07", operator: สมชาย, action: คืนเครดิต}}}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      wl: {status: 429, body: {code: 429, message: HOST_BUSY, payload: null}}
+    expect: {status: error, error_code: busy, calls: {wl: {query: {date: "2026-09-25"}}}}

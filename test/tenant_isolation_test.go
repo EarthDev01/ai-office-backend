@@ -6,11 +6,13 @@ import (
 	"testing"
 )
 
-// office/service มาทาง path ได้อย่างเดียว
-// ยัดมาทาง body/query/header = ความพยายามเลี่ยงการตรวจ → ปฏิเสธทั้ง request
+// office/service มาทาง path ได้อย่างเดียว · ของผู้ใช้มาจากตั๋ว
+// ยัดมาทาง body/query/header = ความพยายามเลี่ยงการตรวจ → ปฏิเสธทั้ง request (AC-29)
 func TestRejectTenantField(t *testing.T) {
 	cases := []struct {
 		name   string
+		path   string
+		method string
 		query  string
 		header [2]string
 		body   string
@@ -22,22 +24,22 @@ func TestRejectTenantField(t *testing.T) {
 		{name: "query tenant", query: "?tenant=PG99"},
 		{name: "header X-Service-Id", header: [2]string{"X-Service-Id", "PG99"}},
 		{name: "header X-Website-Id", header: [2]string{"X-Website-Id", "PG99"}},
-		{name: "body flat", body: `{"service_id":"PG99"}`},
-		{name: "body nested", body: `{"ctx":{"service_id":"PG99"}}`},
+		{name: "chat body flat", path: "/chat", method: http.MethodPost, body: `{"text":"x","service_id":"PG99"}`},
+		{name: "chat body nested", path: "/chat", method: http.MethodPost, body: `{"text":"x","ctx":{"service_id":"PG99"}}`},
+		{name: "session body office", path: "/session", method: http.MethodPost, body: `{"kind":"sample-kind","user":{"id":"x","office_id":"acme"},"grant":"g"}`},
 	}
 
 	r := newRouter(t)
-	tok := devToken("adm_ploy", "K11S", "PG99")
-
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			path, method := "/bootstrap", http.MethodGet
+			if tc.path != "" {
+				path, method = tc.path, tc.method
+			}
 			w := do(t, r, req{
-				method:  http.MethodGet,
-				path:    bootPath(demoKey, "K11S") + tc.query,
-				body:    tc.body,
-				origin:  officeOrigin,
-				token:   tok,
-				headers: [][2]string{tc.header},
+				method: method, path: basePath(demoKey, "K11S") + path + tc.query, body: tc.body,
+				origin: officeOrigin, token: tk, headers: [][2]string{tc.header},
 			})
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("อยากได้ 400 ได้ %d body=%s", w.Code, w.Body.String())
@@ -51,11 +53,8 @@ func TestRejectTenantField(t *testing.T) {
 
 func TestAllowsCleanRequest(t *testing.T) {
 	r := newRouter(t)
-	w := do(t, r, req{
-		method: http.MethodGet, path: bootPath(demoKey, "K11S"),
-		origin: officeOrigin, token: devToken("adm_ploy", "K11S"),
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("request ที่สะอาดต้องผ่าน ได้ %d %s", w.Code, w.Body.String())
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	if code, _, raw := getBoot(t, r, demoKey, "K11S", tk); code != http.StatusOK {
+		t.Fatalf("request ที่สะอาดต้องผ่าน ได้ %d %s", code, raw)
 	}
 }

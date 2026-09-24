@@ -1,0 +1,38 @@
+# R10 GET /api/ai/read/member-credit/:service?username=&asset_code= — catalog §6 R10 (สด · current_credit null = agent ไม่ส่ง)
+tool: member_credit
+cases:
+  - name: เครดิตเกม
+    input: {username: abc123}
+    responses:
+      cr: {body: {code: 0, message: SUCCESS, payload: {username: abc123, asset_code: "1001", current_credit: 152.5, wallets: null, agent_http_status: 200, fetched_at: "2026-09-24T14:32:00+07:00", source: live_agent}}}
+    expect:
+      status: ok
+      calls: {cr: {path: /api/ai/read/member-credit/DEMO-SVC, query: {username: abc123, asset_code: ""}}}
+      fields: {ยูสเซอร์เนม: abc123, เครดิตคงเหลือ: "152.50 บาท"}
+      no_fields: [กระเป๋า WALLET]
+      model_context: {credit_known: true, is_cash_wallet: false}
+      link: /Credit?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: กระเป๋าเงินสด ธีม UBA + agent ไม่ส่งยอดรวม = ขีด ไม่ใช่ศูนย์
+    input: {username: abc123, wallet: "1003"}
+    responses:
+      cr: {body: {code: 0, payload: {username: abc123, asset_code: "1003", current_credit: null, wallets: {WALLET: 20, ABATECH: 100.25, UFABET: 0}, agent_http_status: 200}}}
+    expect:
+      status: ok
+      calls: {cr: {query: {asset_code: "1003"}}}
+      fields: {เครดิตคงเหลือ: "—", กระเป๋า WALLET: "20.00 บาท", กระเป๋า ABATECH: "100.25 บาท", กระเป๋า UFABET: "0.00 บาท"}
+      model_context: {credit_known: false, is_cash_wallet: true}
+  - name: ไม่พบสมาชิก (404)
+    input: {username: nobody}
+    responses:
+      cr: {status: 404, body: {code: 404, message: NOT_FOUND, error: ไม่พบสมาชิกนี้, payload: null}}
+    expect: {status: not_found}
+  - name: agent ไม่ตอบ (504)
+    input: {username: abc123}
+    responses:
+      cr: {status: 504, body: {code: 504, message: UPSTREAM_TIMEOUT, error: API agent ไม่ตอบภายในเวลา, payload: null}}
+    expect: {status: error, error_code: http_error}
+  - name: เช็คถี่เกิน (429)
+    input: {username: abc123}
+    responses:
+      cr: {status: 429, body: {code: 429, message: RATE_LIMITED, payload: null}}
+    expect: {status: error, error_code: busy}

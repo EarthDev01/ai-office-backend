@@ -1,0 +1,92 @@
+# R12 bank-config-deposit · R13 bank-config-withdraw (controller/ai_read.go AIReadBankConfig) · OFFICE bank_config ของ service ใน path
+questions: [BQ-10]
+tools:
+  - name: bank_accounts_deposit
+    description: >-
+      บัญชีธนาคารฝากของเว็บ แยกตามธนาคาร: จำนวนบัญชี จำนวนที่เปิดใช้งาน และจำนวนที่แสดงหน้าเว็บ
+      · ใช้เมื่อถามบัญชีฝากที่เปิดใช้อยู่ · ไม่รวมช่องทาง Payment
+    permission: bank_deposit
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /api/ai/read/bank-config-deposit/{service}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: &bankcfg
+          type: object
+          required: [code, data, count, summary]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data: {type: array}
+            summary:
+              type: object
+              required: [by_bank]
+              properties:
+                by_bank:
+                  type: array
+                  items:
+                    type: object
+                    required: [bank_code, count, active_count, shown_count]
+                    properties:
+                      bank_code: {type: string}
+                      count: {type: integer}
+                      active_count: {type: integer}
+                      shown_count: {type: integer}
+    values:
+      - {name: rows, from: b, path: summary.by_bank, sort_by: count, order: desc}
+      - {name: total, from: b, path: count}
+      - {name: active_total, from: b, path: summary.by_bank, agg: sum, field: active_count}
+      - {name: shown_total, from: b, path: summary.by_bank, agg: sum, field: shown_count}
+    not_found: {when: "total == 0", message: เว็บนี้ยังไม่มีบัญชีธนาคารฝาก}
+    card:
+      title: บัญชีธนาคารฝากของเว็บ
+      fields:
+        - {label: บัญชีทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: active_total, format: int, suffix: " บัญชี"}
+        - {label: แสดงหน้าเว็บ, value: shown_total, format: int, suffix: " บัญชี"}
+      table:
+        rows: rows
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ทั้งหมด, field: count, format: int, suffix: " บัญชี"}
+          - {label: เปิดใช้งาน, field: active_count, format: int, suffix: " บัญชี"}
+          - {label: แสดงหน้าเว็บ, field: shown_count, format: int, suffix: " บัญชี"}
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: /statement/managebank}
+    model_context:
+      - {name: has_inactive, type: bool, expr: "active_total < total"}
+      - {name: none_shown, type: bool, expr: "shown_total == 0"}
+
+  - name: bank_accounts_withdraw
+    description: "บัญชีธนาคารถอนของเว็บ แยกตามธนาคาร — จำนวนบัญชี จำนวนที่เปิดใช้งาน · ใช้เมื่อถามบัญชีถอนที่เปิดใช้อยู่"
+    permission: bank_withdraw
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /api/ai/read/bank-config-withdraw/{service}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: *bankcfg
+    values:
+      - {name: rows, from: b, path: summary.by_bank, sort_by: count, order: desc}
+      - {name: total, from: b, path: count}
+      - {name: active_total, from: b, path: summary.by_bank, agg: sum, field: active_count}
+    not_found: {when: "total == 0", message: เว็บนี้ยังไม่มีบัญชีธนาคารถอน}
+    card:
+      title: บัญชีธนาคารถอนของเว็บ
+      fields:
+        - {label: บัญชีทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: active_total, format: int, suffix: " บัญชี"}
+      table:
+        rows: rows
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ทั้งหมด, field: count, format: int, suffix: " บัญชี"}
+          - {label: เปิดใช้งาน, field: active_count, format: int, suffix: " บัญชี"}
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: /statement/managebank}
+    model_context:
+      - {name: has_inactive, type: bool, expr: "active_total < total"}

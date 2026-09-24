@@ -12,7 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const consoleUserCollection = "ai_console_users"
+const consoleUserCollection = "console_users"
 
 type consoleUserRepo struct {
 	col *mongo.Collection

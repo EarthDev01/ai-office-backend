@@ -1,0 +1,44 @@
+tool: worklog_search
+cases:
+  - name: ใครแก้รายการของยูสนี้ + รวมประวัติเข้าระบบ (ตัวอย่าง catalog R16)
+    service: DEMO-DEV-OFFICEX-24
+    input: {search: user01, include_login: true}
+    responses:
+      w:
+        body:
+          code: 0
+          message: SUCCESS
+          count: 2
+          limit: 20
+          page: 1
+          include_login: true
+          data:
+            - {id: 66f2a3e2e4b0a1b2c3d4e5f9, datetime: "2026-09-24T10:03:41+07:00", service: DEMO-DEV-OFFICEX-24, action: เปลี่ยนสถานะรายการถอน, form: รายการถอน, description: เปลี่ยนสถานะ user01 เป็น 13, operator_name: สมชาย, operator_username: somchai, operator_dept: Operation, type_log: ""}
+            - {id: 66f29f10e4b0a1b2c3d4e5fa, datetime: "2026-09-24T09:40:00+07:00", service: "", action: Login Office, form: Form Login 2FA, description: "เข้าสู่ระบบหลังบ้าน : somchai", operator_name: สมชาย, operator_username: somchai, operator_dept: Operation, type_log: ""}
+    expect:
+      status: ok
+      calls:
+        w: {path: /api/ai/read/worklog/DEMO-DEV-OFFICEX-24, query: {from: "2026-09-24", to: "2026-09-24", search: user01, include_login: "true", limit: "20"}}
+      fields: {พบทั้งหมด: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 10:03", สมชาย, เปลี่ยนสถานะรายการถอน, รายการถอน, เปลี่ยนสถานะ user01 เป็น 13]
+        - ["24/09/2026 09:40", สมชาย, Login Office, Form Login 2FA, "เข้าสู่ระบบหลังบ้าน : somchai"]
+      model_context: {more_than_shown: false}
+      link: /worklog
+  - name: ไม่พบ
+    input: {operator_username: nobody}
+    responses:
+      w: {body: {code: 0, count: 0, data: []}}
+    expect:
+      status: not_found
+      calls:
+        w: {query: {operator_username: nobody}}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      w: {body: {code: 0, count: 0, data: []}}
+    expect:
+      status: not_found
+      calls:
+        w: {query: {from: "2026-09-25", to: "2026-09-25"}}

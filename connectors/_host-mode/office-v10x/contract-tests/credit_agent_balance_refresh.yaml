@@ -1,0 +1,27 @@
+tool: credit_agent_balance_refresh
+cases:
+  - name: สั่งดึงใหม่สำเร็จ + อ่านยอด
+    responses:
+      reload: {body: {code: 0, msg: Success}}
+      a: {body: {code: 0, message: Success, data: {amount: 1200, code: 1001, name: CREDIT, unit: THB, updated_at: 1790219702, service: DEMO-SVC}}}
+    expect:
+      status: ok
+      calls:
+        reload: {path: /api/ai/read/credit-agent-reload/DEMO-SVC}
+        a: {path: /api/ai/read/credit-agent-balance/DEMO-SVC}
+      fields: {เครดิตเอเจ้นคงเหลือ: "1,200.00", อัปเดตล่าสุด: "24/09/2026 10:15"}
+      model_context: {reload_requested: true}
+      link: /
+  - name: reload ล่ม (handler เดิม panic = 500) แต่ยังอ่านยอดได้
+    responses:
+      reload: {status: 500, raw: ""}
+      a: {body: {code: 0, data: {amount: 1200, unit: THB, updated_at: 1790219702}}}
+    expect:
+      status: ok
+      fields: {เครดิตเอเจ้นคงเหลือ: "1,200.00"}
+      model_context: {reload_requested: false}
+  - name: ไม่มีข้อมูลเครดิต
+    responses:
+      reload: {body: {code: 0, msg: Success}}
+      a: {body: {code: 1, message: "mongo: no documents in result", data: null}}
+    expect: {status: not_found}

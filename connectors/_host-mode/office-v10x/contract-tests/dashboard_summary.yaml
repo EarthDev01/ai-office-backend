@@ -1,0 +1,68 @@
+tool: dashboard_summary
+cases:
+  - name: วันนี้เทียบเมื่อวาน (ตัวอย่าง catalog R1)
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      d:
+        body:
+          code: 0
+          message: SUCCESS
+          data:
+            service: DEMO-DEV-OFFICEX-24
+            timezone: Asia/Bangkok
+            source: report_active_user_day
+            current: {date_from: "2026-09-24", date_to: "2026-09-24", deposit: 152300, withdraw: 98750.5, bonus: 4200, profit: 53549.5, profit_per_deposit: 35.16, count_member_new: 37, count_member_old: 412, count_member_online: 449}
+            previous: {date_from: "2026-09-23", date_to: "2026-09-23", deposit: 140100, withdraw: 120000, bonus: 3900, profit: 20100, profit_per_deposit: 14.35, count_member_new: 29, count_member_old: 398, count_member_online: 427}
+            diff: {deposit: 12200, withdraw: -21249.5, bonus: 300, profit: 33449.5, profit_per_deposit: 20.81, count_member_new: 8, count_member_old: 14, count_member_online: 22}
+    expect:
+      status: ok
+      calls:
+        d: {path: /api/ai/read/dashboard/DEMO-DEV-OFFICEX-24, query: {from: "2026-09-24", to: "2026-09-24"}}
+      fields:
+        ตั้งแต่วันที่: 24/09/2026
+        ยอดฝาก: "152,300.00 บาท"
+        ยอดถอน: "98,750.50 บาท"
+        โบนัส: "4,200.00 บาท"
+        กำไร (ฝาก − ถอน): "53,549.50 บาท"
+        กำไรต่อยอดฝาก: "35.2%"
+        สมาชิกใหม่ที่มีรายการ: "37 คน"
+        สมาชิกที่มีรายการทั้งหมด: "449 คน"
+        ช่วงก่อนหน้า ตั้งแต่: 23/09/2026
+        ยอดฝาก ช่วงก่อนหน้า: "140,100.00 บาท"
+        ยอดถอน เปลี่ยนแปลง: "-21,249.50 บาท"
+        กำไร เปลี่ยนแปลง: "33,449.50 บาท"
+      model_context: {deposit_up: true, withdraw_up: false, profit_positive: true, profit_up: true}
+      link: /dashboard
+  - name: ช่วงวันที่ผู้ใช้ระบุ (มีแค่วันแรก → to เท่ากับวันแรก)
+    input: {date_from: "2026-09-20"}
+    responses:
+      d:
+        body:
+          code: 0
+          data:
+            current: {date_from: "2026-09-20", date_to: "2026-09-20", deposit: 0, withdraw: 0, bonus: 0, profit: 0, profit_per_deposit: 0, count_member_new: 0, count_member_old: 0, count_member_online: 0}
+            previous: {date_from: "2026-09-19", date_to: "2026-09-19", deposit: 0, withdraw: 0, bonus: 0, profit: 0, profit_per_deposit: 0, count_member_new: 0, count_member_old: 0, count_member_online: 0}
+            diff: {deposit: 0, withdraw: 0, profit: 0}
+    expect:
+      status: ok
+      calls:
+        d: {query: {from: "2026-09-20", to: "2026-09-20"}}
+      fields: {ยอดฝาก: "0.00 บาท"}
+      model_context: {deposit_up: false, profit_positive: false}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      d: {status: 503, body: {code: 503, message: SERVICE_UNAVAILABLE, data: null}}
+    expect:
+      status: error
+      error_code: http_error
+      calls:
+        d: {query: {from: "2026-09-25", to: "2026-09-25"}}
+  - name: host ตอบผิดรูป (ไม่มี previous) = ดึงไม่ได้
+    responses:
+      d: {body: {code: 0, data: {current: {date_from: "2026-09-24"}}}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: สิทธิ์ไม่ถึงที่ host (403)
+    responses:
+      d: {status: 403, body: {code: 403, message: PERMISSION_DENIED}}
+    expect: {status: denied}

@@ -6,146 +6,240 @@ import (
 	"testing"
 	"time"
 
+	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/core/domain"
+	"ai-office-backend/internal/core/port"
 )
 
-// realOffice: demoOffice ที่ตั้ง BackofficeAPIURL ไว้ (แค่ flag ว่าใช้ JWT จริง
-// ไม่ใช่ dev-token mode — backend อ่านตัวตนจาก JWT ไม่ได้เรียก URL นี้)
-func realOffice() domain.Office {
-	o := demoOffice()
-	o.BackofficeAPIURL = "https://demo-staging-office.example"
-	return o
-}
-
-func getBoot(t *testing.T, r http.Handler, key, serviceID, token string) (int, domain.Bootstrap, string) {
-	t.Helper()
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(key, serviceID), origin: officeOrigin, token: token})
-	return w.Code, payload[domain.Bootstrap](t, w), w.Body.String()
-}
+// หลัง D-87: widget ขอตั๋วจาก host ก่อน (host → /session ด้วย secret) แล้วถือตั๋วมา bootstrap
+// backend ไม่เคยเห็น token ของแอดมินเลย — test ชุดนี้แทน test เดิมที่อ่าน JWT ของแอดมิน
 
 func TestBootstrap_Enabled(t *testing.T) {
 	r := newRouter(t)
-	code, b, raw := getBoot(t, r, demoKey, "K11S", devToken("adm_ploy", "K11S", "PG99"))
-
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	code, b, raw := getBoot(t, r, demoKey, "K11S", tk)
 	if code != http.StatusOK || !b.Enabled {
 		t.Fatalf("ควรเปิด: %d %s", code, raw)
 	}
-	if b.OfficeID != "demo" || b.ServiceID != "K11S" {
-		t.Fatalf("office/service ผิด: %+v", b)
+	if b.OfficeID != "demo" || b.ServiceID != "K11S" || b.Kind != testKind || b.TicketExpiresAt == 0 {
+		t.Fatalf("office/service/kind ผิด: %+v", b)
 	}
 }
 
 // หัวใจของโมเดล 2 ชั้น: key เดียวกัน คนละ service ต้องได้คนละผล
-func TestBootstrap_OneKeyManyServices(t *testing.T) {
+func TestSession_OneKeyManyServices(t *testing.T) {
 	r := newRouter(t)
-	tok := devToken("adm_ploy", "K11S", "PG99")
-
-	_, k, _ := getBoot(t, r, demoKey, "K11S", tok)
-	_, p, _ := getBoot(t, r, demoKey, "PG99", tok)
-
-	if !k.Enabled || k.ServiceID != "K11S" {
-		t.Fatalf("K11S ควรเปิด: %+v", k)
+	if w := sessionReq(t, r, demoKey, "K11S", secretK11S, adminUser(), testKind); w.Code != http.StatusOK {
+		t.Fatalf("K11S ต้องได้ตั๋ว: %d %s", w.Code, w.Body.String())
 	}
-	if p.Enabled || p.Reason != "service_disabled" {
-		t.Fatalf("PG99 ยังปิดอยู่ ต้องได้ service_disabled: %+v", p)
+	w := sessionReq(t, r, demoKey, "PG99", secretPG99, adminUser(), testKind)
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonServiceDisabled {
+		t.Fatalf("PG99 ยังปิดอยู่ ต้องได้ service_disabled: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// ██ กฎที่แทน GC-1 เดิม
-// หน้าเว็บบอก service ได้ (เพราะไม่มี session ฝั่ง server) แต่ต้องมีสิทธิ์จริง
-func TestBootstrap_ServiceMustBeInListService(t *testing.T) {
+// ตั๋วของ K11S ใช้กับ path ของ PG99 ไม่ได้ (แก้ service ฝั่ง client → ปฏิเสธ · AC-3)
+func TestTicket_BoundToService(t *testing.T) {
 	o := demoOffice()
 	o.Services[1].Enabled = true
 	r := newRouter(t, o)
-
-	// แอดมินคนนี้มีสิทธิ์เฉพาะ K11S
-	tok := devToken("adm_ploy", "K11S")
-
-	if code, b, _ := getBoot(t, r, demoKey, "K11S", tok); code != http.StatusOK || !b.Enabled {
-		t.Fatalf("service ที่มีสิทธิ์ต้องผ่าน: %d %+v", code, b)
-	}
-
-	// แก้ localStorage ให้ชี้ PG99 ทั้งที่ไม่มีสิทธิ์ → ต้องโดนปฏิเสธที่ชั้นเรา
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "PG99"), origin: officeOrigin, token: tok})
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("service ที่ไม่มีสิทธิ์ต้อง 403 ได้ %d %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "SERVICE_NOT_ALLOWED") {
-		t.Fatalf("อยากได้ SERVICE_NOT_ALLOWED ได้ %s", w.Body.String())
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "PG99"), origin: officeOrigin, token: tk})
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "TICKET_INVALID") {
+		t.Fatalf("ตั๋วคนละ service ต้อง 401 ได้ %d %s", w.Code, w.Body.String())
 	}
 }
 
-// service ที่ ListService บอกว่า permission=false ต้องใช้ไม่ได้
-func TestBootstrap_ListServicePermissionFalse(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWT("adm_ploy", map[string]bool{"K11S": false, "PG99": true}, nil)
-
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: tok})
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("permission=false ต้อง 403 ได้ %d %s", w.Code, w.Body.String())
+func TestBootstrap_BadTicket(t *testing.T) {
+	r := newRouter(t)
+	for _, tok := range []string{"token-ปลอม", "a.b.c"} {
+		w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: tok})
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("ตั๋วปลอม %q ต้อง 401 ได้ %d %s", tok, w.Code, w.Body.String())
+		}
 	}
 }
 
-// เส้นทางจริง: อ่านว่า token นี้เป็นใครจาก JWT payload โดยตรง
-func TestBootstrap_ResolvesFromJWT(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWT("adm_ploy", map[string]bool{"K11S": true}, []string{"view_member"})
-
-	code, b, raw := getBoot(t, r, demoKey, "K11S", tok)
-	if code != http.StatusOK || !b.Enabled {
-		t.Fatalf("ควรผ่าน: %d %s", code, raw)
-	}
-}
-
-func TestBootstrap_BadToken(t *testing.T) {
-	r := newRouter(t, realOffice())
-
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: "token-ปลอม"})
+// ตั๋วที่เซ็นด้วย secret อื่น (แต่ง claims เอง) ต้องใช้ไม่ได้ (AC-32 ฝั่ง backend)
+func TestTicket_ForgedWithOtherSecret(t *testing.T) {
+	r := newRouter(t)
+	other := auth.NewAccessTicketIssuer("attacker-secret-xxxxxxxxxxxxxxxxxxxxxxxx")
+	forged, _ := other.Issue(domain.AccessTicket{ID: "x", OfficeID: "demo", ServiceID: "K11S", Kind: testKind,
+		User: domain.HostUser{ID: "emp_1", Username: "adm_ploy", Permissions: []string{"W_VIEW"}},
+		IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)})
+	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: forged})
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("token ที่ decode ไม่ได้ ต้อง 401 ได้ %d %s", w.Code, w.Body.String())
+		t.Fatalf("ตั๋วปลอมต้อง 401 ได้ %d", w.Code)
 	}
 }
 
-// allowlist ว่าง = เปิดให้ทุกคนที่ล็อกอิน office สำเร็จ (ไม่ต้องกรองรายคน)
-func TestBootstrap_EmptyAllowlistMeansEveryone(t *testing.T) {
-	o := realOffice()
-	o.Services[0].Allowlist = nil // K11S: allowlist ว่าง
+// allow_all=true = ทุกคนที่ host ยืนยันแล้วใช้ได้ (R5)
+func TestSession_AllowAllTrueMeansEveryone(t *testing.T) {
+	o := demoOffice()
+	o.Services[0].AllowAll = true
 	r := newRouter(t, o)
-
-	// user ที่ไม่มีในลิสต์ไหนเลย แต่ล็อกอิน + มีสิทธิ์ service → ต้องผ่าน
-	tok := officeJWT("someone_new", map[string]bool{"K11S": true}, nil)
-	code, b, raw := getBoot(t, r, demoKey, "K11S", tok)
-	if code != http.StatusOK || !b.Enabled {
-		t.Fatalf("allowlist ว่างต้องเปิดให้ทุกคน: %d %s", code, raw)
+	u := hostUser{ID: "emp_9", Username: "someone_new"}
+	if w := sessionReq(t, r, demoKey, "K11S", secretK11S, u, testKind); w.Code != http.StatusOK {
+		t.Fatalf("allow_all=true ต้องเปิดให้ทุกคน: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// ยกเลิก allowlist แล้ว — แม้ service จะมีรายชื่อเดิมติดอยู่ ใครที่ล็อกอิน + มีสิทธิ์
-// service นั้น ก็ใช้ AI ได้ทุกคน (ไม่กรองรายคนอีกต่อไป)
-func TestBootstrap_AllowlistNoLongerFilters(t *testing.T) {
-	r := newRouter(t, realOffice()) // K11S allowlist = [adm_ploy]
-
-	tok := officeJWT("someone_new", map[string]bool{"K11S": true}, nil) // ไม่อยู่ในลิสต์
-	code, b, raw := getBoot(t, r, demoKey, "K11S", tok)
-	if code != http.StatusOK || !b.Enabled {
-		t.Fatalf("ยกเลิก allowlist แล้ว ทุกคนที่ล็อกอิน+มีสิทธิ์ service ต้องผ่าน: %d %s", code, raw)
+// allow_all=false: เฉพาะคนในลิสต์ · ลิสต์ว่าง = ไม่มีใคร (AC-17)
+func TestSession_AllowAllFalseFilters(t *testing.T) {
+	r := newRouter(t) // K11S allow_all=false · allowlist [adm_ploy]
+	w := sessionReq(t, r, demoKey, "K11S", secretK11S, hostUser{ID: "emp_9", Username: "someone_new"}, testKind)
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonNotInAllowlist {
+		t.Fatalf("คนนอกลิสต์ต้องโดน not_in_allowlist: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// token หมดอายุ → ต้องบอกชัดว่า 401 ไม่ใช่แกล้งทำเป็นว่าไม่มีสิทธิ์
-func TestBootstrap_ExpiredToken(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWTExp("adm_ploy", map[string]bool{"K11S": true}, nil, time.Now().Add(-time.Minute).Unix())
+func TestSession_AllowAllFalseEmptyMeansNobody(t *testing.T) {
+	o := demoOffice()
+	o.Services[0].Allowlist = nil
+	r := newRouter(t, o)
+	w := sessionReq(t, r, demoKey, "K11S", secretK11S, adminUser(), testKind)
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonNotInAllowlist {
+		t.Fatalf("allowlist ว่าง + allow_all=false ต้องไม่มีใครใช้ได้: %d %s", w.Code, w.Body.String())
+	}
+}
 
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: tok})
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("token หมดอายุต้อง 401 ได้ %d %s", w.Code, w.Body.String())
+// AC-24: 5 กรณีที่ /session ต้องปฏิเสธ
+func TestSession_RefusesBadSecrets(t *testing.T) {
+	cases := map[string]struct {
+		office func(*domain.Office)
+		sid    string
+		secret string
+		want   int
+	}{
+		"ไม่มี secret":           {nil, "K11S", "", http.StatusForbidden},
+		"secret ผิด":            {nil, "K11S", "aisk_wrong", http.StatusForbidden},
+		"secret ของ service อื่น": {func(o *domain.Office) { o.Services[1].Enabled = true }, "K11S", secretPG99, http.StatusForbidden},
+		"ใช้ public_key แทน":     {nil, "K11S", demoKey, http.StatusForbidden},
+		"ถูก revoke":             {func(o *domain.Office) { o.Services[0].SecretKeyHash = "" }, "K11S", secretK11S, http.StatusForbidden},
+		"office ปิด":            {func(o *domain.Office) { o.Enabled = false }, "K11S", secretK11S, http.StatusForbidden},
+		"service ปิด":           {func(o *domain.Office) { o.Services[0].Enabled = false }, "K11S", secretK11S, http.StatusForbidden},
+		"service ไม่มีใน office":  {nil, "NOPE", secretK11S, http.StatusForbidden},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			o := demoOffice()
+			if tc.office != nil {
+				tc.office(&o)
+			}
+			r := newRouter(t, o)
+			w := sessionReq(t, r, demoKey, tc.sid, tc.secret, adminUser(), testKind)
+			if w.Code != tc.want {
+				t.Fatalf("อยากได้ %d ได้ %d %s", tc.want, w.Code, w.Body.String())
+			}
+			// host ส่ง body นี้ต่อให้ browser — body ห้ามมี code 401 (UI หลังบ้าน logout ทันที · contract §2)
+			if strings.Contains(w.Body.String(), `"code":401`) {
+				t.Fatalf("body ห้ามมี code 401: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestSession_KindMustMatch(t *testing.T) {
+	r := newRouter(t)
+	w := sessionReq(t, r, demoKey, "K11S", secretK11S, adminUser(), "office-other")
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonKindMismatch {
+		t.Fatalf("kind ไม่ตรงต้องปฏิเสธ: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// rotate: ใบเก่ายังใช้ได้จนกว่าจะ commit (R3 · AC-24)
+func TestSecret_RotateKeepsOldUntilCommit(t *testing.T) {
+	r := newRouter(t)
+	w := do(t, r, req{method: http.MethodPost, path: "/api/ai/admin/offices/demo/services/K11S/secret/rotate", console: consoleToken})
+	if w.Code != http.StatusOK {
+		t.Fatalf("rotate: %d %s", w.Code, w.Body.String())
+	}
+	newSecret, _ := payload[map[string]any](t, w)["secret_key"].(string)
+	if !strings.HasPrefix(newSecret, domain.SecretPrefix) {
+		t.Fatalf("ต้องได้ secret ใหม่ครั้งเดียว: %q", newSecret)
+	}
+	for _, s := range []string{secretK11S, newSecret} {
+		if w := sessionReq(t, r, demoKey, "K11S", s, adminUser(), testKind); w.Code != http.StatusOK {
+			t.Fatalf("ช่วงหมุน ใบเก่าและใบใหม่ต้องใช้ได้ทั้งคู่: %d", w.Code)
+		}
+	}
+	do(t, r, req{method: http.MethodPost, path: "/api/ai/admin/offices/demo/services/K11S/secret/commit", console: consoleToken})
+	if w := sessionReq(t, r, demoKey, "K11S", secretK11S, adminUser(), testKind); w.Code != http.StatusForbidden {
+		t.Fatalf("หลัง commit ใบเก่าต้องใช้ไม่ได้: %d", w.Code)
+	}
+	if w := sessionReq(t, r, demoKey, "K11S", newSecret, adminUser(), testKind); w.Code != http.StatusOK {
+		t.Fatalf("ใบใหม่ต้องใช้ได้: %d", w.Code)
+	}
+}
+
+// revoke มีผลทันทีกับตั๋วที่ออกไปแล้ว (ไม่ต้องรอตั๋วหมดอายุ)
+func TestSecret_RevokeKillsExistingTickets(t *testing.T) {
+	r := newRouter(t)
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	if code, _, _ := getBoot(t, r, demoKey, "K11S", tk); code != http.StatusOK {
+		t.Fatalf("ก่อน revoke ต้องใช้ได้ %d", code)
+	}
+	w := do(t, r, req{method: http.MethodPost, path: "/api/ai/admin/offices/demo/services/K11S/secret/revoke", console: consoleToken})
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke: %d", w.Code)
+	}
+	w = do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: tk})
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonNoSecret {
+		t.Fatalf("หลัง revoke ตั๋วเดิมต้องใช้ไม่ได้ทันที: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSecret_ShownOnceNeverInOfficeJSON(t *testing.T) {
+	r := newRouter(t)
+	w := do(t, r, req{method: http.MethodGet, path: "/api/ai/admin/offices/demo", console: consoleToken})
+	body := w.Body.String()
+	if strings.Contains(body, domain.HashSecret(secretK11S)) || strings.Contains(body, "secret_key_hash") {
+		t.Fatalf("hash ของ secret ห้ามหลุดไปคอนโซล: %s", body)
+	}
+	if !strings.Contains(body, `"has_secret":true`) {
+		t.Fatalf("คอนโซลต้องเห็นสถานะ has_secret: %s", body)
+	}
+	// ออกซ้ำตอนมีอยู่แล้วต้องไม่ได้ (ต้องใช้ rotate)
+	w = do(t, r, req{method: http.MethodPost, path: "/api/ai/admin/offices/demo/services/K11S/secret", console: consoleToken})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("มี secret แล้วออกซ้ำต้องไม่ได้: %d", w.Code)
+	}
+}
+
+// ตั๋วหมดอายุ → 401 TICKET_EXPIRED (widget ขอใหม่เงียบ ๆ)
+func TestTicket_Expired(t *testing.T) {
+	e := newEnv(t)
+	tk := ticketFor(t, e.r, demoKey, "K11S", secretK11S, adminUser())
+	_ = e
+	issuer := auth.NewAccessTicketIssuer(ticketSecret)
+	parsed, err := issuer.Verify(tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.IssuedAt = time.Now().Add(-2 * time.Hour)
+	parsed.ExpiresAt = time.Now().Add(-time.Minute)
+	old, _ := issuer.Issue(parsed)
+	w := do(t, e.r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: old})
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "TICKET_EXPIRED") {
+		t.Fatalf("ตั๋วหมดอายุต้อง 401 TICKET_EXPIRED ได้ %d %s", w.Code, w.Body.String())
+	}
+}
+
+// ตั๋วห้ามอยู่นานกว่า grant ของ host
+func TestSession_TicketNotLongerThanGrant(t *testing.T) {
+	r := newRouter(t)
+	u := adminUser()
+	body := `{"kind":"` + testKind + `","user":{"id":"emp_1","username":"adm_ploy"},"grant":"` + fakeGrant(u.ID, "K11S", time.Now().Add(3*time.Minute)) + `"}`
+	w := do(t, r, req{method: http.MethodPost, path: basePath(demoKey, "K11S") + "/session", body: body, headers: [][2]string{{"X-AI-Secret", secretK11S}}})
+	res := payload[port.SessionResult](t, w)
+	if w.Code != http.StatusOK || res.TTLSec > 181 {
+		t.Fatalf("ตั๋วต้องหมดพร้อม grant (≤3 นาที) ได้ %d ttl=%d", w.Code, res.TTLSec)
 	}
 }
 
 func TestBootstrap_UnknownKey(t *testing.T) {
 	r := newRouter(t)
-	w := do(t, r, req{method: http.MethodGet, path: bootPath("pk_no_such_key", "K11S"), origin: officeOrigin, token: devToken("adm_ploy", "K11S")})
+	w := sessionReq(t, r, "pk_no_such_key", "K11S", secretK11S, adminUser(), testKind)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("key มั่วต้อง 404 ได้ %d", w.Code)
 	}
@@ -154,63 +248,88 @@ func TestBootstrap_UnknownKey(t *testing.T) {
 // key หลุดไปแล้วเอาไปแปะโดเมนอื่นต้องใช้ไม่ได้
 func TestBootstrap_OriginNotRegistered(t *testing.T) {
 	r := newRouter(t)
-	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: "http://evil.example", token: devToken("adm_ploy", "K11S")})
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: "http://evil.example", token: tk})
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("โดเมนที่ไม่ได้ลงทะเบียนต้อง 403 ได้ %d %s", w.Code, w.Body.String())
 	}
-}
-
-func TestBootstrap_OfficeKillSwitch(t *testing.T) {
-	o := demoOffice()
-	o.Enabled = false
-	r := newRouter(t, o)
-
-	_, b, _ := getBoot(t, r, demoKey, "K11S", devToken("adm_ploy", "K11S"))
-	if b.Enabled || b.Reason != "office_disabled" {
-		t.Fatalf("ปิดทั้ง office แล้วทุก service ต้องปิดตาม ได้ %+v", b)
+	w = do(t, r, req{method: http.MethodGet, path: "/api/ai/office/" + demoKey + "/page-config", origin: "http://evil.example"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("page-config จากโดเมนอื่นต้อง 403 ได้ %d", w.Code)
 	}
 }
 
-func TestBootstrap_NoToken(t *testing.T) {
+// ปิดทั้ง office = ทุก service ปิดตาม (สวิตช์ฉุกเฉิน) รวมตั๋วที่ออกไปแล้ว
+func TestBootstrap_OfficeKillSwitch(t *testing.T) {
+	r := newRouter(t)
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	do(t, r, req{method: http.MethodPatch, path: "/api/ai/admin/offices/demo", console: consoleToken, body: `{"enabled":false}`})
+	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin, token: tk})
+	if w.Code != http.StatusForbidden || payload[map[string]string](t, w)["reason"] != domain.ReasonOfficeDisabled {
+		t.Fatalf("ปิด office แล้วตั๋วเดิมต้องใช้ไม่ได้: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBootstrap_NoTicket(t *testing.T) {
 	r := newRouter(t)
 	w := do(t, r, req{method: http.MethodGet, path: bootPath(demoKey, "K11S"), origin: officeOrigin})
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("ไม่มี token ต้อง 401 ได้ %d", w.Code)
+		t.Fatalf("ไม่มีตั๋วต้อง 401 ได้ %d", w.Code)
 	}
 }
 
 // ข้อมูลความปลอดภัยห้ามหลุดลงหน้าเว็บ
 func TestBootstrap_NeverLeaksSecrets(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWT("adm_ploy", map[string]bool{"K11S": true, "SECRET_SVC": true}, []string{"view_member"})
-
-	_, _, raw := getBoot(t, r, demoKey, "K11S", tok)
-	for _, bad := range []string{`"allowlist"`, "SECRET_SVC", "allowed_origins", "backoffice_api_url", "view_member"} {
-		if strings.Contains(raw, bad) {
-			t.Fatalf("bootstrap ไม่ควรมี %q แต่เจอใน %s", bad, raw)
+	r := newRouter(t)
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser())
+	_, _, raw := getBoot(t, r, demoKey, "K11S", tk)
+	pc := do(t, r, req{method: http.MethodGet, path: "/api/ai/office/" + demoKey + "/page-config", origin: officeOrigin}).Body.String()
+	for _, body := range []string{raw, pc} {
+		for _, bad := range []string{`"allowlist"`, "allowed_origins", "backoffice_api_url", "secret", "W_VIEW", "127.0.0.1"} {
+			if strings.Contains(body, bad) {
+				t.Fatalf("ไม่ควรมี %q แต่เจอใน %s", bad, body)
+			}
 		}
 	}
 }
 
-// ██ ข้อมูลจริง: list_service ว่างทุกคนใน demo-staging_office
-// ว่าง = ไม่จำกัด (ตรงกับพฤติกรรมของ office-api เองที่ไม่ได้เช็ค field นี้)
-func TestBootstrap_EmptyListServiceMeansNoRestriction(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWT("adm_ploy", map[string]bool{}, []string{"REPORT"}) // list_service ว่าง
-
-	code, b, raw := getBoot(t, r, demoKey, "K11S", tok)
-	if code != http.StatusOK || !b.Enabled {
-		t.Fatalf("list_service ว่างต้องไม่ถูกจำกัด: %d %s", code, raw)
+func TestPageConfig_KindAndPageAuth(t *testing.T) {
+	r := newRouter(t)
+	w := do(t, r, req{method: http.MethodGet, path: "/api/ai/office/" + demoKey + "/page-config", origin: officeOrigin})
+	p := payload[map[string]any](t, w)
+	if w.Code != http.StatusOK || p["kind"] != testKind || p["enabled"] != true {
+		t.Fatalf("page-config ผิด: %d %s", w.Code, w.Body.String())
+	}
+	pa, _ := p["page_auth"].(map[string]any)
+	tok, _ := pa["token"].(map[string]any)
+	if tok["key"] != "tok" || pa["session_path"] != "/ai/session/{service}" {
+		t.Fatalf("page_auth ต้องมาจาก host.yaml ของ connector: %v", pa)
 	}
 }
 
-// แต่ service ที่ไม่มีใน office นี้ ยังต้องถูกปฏิเสธแม้ list_service จะว่าง
-func TestBootstrap_ServiceMustExistInOfficeEvenWhenUnrestricted(t *testing.T) {
-	r := newRouter(t, realOffice())
-	tok := officeJWT("adm_ploy", map[string]bool{}, nil)
+// office ที่ยังไม่ได้ตั้ง kind ใช้ widget ไม่ได้ (R1)
+func TestPageConfig_NoKindRefused(t *testing.T) {
+	o := demoOffice()
+	o.Kind = ""
+	r := newRouter(t, o)
+	w := do(t, r, req{method: http.MethodGet, path: "/api/ai/office/" + demoKey + "/page-config", origin: officeOrigin})
+	if p := payload[map[string]any](t, w); p["enabled"] != false || p["reason"] != domain.ReasonKindNotSet {
+		t.Fatalf("ไม่มี kind ต้องปฏิเสธ: %s", w.Body.String())
+	}
+	if w := sessionReq(t, r, demoKey, "K11S", secretK11S, adminUser(), testKind); w.Code != http.StatusForbidden {
+		t.Fatalf("ไม่มี kind ต้องไม่ออกตั๋ว: %d", w.Code)
+	}
+}
 
-	_, b, _ := getBoot(t, r, demoKey, "SERVICE_ที่ไม่มี", tok)
-	if b.Enabled || b.Reason != "service_not_in_office" {
-		t.Fatalf("service ที่ไม่มีใน office ต้องถูกปฏิเสธ ได้ %+v", b)
+// ตั๋วพกแค่ permission ที่ connector อ้างถึง (ตั๋วเล็ก · ไม่พกข้อมูลเกิน)
+func TestSession_TicketKeepsOnlyRelevantPermissions(t *testing.T) {
+	r := newRouter(t)
+	tk := ticketFor(t, r, demoKey, "K11S", secretK11S, adminUser("W_VIEW", "SOMETHING_ELSE", "PHONE_SECRET"))
+	parsed, _ := auth.NewAccessTicketIssuer(ticketSecret).Verify(tk)
+	if len(parsed.User.Permissions) != 1 || parsed.User.Permissions[0] != "W_VIEW" {
+		t.Fatalf("ตั๋วควรเหลือแค่ W_VIEW: %v", parsed.User.Permissions)
+	}
+	if strings.Contains(tk, "PHONE_SECRET") {
+		t.Fatal("code ที่ไม่เกี่ยวต้องไม่อยู่ในตั๋ว")
 	}
 }

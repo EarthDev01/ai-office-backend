@@ -1,0 +1,8 @@
+unknown_message: สถานะนี้ยังไม่มีคำอธิบายในระบบ
+tables:
+  withdraw:
+    label: สถานะรายการถอน
+    entries:
+      - {code: 1, label: สำเร็จ, meaning: โอนแล้ว, final: true}
+      - {code: 2, label: รอโอน, meaning: รอคิวโอน, next_action: รอระบบหรือกดทำรายการอีกครั้ง}
+      - {code: 10, label: OTP ไม่ถูกต้อง, meaning: OTP ผิด, next_action: ทำรายการอีกครั้ง}

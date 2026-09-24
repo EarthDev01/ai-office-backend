@@ -1,0 +1,39 @@
+# R18 GET /api/ai/read/login-log/:service — catalog §6 R18 + ai/read_log.go (ip_masked · 404 เมื่อไม่พบพนักงาน)
+tool: staff_login_log
+cases:
+  - name: ใครเข้าระบบวันนี้
+    responses:
+      ll:
+        body:
+          code: 0
+          message: SUCCESS
+          payload:
+            start_date: "2026-09-24"
+            end_date: "2026-09-24"
+            timezone: Asia/Bangkok
+            employees_in_scope: 42
+            items:
+              - {datetime: "2026-09-24T09:01:00+07:00", action: LOGIN, employee_name: Admin A, employee_username: admin01, ip_masked: 1.2.3.x, ip_kind: client_ip}
+              - {datetime: "2026-09-24T08:00:00+07:00", action: LOGIN, employee_name: Admin B, employee_username: admin02, ip_masked: 7.7.7.x, ip_kind: line_login_placeholder}
+            count: 2
+            truncated: true
+            limit: 50
+            fetched_at: "2026-09-24T14:32:00+07:00"
+    expect:
+      status: ok
+      calls: {ll: {path: /api/ai/read/login-log/DEMO-SVC, query: {date: "2026-09-24", employee: "", limit: "50"}}}
+      fields: {มีรายการมากกว่าที่แสดง: ใช่}
+      table_rows: 2
+      table_cells: [["24/09/2026 09:01", Admin A, admin01, LOGIN, 1.2.3.x]]
+      model_context: {has_more_rows: true}
+      link: /Employee
+  - name: ไม่พบพนักงานในเว็บนี้ (404)
+    input: {employee: nobody}
+    responses:
+      ll: {status: 404, body: {code: 404, message: NOT_FOUND, error: ไม่พบพนักงานนี้ในเว็บนี้, payload: null}}
+    expect: {status: not_found, calls: {ll: {query: {employee: nobody}}}}
+  - name: ข้ามเที่ยงคืน + ไม่มีคนเข้าระบบ
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      ll: {body: {code: 0, payload: {start_date: "2026-09-25", end_date: "2026-09-25", employees_in_scope: 3, items: [], count: 0, truncated: false, limit: 50}}}
+    expect: {status: not_found, calls: {ll: {query: {date: "2026-09-25"}}}}

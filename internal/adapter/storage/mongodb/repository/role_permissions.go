@@ -12,7 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const roleMatrixCollection = "ai_role_permissions"
+const roleMatrixCollection = "role_permissions"
 
 // roleConfigDoc คือ record เดียวทั้งคอลเลกชัน (id ตายตัว "default")
 type roleConfigDoc struct {

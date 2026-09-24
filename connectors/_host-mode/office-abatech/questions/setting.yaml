@@ -1,0 +1,124 @@
+# BQ-10 · host R13 deposit-bank-accounts (P013) · BQ-11 · host R14 promotions-active (P010)
+questions: [BQ-10]
+tools:
+  - name: deposit_bank_accounts
+    description: บัญชีธนาคารฝากของเว็บ แยกตามธนาคาร — จำนวนที่เปิดใช้งาน แสดงหน้าเว็บ และทั้งสองอย่าง
+    questions: [BQ-10]
+    permission: bank_accounts
+    freshness: summary
+    calls:
+      - id: ba
+        method: GET
+        path: /api/ai/read/deposit-bank-accounts/{service}
+        cache_ttl: 60
+        schema:
+          type: object
+          required: [by_bank, totals]
+          properties:
+            by_bank:
+              type: array
+              items:
+                type: object
+                required: [bank_code, total, active, shown, active_and_shown]
+                properties: {bank_code: {type: string}, total: {type: integer}, active: {type: integer}, shown: {type: integer}, active_and_shown: {type: integer}, accounts: {type: array}}
+            totals:
+              type: object
+              required: [total, active, shown, active_and_shown]
+              properties: {total: {type: integer}, active: {type: integer}, shown: {type: integer}, active_and_shown: {type: integer}}
+    values:
+      - {name: banks, from: ba, path: by_bank}
+      - {name: t_total, from: ba, path: totals.total}
+      - {name: t_active, from: ba, path: totals.active}
+      - {name: t_shown, from: ba, path: totals.shown}
+      - {name: t_both, from: ba, path: totals.active_and_shown}
+    not_found: {when: "t_total == 0", message: เว็บนี้ยังไม่มีบัญชีธนาคารฝากในระบบ}
+    card:
+      title: บัญชีธนาคารฝาก แยกตามธนาคาร
+      fields:
+        - {label: บัญชีฝากทั้งหมด, value: t_total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: t_active, format: int, suffix: " บัญชี"}
+        - {label: แสดงหน้าเว็บ, value: t_shown, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งานและแสดงหน้าเว็บ, value: t_both, format: int, suffix: " บัญชี"}
+      table:
+        rows: banks
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ทั้งหมด, field: total, format: int}
+          - {label: เปิดใช้งาน, field: active, format: int}
+          - {label: แสดงหน้าเว็บ, field: shown, format: int}
+          - {label: เปิดและแสดง, field: active_and_shown, format: int}
+      note: ตามแท็บ จัดการบัญชี ในเมนูจัดการบัญชีธนาคาร · สิ่งที่ผู้เล่นเห็นจริงอาจถูกจำกัดเพิ่มตามกลุ่มลูกค้า
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: "/Statement?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_active_account, type: bool, expr: "t_active > 0"}
+      - {name: has_shown_account, type: bool, expr: "t_both > 0"}
+
+  - name: promotions_active
+    description: โปรโมชั่นที่เปิดอยู่ตอนนี้ (สถานะเปิดและอยู่ในช่วงเวลาโปร) พร้อมจำนวนโปรที่ยังไม่เริ่ม หมดเวลา และปิดอยู่
+    questions: [BQ-11]
+    permission: promotion
+    freshness: summary
+    calls:
+      - id: pr
+        method: GET
+        path: /api/ai/read/promotions-active/{service}
+        cache_ttl: 60
+        schema:
+          type: object
+          required: [active, upcoming, unknown_window, counts]
+          properties:
+            active:
+              type: array
+              items: &promo
+                type: object
+                required: [title, bonus_name, withdraw_fix, fix_withdraw]
+                properties:
+                  title: {type: string}
+                  bonus_name: {type: string}
+                  type_system: {type: string}
+                  is_show: {type: boolean}
+                  bonus_percent: {type: number}
+                  bonus_limit: {type: number}
+                  withdraw_fix: {type: number}
+                  fix_withdraw: {type: number}
+                  window_end: {type: string}
+            upcoming: {type: array, items: *promo}
+            unknown_window: {type: array, items: *promo}
+            counts:
+              type: object
+              required: [total, active, upcoming, unknown_window, expired, disabled]
+              properties: {total: {type: integer}, active: {type: integer}, upcoming: {type: integer}, unknown_window: {type: integer}, expired: {type: integer}, disabled: {type: integer}}
+    values:
+      - {name: rows, from: pr, path: active}
+      - {name: c_total, from: pr, path: counts.total}
+      - {name: c_active, from: pr, path: counts.active}
+      - {name: c_upcoming, from: pr, path: counts.upcoming}
+      - {name: c_unknown, from: pr, path: counts.unknown_window}
+      - {name: c_expired, from: pr, path: counts.expired}
+      - {name: c_disabled, from: pr, path: counts.disabled}
+    not_found: {when: "c_total == 0", message: เว็บนี้ยังไม่มีโปรโมชั่นในระบบ}
+    card:
+      title: โปรโมชั่นที่เปิดอยู่ตอนนี้
+      fields:
+        - {label: เปิดอยู่ตอนนี้, value: c_active, format: int, suffix: " โปร"}
+        - {label: ยังไม่ถึงเวลาเริ่ม, value: c_upcoming, format: int, suffix: " โปร"}
+        - {label: อ่านช่วงเวลาไม่ได้, value: c_unknown, format: int, suffix: " โปร", when: "c_unknown > 0"}
+        - {label: หมดเวลาแล้ว, value: c_expired, format: int, suffix: " โปร"}
+        - {label: ปิดใช้งาน, value: c_disabled, format: int, suffix: " โปร"}
+      table:
+        rows: rows
+        columns:
+          - {label: ชื่อโปร, field: title}
+          - {label: ชื่อโบนัส, field: bonus_name}
+          - {label: โบนัส (%), field: bonus_percent, format: number}
+          - {label: โบนัสสูงสุด, field: bonus_limit, format: money}
+          - {label: ยอดเทิร์น, field: withdraw_fix, format: number}
+          - {label: อั้นถอน, field: fix_withdraw, format: number}
+          - {label: สิ้นสุด, field: window_end, format: datetime}
+          - {label: แสดงหน้าเว็บ, field: is_show, format: bool}
+      note: เปิดอยู่ = สถานะเปิดและเวลาปัจจุบันอยู่ในช่วงวันเวลาของโปร · ยอดเทิร์นกับอั้นถอนเป็นคนละค่า
+      link: {label: เปิดจัดการโปรโมชั่น, path: "/Bonus?service={service_b64}&web={service}"}
+    model_context:
+      - {name: has_active_promotion, type: bool, expr: "c_active > 0"}
+      - {name: has_upcoming_promotion, type: bool, expr: "c_upcoming > 0"}
+      - {name: has_unreadable_window, type: bool, expr: "c_unknown > 0"}

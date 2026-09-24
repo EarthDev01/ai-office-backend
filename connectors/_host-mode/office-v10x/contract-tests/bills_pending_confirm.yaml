@@ -1,0 +1,30 @@
+tool: bills_pending_confirm
+cases:
+  - name: มีบิลรอคอนเฟิร์ม
+    responses:
+      b:
+        body:
+          code: 0
+          message: SUCCESS
+          count: 1
+          limit: 20
+          data:
+            - {id: b3, billpayment_id: 13, title: เติมเครดิต SMS, total: 3000, overdue_amount: 0, confirm_amount: 3000, status: 4, status_label: จ่ายแล้ว - รอคอนเฟิร์ม, end_date: "2026-09-20T07:00:00+07:00", updated_at: "2026-09-24T09:00:00+07:00", is_topup: true}
+          summary: {by_status: [{status: 4, status_label: จ่ายแล้ว - รอคอนเฟิร์ม, count: 1, total: 3000, overdue_amount: 0}]}
+    expect:
+      status: ok
+      calls:
+        b: {path: /api/ai/read/bills/DEMO-SVC, query: {status: "4", limit: "20"}}
+      fields: {บิลรอคอนเฟิร์ม: "1 ใบ"}
+      table_cells:
+        - ["13", เติมเครดิต SMS, "3,000.00", "3,000.00", "24/09/2026 09:00", จ่ายแล้ว - รอคอนเฟิร์ม]
+      model_context: {statuses: [จ่ายแล้ว - รอคอนเฟิร์ม]}
+      link: /bill
+  - name: ไม่มีบิลรอคอนเฟิร์ม
+    responses:
+      b: {body: {code: 0, count: 0, data: [], summary: {by_status: []}}}
+    expect: {status: not_found}
+  - name: ระบบบิลล่ม
+    responses:
+      b: {status: 502, body: {code: 502, message: UPSTREAM_ERROR, data: null}}
+    expect: {status: error}

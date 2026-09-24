@@ -2,144 +2,104 @@ import { describe, it, expect } from 'vitest'
 import { Window } from 'happy-dom'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { installFetch, login, standardRoutes, until, BOOT, type Handler } from './fake'
 
 const BUNDLE = resolve(__dirname, '../../static/widget/ai-office.v1.js')
+const KEY = 'pk_demo_local'
 
 /**
  * ทดสอบเส้นทางที่หน้า office ใช้จริง — โหลด bundle ที่ build แล้วเป็น <script>
- * แล้วดูว่ามันเรียก /api/ai/office/:key/bootstrap และสร้าง widget เองได้ไหม
- *
- * unit test ตัวอื่นเรียก mount() ตรง ๆ จึงไม่ครอบส่วนนี้
+ * แล้วดูว่ามันขอ page-config → ตั๋วจาก host → bootstrap และสร้าง widget เองได้ไหม
  */
-async function boot(payload: unknown, opts: { attrs?: string; key?: string; loggedIn?: boolean; service?: string } = {}) {
+async function boot(opts: { key?: string; loggedIn?: boolean; service?: string; routes?: Array<[RegExp, Handler]>; attrs?: Record<string, string> } = {}) {
   const win = new Window({ url: 'https://office.example.com/deposit' })
   const doc = win.document
-  const calls: string[] = []
-
-  ;(win as any).fetch = async (url: string) => {
-    calls.push(String(url))
-    return { ok: true, json: async () => ({ payload }) }
-  }
-
+  const fx = installFetch(opts.routes ?? standardRoutes(), win)
+  ;(win as any).console.info = () => {}
   doc.body.innerHTML = '<div id="office">เนื้อหาเดิม</div>'
+  if (opts.loggedIn !== false) login(win.localStorage as unknown as Storage, 'host-user-token', opts.service ?? 'K11S')
 
-  // จำลองสภาพหน้า office ที่ล็อกอินแล้วและเลือกเว็บไว้
-  if (opts.loggedIn !== false) {
-    win.localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    win.localStorage.setItem('web-service', opts.service ?? 'K11S')
-  }
-
-  const code = readFileSync(BUNDLE, 'utf8')
   const s = doc.createElement('script')
   // inline script ไม่มี .src ให้แกะ key — จำลอง snippet ด้วย data-public-key แทน
   s.setAttribute('data-public-key', opts.key ?? KEY)
   s.setAttribute('data-api-base', 'https://ai.example.com')
-  if (opts.attrs) {
-    for (const pair of opts.attrs.split(' ')) {
-      const [k, v] = pair.split('=')
-      s.setAttribute(k, v.replace(/"/g, ''))
-    }
-  }
-  s.textContent = code
+  for (const [k, v] of Object.entries(opts.attrs ?? {})) s.setAttribute(k, v)
+  s.textContent = readFileSync(BUNDLE, 'utf8')
   doc.head.appendChild(s)
-
-  await new Promise((r) => setTimeout(r, 20))
-  return { win, doc, calls }
+  await new Promise((r) => setTimeout(r, 30))
+  return { win, doc, fx }
 }
 
-const KEY = 'pk_demo_local'
-
-const enabled = {
-  enabled: true,
-  office_id: 'demo',
-  service_id: 'K11S',
-  service_label: 'เว็บ K11S',
-  is_hidden: false,
-  avatar_url: '',
-  display_name: 'ผู้ช่วยหลังบ้าน',
-  greeting: 'สวัสดีครับ',
-  theme: 'light',
-  placement: { position: 'bottom-right', offset_x: 12, offset_y: 12 },
-}
+const hasWidget = (doc: any) => !!doc.querySelector('[data-ai-office-host]')
 
 describe('auto-boot จาก <script>', () => {
-  it('เรียก /api/ai/office/:key/bootstrap แล้วสร้าง widget ขึ้นมาเอง', async () => {
-    const { doc, calls } = await boot(enabled)
-
-    expect(calls.some((u) => u.endsWith(`/api/ai/office/${KEY}/service/K11S/bootstrap`))).toBe(true)
-    expect(doc.querySelector('[data-ai-office-host]')).not.toBeNull()
+  it('page-config → ตั๋วจาก host → bootstrap(ตั๋ว) แล้วสร้าง widget เอง', async () => {
+    const { doc, fx } = await boot()
+    await until(() => hasWidget(doc))
+    expect(fx.calls[0].url).toBe(`https://ai.example.com/api/ai/office/${KEY}/page-config`)
+    expect(fx.to(/\/api\/ai\/session\//)[0].url).toBe('https://office.example.com/api/ai/session/K11S')
+    expect(fx.to(/\/bootstrap$/)[0].url).toBe(`https://ai.example.com/api/ai/office/${KEY}/service/K11S/bootstrap`)
     expect(doc.getElementById('office')!.innerHTML).toBe('เนื้อหาเดิม')
   })
 
-  it('enabled=false → ไม่มี DOM ของ widget โผล่ในหน้า office เลย', async () => {
-    const { doc } = await boot({ enabled: false, reason: 'disabled' })
-    expect(doc.querySelector('[data-ai-office-host]')).toBeNull()
+  it('data-host-api-base ทับที่อยู่ API ของ host ได้ (host API คนละโดเมนกับหน้า)', async () => {
+    const { doc, fx } = await boot({ attrs: { 'data-host-api-base': 'https://api.office.example.com/api' } })
+    await until(() => hasWidget(doc))
+    expect(fx.to(/\/api\/ai\/session\//)[0].url).toBe('https://api.office.example.com/api/ai/session/K11S')
   })
 
-  it('ยังไม่ล็อกอินในหน้า office → ไม่ยิงและไม่โผล่', async () => {
-    const { doc, calls } = await boot(enabled, { loggedIn: false })
-    expect(calls).toHaveLength(0)
-    expect(doc.querySelector('[data-ai-office-host]')).toBeNull()
+  it('bootstrap enabled=false → ไม่มี DOM ของ widget เลย', async () => {
+    const { doc, fx } = await boot({ routes: standardRoutes({ bootstrap: () => ({ json: { payload: { enabled: false, reason: 'service_disabled' } } }) }) })
+    await until(() => fx.to(/\/bootstrap$/).length === 1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(hasWidget(doc)).toBe(false)
+  })
+
+  it('ยังไม่ล็อกอิน → ขอแค่ page-config ไม่ขอตั๋ว ไม่โผล่', async () => {
+    const { doc, fx } = await boot({ loggedIn: false })
+    expect(fx.calls.map((c) => c.url)).toEqual([`https://ai.example.com/api/ai/office/${KEY}/page-config`])
+    expect(hasWidget(doc)).toBe(false)
   })
 
   it('ล็อกอินหลังโหลดหน้าแล้ว (SPA) → ปุ่มโผล่เองไม่ต้อง refresh', async () => {
-    const { win, doc, calls } = await boot(enabled, { loggedIn: false })
-    // ก่อนล็อกอิน: ยังไม่มีปุ่มและยังไม่ยิง
-    expect(doc.querySelector('[data-ai-office-host]')).toBeNull()
-    expect(calls).toHaveLength(0)
-
-    // จำลอง login ใน SPA — set localStorage โดยไม่ reload หน้า
-    win.localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    win.localStorage.setItem('web-service', 'K11S')
-
-    // widget เฝ้า session เอง (poll 800ms) — รอให้รอบ poll ทำงาน
-    await new Promise((r) => setTimeout(r, 1000))
-
-    expect(calls.some((u) => u.endsWith(`/api/ai/office/${KEY}/service/K11S/bootstrap`))).toBe(true)
-    expect(doc.querySelector('[data-ai-office-host]')).not.toBeNull()
+    const { win, doc, fx } = await boot({ loggedIn: false })
+    expect(hasWidget(doc)).toBe(false)
+    login(win.localStorage as unknown as Storage)
+    await until(() => hasWidget(doc), 3000)
+    expect(fx.to(/\/api\/ai\/session\//)).toHaveLength(1)
   })
 
   it('สลับ service แล้ว URL เปลี่ยนตาม โดย snippet ไม่ต้องแก้', async () => {
-    const { calls } = await boot(enabled, { service: 'PG99' })
-    expect(calls[0]).toContain(`/api/ai/office/${KEY}/service/PG99/bootstrap`)
+    const { doc, fx } = await boot({ service: 'PG99' })
+    await until(() => hasWidget(doc))
+    expect(fx.to(/\/bootstrap$/)[0].url).toContain(`/api/ai/office/${KEY}/service/PG99/bootstrap`)
   })
 
   it('ไม่มี public key → ไม่ยิง API และไม่สร้าง DOM', async () => {
-    const { doc, calls } = await boot(enabled, { key: '' })
-    expect(calls).toHaveLength(0)
-    expect(doc.querySelector('[data-ai-office-host]')).toBeNull()
+    const { doc, fx } = await boot({ key: '' })
+    expect(fx.calls).toHaveLength(0)
+    expect(hasWidget(doc)).toBe(false)
   })
 
-  it('bootstrap ล้มเหลว → หน้า office ยังอยู่ครบ ไม่พังตาม', async () => {
-    const win = new Window({ url: 'https://office.example.com/deposit' })
-    ;(win as any).fetch = async () => {
-      throw new Error('network down')
-    }
-    win.document.body.innerHTML = '<div id="office">เนื้อหาเดิม</div>'
-    win.localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    win.localStorage.setItem('web-service', 'K11S')
+  it('ai-office-backend ล่ม → หน้า office ยังอยู่ครบ ไม่พังตาม', async () => {
+    const { doc } = await boot({ routes: standardRoutes({ config: () => ({ throws: true }) }) })
+    expect(doc.getElementById('office')!.innerHTML).toBe('เนื้อหาเดิม')
+    expect(hasWidget(doc)).toBe(false)
+  })
 
-    const s = win.document.createElement('script')
-    s.setAttribute('data-public-key', KEY)
-    s.setAttribute('data-api-base', 'https://ai.example.com')
-    s.textContent = readFileSync(BUNDLE, 'utf8')
-    win.document.head.appendChild(s)
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(win.document.getElementById('office')!.innerHTML).toBe('เนื้อหาเดิม')
-    expect(win.document.querySelector('[data-ai-office-host]')).toBeNull()
+  it('ใช้ bootstrap ตามที่ server ส่ง (ชื่อเว็บบนหัว)', async () => {
+    const { doc } = await boot({ routes: standardRoutes({ bootstrap: () => ({ json: { payload: { ...BOOT, service_label: 'เว็บทดสอบ' } } }) }) })
+    await until(() => hasWidget(doc))
+    const cfg = (doc.defaultView as any).__aiOffice.__config()
+    expect(cfg.service_label).toBe('เว็บทดสอบ')
   })
 })
 
-describe('keyFromScriptURL', () => {
-  it('แกะ key จาก URL ของ snippet ได้', async () => {
-    const { keyFromScriptURL } = await import('../src/index')
-    expect(keyFromScriptURL('https://ai.example.com/widget/v1/pk_abc123/ai-office.js')).toBe('pk_abc123')
-    expect(keyFromScriptURL('/widget/v1/pk_xyz/ai-office.js')).toBe('pk_xyz')
-  })
-
-  it('URL ที่ไม่มี key คืนค่าว่าง ไม่พัง', async () => {
-    const { keyFromScriptURL } = await import('../src/index')
-    expect(keyFromScriptURL('https://ai.example.com/ai-office.js')).toBe('')
+describe('bundle', () => {
+  it('ไม่มีชื่อช่อง/ชื่อหลังบ้านเฉพาะ kind ฝังอยู่ (กฎปลั๊ก spec §5.3)', () => {
+    const code = readFileSync(BUNDLE, 'utf8')
+    for (const s of ['auth_token', 'web-service', 'headertoken', 'office-v10x', 'office-abatech', 'office-api-v10', 'GOTOPOPOFFICE']) {
+      expect(code).not.toContain(s)
+    }
   })
 })

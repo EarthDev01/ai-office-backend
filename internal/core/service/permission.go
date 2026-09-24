@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"ai-office-backend/internal/core/domain"
@@ -23,14 +26,16 @@ var (
 // ทุก request แต่ยัง invalidate ทันทีตอน mutate (SetMatrix/AddRole/RenameRole/DeleteRole)
 // เพื่อไม่ให้ config ใหม่ค้าง
 type PermissionService struct {
-	repo port.RoleConfigRepository
+	repo  port.RoleConfigRepository
+	audit port.AuditRecorder
 
 	mu    sync.RWMutex
 	cache *domain.RoleConfig // nil = ยังไม่ cache
 }
 
-func NewPermissionService(repo port.RoleConfigRepository) *PermissionService {
-	return &PermissionService{repo: repo}
+// audit เป็น nil ได้ (ไม่บันทึกประวัติ)
+func NewPermissionService(repo port.RoleConfigRepository, audit port.AuditRecorder) *PermissionService {
+	return &PermissionService{repo: repo, audit: auditOr(audit)}
 }
 
 // Config คืน role config ทั้งชุด (roles list + matrix) — ผ่าน cache
@@ -148,12 +153,51 @@ func (s *PermissionService) SetMatrix(ctx context.Context, m map[string][]string
 		cleaned[adminKey] = append(adminPerms, domain.PermUserManage)
 	}
 
+	oldMatrix := cfg.Matrix
 	cfg.Matrix = cleaned
 	if err := s.repo.Save(ctx, cfg); err != nil {
 		return err
 	}
 	s.invalidate()
+
+	// บันทึกทีละ role ที่สิทธิ์เปลี่ยนจริง — Before/After เป็นรายการสิทธิ์เรียงแล้ว
+	changes := []domain.FieldChange{}
+	for _, r := range cfg.Roles {
+		before, after := sortedCopy(oldMatrix[r.Key]), sortedCopy(cleaned[r.Key])
+		if !sameStrings(before, after) {
+			changes = append(changes, domain.FieldChange{Field: r.Key, Before: before, After: after})
+		}
+	}
+	if len(changes) > 0 {
+		names := make([]string, len(changes))
+		for i, c := range changes {
+			names[i] = cfg.Label(c.Field)
+		}
+		s.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditRolePermissions, TargetType: "role_matrix", TargetID: "default", TargetLabel: "สิทธิ์ของ role",
+			Summary: fmt.Sprintf("แก้สิทธิ์ของ role %d ตัว: %s", len(changes), strings.Join(names, ", ")),
+			Changes: changes,
+		})
+	}
 	return nil
+}
+
+func sortedCopy(in []string) []string {
+	out := append([]string{}, in...)
+	sort.Strings(out)
+	return out
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // AddRole สร้าง role ใหม่ในรายชื่อ role — เริ่มด้วยสิทธิ์ว่างเปล่า (แอดมินต้องมากดติ๊กเอง)
@@ -179,6 +223,10 @@ func (s *PermissionService) AddRole(ctx context.Context, key, label string) erro
 		return err
 	}
 	s.invalidate()
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditRoleCreate, TargetType: "role", TargetID: key, TargetLabel: label,
+		Summary: fmt.Sprintf("สร้าง role %q (%s)", label, key),
+	})
 	return nil
 }
 
@@ -201,12 +249,20 @@ func (s *PermissionService) RenameRole(ctx context.Context, key, label string) e
 	if cfg.Roles[idx].Builtin {
 		return ErrRoleLocked
 	}
+	oldLabel := cfg.Roles[idx].Label
 	cfg.Roles[idx].Label = label
 
 	if err := s.repo.Save(ctx, cfg); err != nil {
 		return err
 	}
 	s.invalidate()
+	if oldLabel != label {
+		s.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditRoleRename, TargetType: "role", TargetID: key, TargetLabel: label,
+			Summary: fmt.Sprintf("เปลี่ยนชื่อ role %s จาก %q เป็น %q", key, oldLabel, label),
+			Changes: []domain.FieldChange{{Field: "label", Before: oldLabel, After: label}},
+		})
+	}
 	return nil
 }
 
@@ -232,6 +288,8 @@ func (s *PermissionService) DeleteRole(ctx context.Context, key string) error {
 	if cfg.Roles[idx].Builtin {
 		return ErrRoleLocked
 	}
+	removed := cfg.Roles[idx]
+	removedPerms := sortedCopy(cfg.Matrix[key])
 	cfg.Roles = append(cfg.Roles[:idx], cfg.Roles[idx+1:]...)
 	delete(cfg.Matrix, key)
 
@@ -239,5 +297,10 @@ func (s *PermissionService) DeleteRole(ctx context.Context, key string) error {
 		return err
 	}
 	s.invalidate()
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditRoleDelete, TargetType: "role", TargetID: key, TargetLabel: removed.Label,
+		Summary: fmt.Sprintf("ลบ role %q (%s)", removed.Label, key),
+		Changes: []domain.FieldChange{{Field: "permissions", Before: removedPerms, After: nil}},
+	})
 	return nil
 }

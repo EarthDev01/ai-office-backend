@@ -1,0 +1,27 @@
+# R20 GET /api/ai/read/sms-balance/:service — catalog §6 R20 + ai/read_system.go
+tool: sms_credit_balance
+cases:
+  - name: มียอด
+    responses:
+      sms: {body: {code: 0, message: SUCCESS, payload: {provider: smskub, configured: true, provider_code: 200, balance: 4820, fetched_at: "2026-09-24T14:32:00+07:00", source: live_provider}}}
+    expect:
+      status: ok
+      calls: {sms: {path: /api/ai/read/sms-balance/DEMO-SVC}}
+      fields: {SMS Credit คงเหลือ: "4,820", ผู้ให้บริการ: smskub}
+      model_context: {balance_known: true}
+      link: /DashboardOnce?service=REVNTy1TVkM=&web=DEMO-SVC
+  - name: ผู้ให้บริการตอบผิดปกติ = ขีด ไม่ใช่ศูนย์
+    responses:
+      sms: {body: {code: 0, payload: {provider: smskub, configured: true, provider_code: 401, balance: null}}}
+    expect:
+      status: ok
+      fields: {SMS Credit คงเหลือ: "—"}
+      model_context: {balance_known: false}
+  - name: ยังไม่ตั้งค่า SMS = ไม่พบ
+    responses:
+      sms: {body: {code: 0, payload: {provider: "", configured: false, balance: null}}}
+    expect: {status: not_found}
+  - name: ติดต่อผู้ให้บริการไม่ได้ (502)
+    responses:
+      sms: {status: 502, body: {code: 502, message: UPSTREAM_ERROR, error: API เกิดข้อผิดพลาด, payload: null}}
+    expect: {status: error, error_code: http_error}

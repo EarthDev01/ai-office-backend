@@ -1,73 +1,43 @@
 # ai-office-backend
 
-API + widget bundle ของ AI ผู้ช่วยหลังบ้าน
-spec อยู่ที่ `Claude/.workflow/AI Office/` — อ่าน `01-SPEC-SYSTEM.md` ก่อน
+ระบบ AI กลาง + กล่องแชท (widget) ของ "AI ผู้ช่วยหลังบ้าน" (w-17)
+เอกสารสั่งงาน: `Docs-workflow/w-17-ai-office/spec-v2.md` + `plan-v2.md` · สัญญาฝั่ง host: `contract-host-ai.md`
 
-## โมเดล 2 ชั้น
+## ภาพรวม
 
 ```
-Office  = หลังบ้าน 1 ชุด (1 การติดตั้ง = 1 snippet)   → public_key อยู่ใน snippet
-  └ Service = แบรนด์/เว็บย่อยที่แอดมินสลับดู          → มาจาก session ไม่ใช่ snippet
+office  = หลังบ้าน 1 ชุด (1 snippet · public_key) · kind = ชนิดหลังบ้าน (connectors/<kind>/)
+  └ service = เว็บย่อยที่แอดมินสลับดู · มี secret_key ของตัวเอง (host ถือ) · allow_all/allowlist · โควตา
 ```
 
-1 office มีได้หลาย service และเพิ่ม/ลบ service ได้โดย **ไม่ต้องแก้ snippet** ที่ลูกค้าแปะไว้แล้ว
+ลำดับ 1 คำถาม: widget → **host** `/api/ai/session/:service` (host ตรวจผู้ใช้เอง) → host → `/session` ที่นี่ด้วย `X-AI-Secret` → **ตั๋ว** → widget ถามด้วยตั๋ว (SSE) → ที่นี่ขอกุญแจดอกเล็กจาก host ด้วย grant → อ่าน `/api/ai/read/...` ของ host → การ์ด (ค่าจากระบบตรง ๆ) + คำตอบ (โมเดลไม่เห็นตัวเลข)
 
-## ทำอะไรได้แล้ว (รอบนี้)
+| โฟลเดอร์ | อะไร |
+|---|---|
+| `_cmd/` | entrypoint · `_cmd/connector-check` ตรวจ connector ทีละ kind |
+| `internal/core/` | domain · port · service (chat, tool runner, guard, quota, admin) · connector (DSL engine) — **ห้ามมีของเฉพาะ kind** |
+| `internal/adapter/` | gin handler · Mongo/file store · Redis · Anthropic · host client · metrics · Telegram |
+| `connectors/` | ปลั๊กต่อ kind — ดู [`connectors/README.md`](connectors/README.md) |
+| `widget/` | TS Web Component (closed Shadow DOM) → `static/widget/ai-office.v1.js` |
 
-- `GET /widget/v1/:public_key/ai-office.js` — bundle + ETag · key ไม่มีจริง → 404
-- `GET /api/ai/office/:public_key/service/:service_id/bootstrap` — ตัดสินที่ server ว่า widget ควรโผล่ไหม · ตรวจ `Origin` + สิทธิ์ใน service
-- Office/Service CRUD จากคอนโซล + `rotate-key`
-- CORS อ่าน `allowed_origins` จาก DB — เพิ่มลูกค้าใหม่ไม่ต้อง deploy
-- ปฏิเสธ request ที่ client พยายามเลือก service เอง
-- **อ่านตัวตนจาก JWT ของแอดมิน** — decode payload (`result` = EmployeeModel) แล้วเอา `Role.ListService` มาตรวจว่าเข้า service นั้นได้ไหม (cache 60 วิ)
-- **MongoDB** (`STORE_DRIVER=mongo`) หรือไฟล์ JSON (`file`) ไว้ dev เร็ว ๆ
-
-**ยังไม่มีในรอบนี้:** LLM, tool, SSE chat, ประวัติแชท, โควตา, audit — อยู่ใน Phase 3+ ของ `05-PLAN.md`
-
-service นี้ **ไม่เสิร์ฟหน้า HTML ใด ๆ** — มีแต่ API กับไฟล์ `ai-office.v1.js` ไฟล์เดียว
-UI ของแชทถูกสร้างด้วย JS ในหน้า office เอง ไม่ได้ส่ง markup มาจากที่นี่
-
-## รัน
+## รัน (dev)
 
 ```bash
-cd widget && npm install && npm run build && cd ..
-cp .env.example .env
-go run ./_cmd                      # :6767
+docker compose -f docker-compose.dev.yml up -d      # Mongo + Redis (หรือ STORE_DRIVER=file ไม่ต้องมี)
+cp .env.example .env                                  # แล้วใส่ค่าเอง (ANTHROPIC_API_KEY ฯลฯ)
+cd widget && npm ci && npm run build && cd ..
+go run ./_cmd                                         # :6767
 ```
 
-อยากดูของจริงให้รัน `Project/office-mock` ที่ :5174 (หลังบ้านจำลองของลูกค้า)
-และ `Project/ai-office-report` ที่ :5173 (คอนโซล)
-
-ครั้งแรก office `demo` ถูก seed มาให้แล้ว (key `pk_demo_local`, origin `http://localhost:5174`,
-service `K11S` + `PG99` ที่ยังปิดอยู่) — เปิดใช้จากคอนโซล หรือสั่งตรง:
+## ทดสอบ
 
 ```bash
-curl -X PATCH localhost:6767/api/ai/admin/offices/demo/services/K11S \
-  -H "Authorization: Bearer dev-console-token" \
-  -H "Content-Type: application/json" \
-  -d '{"enabled":true,"allowlist":["adm_ploy"]}'
+go test ./... -count=1                                # รวม plugin lint + contract test ของ connector จริง
+go run ./_cmd/connector-check connectors/office-v10x connectors/office-abatech
+cd widget && npm run type-check && npm test
 ```
 
-## test
+## deploy
 
-```bash
-go test ./test/ -v          # 43 test case
-cd widget && npm test       # 19 test
-```
-
-## ของที่เป็น stub ในรอบนี้
-
-| ส่วน | ตอนนี้ | ต้องเปลี่ยนเป็น |
-|---|---|---|
-| token ปลอม `dev:<admin>:<services>:<role>` | ใช้ได้เฉพาะ office ที่ยังไม่ตั้ง `backoffice_api_url` + `APP_MODE=dev` | ตั้ง `backoffice_api_url` แล้วระบบจะอ่านตัวตนจาก JWT จริงเอง |
-| `ConsoleAuth` | static token จาก env | JWT คนละ secret กับแอดมินเว็บ (`02-SPEC §6`) |
-| `filestore` | ไฟล์ JSON | MongoDB — สลับที่ `_cmd/main.go` บรรทัดเดียว |
-| `seedOffices()` | office `demo` hardcode | ไม่ต้องมี — สร้างจากคอนโซล |
-
-ทุกจุดมี comment `██` กำกับไว้ในโค้ด
-
-## ข้อจำกัดที่รู้ตัว
-
-endpoint ที่ serve bundle **ตรวจ `Origin` ไม่ได้** เพราะ `<script src>` ไม่ส่ง header นี้มา
-ด่านจริงอยู่ที่ `/bootstrap` ซึ่งเป็น `fetch` ข้าม origin จึงมี `Origin` เสมอ
-ตัว bundle เป็น static ล้วน ไม่มีข้อมูลของใครอยู่ข้างใน
+`Dockerfile` (widget + Go static + tzdata · `APP_MODE=production`) · `.github/workflows/build.yaml` (test → Kaniko → JFrog → webhook · develop=dev · main=uat · tag=prd)
+production บังคับ: `TICKET_SECRET` / `CONSOLE_JWT_SECRET` ≥ 32 ตัว · `STORE_DRIVER=mongo` · `REDIS_URL` · ingress ห้ามบัฟเฟอร์ SSE + timeout ≥ 60 วิ

@@ -1,0 +1,40 @@
+tool: credit_history
+cases:
+  - name: ประวัติจัดการเครดิตวันนี้ (response เดิมของ GetCreditList)
+    input: {username: user01}
+    responses:
+      h:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          summary: 300
+          data:
+            - {datetime: "2026-09-24T03:15:00Z", username: user01, amount: 0, before_credit: 100, after_credit: 600, operator_name: somchai, bonus: 500, withdraw_fix: 0, comment: ""}
+            - {datetime: "2026-09-24T02:00:00Z", username: user01, amount: 0, before_credit: 300, after_credit: 100, operator_name: somchai, bonus: -200, withdraw_fix: 0, comment: ""}
+    expect:
+      status: ok
+      calls:
+        h: {path: /api/ai/read/get-credit-list/DEMO-SVC, query: {username: user01, from: "2026-09-24", to: "2026-09-24", limit: "50", page: "1", order: "-1"}}
+      fields: {จำนวนรายการ: "2 รายการ", ยอดเครดิตรวม: "300.00"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 10:15", user01, "500.00", "100.00", "600.00", somchai]
+        - ["24/09/2026 09:00", user01, "-200.00", "300.00", "100.00", somchai]
+      link: /transection/managecredit?menu=credit
+  - name: ไม่มีประวัติ
+    responses:
+      h: {body: {code: 0, message: Success, data: [], count: 0, summary: 0}}
+    expect: {status: not_found}
+  - name: code 1 จาก handler เดิม (data null) = ดึงไม่ได้
+    responses:
+      h: {body: {code: 1, message: err, data: null}}
+    expect: {status: error, error_code: schema_mismatch}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      h: {body: {code: 0, data: [], count: 0, summary: 0}}
+    expect:
+      status: not_found
+      calls:
+        h: {query: {from: "2026-09-25", to: "2026-09-25"}}

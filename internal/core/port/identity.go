@@ -1,14 +1,22 @@
 package port
 
 import (
-	"context"
+	"time"
 
 	"ai-office-backend/internal/core/domain"
 )
 
-// IdentityResolver แปลง Bearer token ของหน้า office เป็น Caller ที่ตรวจแล้ว
-//
-// office ถูกส่งเข้ามาด้วยเพราะแต่ละ office ตั้ง backoffice_api_url ของตัวเอง
-type IdentityResolver interface {
-	Resolve(ctx context.Context, office domain.Office, cred domain.Credential) (domain.Caller, error)
+// AccessTicketIssuer ออก/ตรวจตั๋วของ widget (คนละ secret กับ console JWT)
+type AccessTicketIssuer interface {
+	Issue(t domain.AccessTicket) (string, error)
+	Verify(token string) (domain.AccessTicket, error)
 }
+
+// GrantSealer ปิดผนึก grant ของ host ไว้ในตั๋ว — ผูกกับ office/service/user (AAD) กันสลับตั๋ว
+type GrantSealer interface {
+	Seal(grant string, bind string) (string, error)
+	Open(sealed string, bind string) (string, error)
+}
+
+// Clock ให้ test คุมเวลาได้ (ตัดวัน/หมดอายุ)
+type Clock func() time.Time

@@ -1,0 +1,13 @@
+# สำหรับเครื่อง dev เท่านั้น: Mongo + Redis ให้ ai-office-backend
+#   docker compose -f docker-compose.dev.yml up -d
+#   DB_URI=mongodb://localhost:27017  REDIS_URL=redis://localhost:6379/0  go run ./_cmd
+services:
+  mongo:
+    image: mongo:7
+    ports: ["127.0.0.1:27017:27017"]
+    volumes: [ai-office-mongo:/data/db]
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+volumes:
+  ai-office-mongo: {}

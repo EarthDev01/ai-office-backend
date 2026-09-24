@@ -1,0 +1,45 @@
+tool: deposit_find
+cases:
+  - name: พบรายการฝากของยูส (ตัวอย่าง catalog R3)
+    input: {username: user01, amount: 500}
+    responses:
+      l:
+        body:
+          code: 0
+          message: SUCCESS
+          count: 2
+          limit: 20
+          range: {from: "2026-09-24T00:00:00+07:00", to: "2026-09-25T00:00:00+07:00", timezone: Asia/Bangkok}
+          data:
+            - {id: 66f2a1c0e4b0a1b2c3d4e5f6, datetime: "2026-09-24T10:15:02+07:00", username: user01, amount: 500, bonus: 0, bonus_id: 0, bonus_name: "", before_credit: 12, after_credit: 512, channel: SMS, status: 1, operator_name: AUTO, comment: "", bank_code: KBANK, bank_name: นาย ก, created_at: 1790219702}
+            - {id: 66f2a1c0e4b0a1b2c3d4e5f7, datetime: null, username: user01, amount: 500, bonus: 50, bonus_id: 801, bonus_name: โปรฯ, before_credit: 0, after_credit: 550, channel: GATEWAY, status: 2, operator_name: "", comment: ลูกค้าโอนซ้ำ, bank_code: SCB, bank_name: นาย ก, created_at: 0}
+    expect:
+      status: ok
+      calls:
+        l: {path: /api/ai/read/deposit-list/DEMO-SVC, query: {username: user01, amount: "500", from: "2026-09-24", to: "2026-09-24", limit: "20"}}
+      fields: {พบทั้งหมด: "2 รายการ", แสดงในการ์ด: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 10:15", user01, "500.00", "0.00", สำเร็จ, SMS, AUTO, ""]
+        - ["—", user01, "500.00", "50.00", รอคิว, GATEWAY, "", ลูกค้าโอนซ้ำ]
+      model_context: {statuses: [สำเร็จ, รอคิว], more_than_shown: false}
+      link: /transection/deposit
+  - name: ไม่พบรายการ = data ว่าง
+    input: {username: nobody}
+    responses:
+      l: {body: {code: 0, message: SUCCESS, count: 0, limit: 20, data: []}}
+    expect: {status: not_found}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    input: {username: user01}
+    responses:
+      l: {body: {code: 0, count: 0, data: []}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {from: "2026-09-25", to: "2026-09-25"}}
+  - name: host ตอบ 400 (พารามิเตอร์ผิด)
+    input: {date_from: "2026-09-01", date_to: "2026-10-30"}
+    responses:
+      l: {status: 400, body: {code: 400, message: INVALID_PARAM, error: "invalid parameter: range longer than 31 days", data: null}}
+    expect: {status: error, error_code: http_error}

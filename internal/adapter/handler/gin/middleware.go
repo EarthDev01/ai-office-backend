@@ -3,8 +3,11 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"ai-office-backend/internal/adapter/handler/gin/routes"
@@ -16,8 +19,7 @@ import (
 )
 
 const (
-	CallerKey = "ai_office_caller"
-	OfficeKey = "ai_office_office"
+	OfficeKey = routes.CtxOffice
 )
 
 // คีย์ที่ห้าม client แอบยัดมาใน body/query/header
@@ -97,6 +99,33 @@ func rejectTenant(c *gin.Context, where string) {
 }
 
 // ResolveOffice หา office จาก public_key ใน path แล้วแปะไว้ใน context
+// AutoKey = ค่า public_key พิเศษใน path ของ widget: ให้หา office จาก Origin แทน
+const AutoKey = "auto"
+
+// KeyFromOrigin แทน "auto" ใน path ด้วย public_key จริงของ office ที่ลงทะเบียนโดเมนนี้ไว้
+//
+// ใช้เฉพาะเส้นที่เบราว์เซอร์เรียก (มี Origin เสมอ) · /session ของ host ต้องใช้ key จริง
+func KeyFromOrigin(svc port.OfficeService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Param("public_key") != AutoKey {
+			c.Next()
+			return
+		}
+		o, err := svc.ResolveByOrigin(c.Request.Context(), c.GetHeader("Origin"))
+		if err != nil {
+			routes.ResData(c, http.StatusForbidden, "ORIGIN_NOT_ALLOWED", "โดเมนนี้ยังไม่ได้ลงทะเบียนกับ office ใด", nil)
+			c.Abort()
+			return
+		}
+		for i := range c.Params {
+			if c.Params[i].Key == "public_key" {
+				c.Params[i].Value = o.PublicKey
+			}
+		}
+		c.Next()
+	}
+}
+
 func ResolveOffice(svc port.OfficeService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		o, err := svc.ResolveByPublicKey(c.Request.Context(), c.Param("public_key"))
@@ -110,47 +139,56 @@ func ResolveOffice(svc port.OfficeService) gin.HandlerFunc {
 	}
 }
 
-// ResolveCaller อ่าน Bearer token ของหน้า office ว่าเป็นใคร
-func ResolveCaller(r port.IdentityResolver) gin.HandlerFunc {
+// TicketAuth ตรวจตั๋วของ widget (R6) — office/service/user ของ request มาจากตั๋วเท่านั้น (P-10 · AC-29)
+//
+// ตั๋วต้องตรงกับ public_key/service ใน path · office/service ต้องยังเปิด · secret ยังไม่ถูก revoke
+// (revoke/ปิด มีผลทันทีแม้ตั๋วยังไม่หมดอายุ — AC-24) · origin ของหน้าเว็บต้องลงทะเบียนไว้
+func TicketAuth(tickets port.AccessTicketIssuer, offices port.OfficeService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		office := OfficeFrom(c)
-
-		cred := domain.Credential{
-			Token: strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")),
+		raw := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+		if raw == "" {
+			routes.ResData(c, http.StatusUnauthorized, "TICKET_REQUIRED", "ไม่พบตั๋ว", nil)
+			c.Abort()
+			return
 		}
-
-		caller, err := r.Resolve(c.Request.Context(), office, cred)
-		switch err {
-		case nil:
-		case domain.ErrNotAuthenticated:
-			routes.ResData(c, http.StatusUnauthorized, "NOT_AUTHENTICATED", "ไม่พบ token", nil)
+		t, err := tickets.Verify(raw)
+		if err != nil {
+			code := "TICKET_INVALID"
+			if errors.Is(err, domain.ErrTicketExpired) {
+				code = "TICKET_EXPIRED"
+			}
+			routes.ResData(c, http.StatusUnauthorized, code, "ตั๋วใช้ไม่ได้ — ขอใหม่จากหลังบ้าน", nil)
 			c.Abort()
 			return
-		case domain.ErrSessionExpired:
-			routes.ResData(c, http.StatusUnauthorized, "SESSION_EXPIRED", "token หมดอายุ", nil)
+		}
+		o, svc, err := offices.CheckTicket(c.Request.Context(), c.Param("public_key"), c.Param("service_id"), t)
+		var ref *domain.RefusalError
+		switch {
+		case err == nil:
+		case errors.As(err, &ref):
+			routes.ResData(c, http.StatusForbidden, "SESSION_REFUSED", "บริการ AI ของเว็บนี้ปิดใช้งานอยู่ ติดต่อผู้ดูแล", gin.H{"reason": ref.Reason})
 			c.Abort()
 			return
-		case domain.ErrUpstream:
-			// AI ล่มต้องไม่ลากหลังบ้านลงไปด้วย และตรงกันข้ามก็เช่นกัน
-			routes.ResData(c, http.StatusServiceUnavailable, "BACKOFFICE_UNAVAILABLE",
-				"ตรวจสอบผู้ใช้กับหลังบ้านไม่ได้ชั่วคราว", nil)
+		case errors.Is(err, domain.ErrNotFound):
+			routes.ResData(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบ office ของ key นี้", nil)
 			c.Abort()
 			return
 		default:
-			routes.ResData(c, http.StatusUnauthorized, "NOT_AUTHENTICATED", err.Error(), nil)
+			routes.ResData(c, http.StatusUnauthorized, "TICKET_INVALID", "ตั๋วไม่ตรงกับเว็บนี้", nil)
 			c.Abort()
 			return
 		}
-
-		c.Set(CallerKey, caller)
+		if !o.AllowsOrigin(c.GetHeader("Origin")) {
+			routes.ResData(c, http.StatusForbidden, "ORIGIN_NOT_ALLOWED", "โดเมนนี้ไม่ได้ลงทะเบียนไว้กับ key นี้", nil)
+			c.Abort()
+			return
+		}
+		c.Set(routes.CtxOffice, o)
+		c.Set(routes.CtxService, svc)
+		c.Set(routes.CtxTicket, t)
+		c.Header("X-AI-Ticket-Expires-At", strconv.FormatInt(t.ExpiresAt.Unix(), 10))
 		c.Next()
 	}
-}
-
-func CallerFrom(c *gin.Context) domain.Caller {
-	v, _ := c.Get(CallerKey)
-	caller, _ := v.(domain.Caller)
-	return caller
 }
 
 func OfficeFrom(c *gin.Context) domain.Office {
@@ -183,6 +221,7 @@ func ConsoleAuth(tokens port.TokenIssuer, breakGlass string) gin.HandlerFunc {
 			c.Set(ConsoleRoleKey, domain.RoleAdmin)
 			c.Set(ConsoleUsernameKey, "break-glass")
 			c.Set(ConsoleUserIDKey, "")
+			setAuditActor(c, domain.AuditActor{Username: "break-glass", Role: domain.RoleAdmin})
 			c.Next()
 			return
 		}
@@ -197,6 +236,31 @@ func ConsoleAuth(tokens port.TokenIssuer, breakGlass string) gin.HandlerFunc {
 		c.Set(ConsoleUserIDKey, claims.UserID)
 		c.Set(ConsoleUsernameKey, claims.Username)
 		c.Set(ConsoleRoleKey, claims.Role)
+		setAuditActor(c, domain.AuditActor{ID: claims.UserID, Username: claims.Username, Role: claims.Role})
+		c.Next()
+	}
+}
+
+// setAuditActor ใส่ผู้ใช้ที่ล็อกอินอยู่ลงใน request context ให้ service ชั้นล่างบันทึกประวัติได้เอง
+func setAuditActor(c *gin.Context, a domain.AuditActor) {
+	c.Request = c.Request.WithContext(domain.WithAuditActor(c.Request.Context(), a))
+}
+
+// RequestMeta เก็บ ip / user-agent / method / path ไว้ใน request context สำหรับประวัติการทำงาน
+//
+// ip มาจาก c.ClientIP() — ถ้า deploy หลัง reverse proxy ต้องตั้ง gin trusted proxies ให้ถูก
+func RequestMeta() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ua := c.Request.UserAgent()
+		if len(ua) > 300 {
+			ua = ua[:300]
+		}
+		c.Request = c.Request.WithContext(domain.WithRequestMeta(c.Request.Context(), domain.RequestMeta{
+			IP:        c.ClientIP(),
+			UserAgent: ua,
+			Method:    c.Request.Method,
+			Path:      c.Request.URL.Path,
+		}))
 		c.Next()
 	}
 }
@@ -219,7 +283,9 @@ func RequireRole(min domain.Role) gin.HandlerFunc {
 //
 // break-glass เข้ามาเป็น role admin เสมอ (ดู ConsoleAuth) — admin ทุกคนจึงผ่านด่านนี้ได้ตรง ๆ
 // โดยไม่ต้องเช็ค matrix เลย กันไม่ให้ config ผิดพลาดล็อกทางเข้าตั้งค่าตัวเอง (anti-lockout)
-func RequirePermission(perm string, perms *service.PermissionService) gin.HandlerFunc {
+//
+// ถูกปฏิเสธเมื่อไรจะบันทึก access.denied ไว้ด้วย — คนที่พยายามเข้าส่วนที่ไม่มีสิทธิ์ต้องเห็นในประวัติ
+func RequirePermission(perm string, perms *service.PermissionService, audit port.AuditRecorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := ConsoleRoleFrom(c)
 		if role == domain.RoleAdmin {
@@ -233,6 +299,13 @@ func RequirePermission(perm string, perms *service.PermissionService) gin.Handle
 			return
 		}
 		if !ok {
+			if audit != nil {
+				audit.Record(c.Request.Context(), domain.AuditEntry{
+					Action: domain.AuditAccessDenied, Status: domain.AuditFailure, Reason: "FORBIDDEN",
+					Summary: fmt.Sprintf("ถูกปฏิเสธ: ไม่มีสิทธิ์ %s (%s %s)", perm, c.Request.Method, c.Request.URL.Path),
+					Meta:    map[string]string{"permission": perm},
+				})
+			}
 			routes.ResData(c, http.StatusForbidden, "FORBIDDEN", "ไม่มีสิทธิ์ทำรายการนี้", nil)
 			c.Abort()
 			return
@@ -256,8 +329,9 @@ func ConsoleRoleFrom(c *gin.Context) domain.Role {
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		c.Header("Access-Control-Expose-Headers", "X-AI-Ticket-Expires-At")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
