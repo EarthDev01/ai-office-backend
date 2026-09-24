@@ -99,14 +99,21 @@ func (r *officeRepo) Get(ctx context.Context, id string) (domain.Office, error) 
 	return o, nil
 }
 
-func (r *officeRepo) GetByPublicKey(ctx context.Context, key string) (domain.Office, error) {
+func (r *officeRepo) GetByOrigin(ctx context.Context, origin string) (domain.Office, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if key == "" {
+	if origin == "" {
 		return domain.Office{}, domain.ErrNotFound
 	}
-	for _, o := range r.items {
-		if o.PublicKey == key {
+	// เรียง id ให้ผลนิ่ง เผื่อข้อมูลเก่ามีโดเมนซ้ำค้างอยู่ (ของใหม่ถูกกันไว้ที่ service แล้ว)
+	ids := make([]string, 0, len(r.items))
+	for id := range r.items {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		o := r.items[id]
+		if o.AllowsOrigin(origin) {
 			return o, nil
 		}
 	}
@@ -128,21 +135,4 @@ func (r *officeRepo) Delete(ctx context.Context, id string) error {
 	}
 	delete(r.items, id)
 	return r.flush()
-}
-
-func (r *officeRepo) AllOrigins(ctx context.Context) ([]string, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	seen := map[string]bool{}
-	out := []string{}
-	for _, o := range r.items {
-		for _, origin := range o.AllowedOrigins {
-			if !seen[origin] {
-				seen[origin] = true
-				out = append(out, origin)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out, nil
 }

@@ -195,16 +195,16 @@ describe('การยิง bootstrap', () => {
       return { ok: true, json: async () => ({ payload: null }) }
     }) as any
 
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
     globalThis.fetch = origFetch
 
-    expect(calls[0].url).toBe('https://ai.example.com/api/ai/office/pk_abc/service/PG99/bootstrap')
+    expect(calls[0].url).toBe('https://ai.example.com/api/ai/widget/service/PG99/bootstrap')
     expect(sentAuth).toBe('Bearer jwt-abc')
   })
 
   it('ยังไม่ล็อกอิน → ไม่ยิงและไม่โผล่', async () => {
     const calls: any[] = []
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
     expect(calls).toHaveLength(0)
     expect(document.querySelector('[data-ai-office-host]')).toBeNull()
   })
@@ -212,7 +212,7 @@ describe('การยิง bootstrap', () => {
   it('ล็อกอินแล้วแต่ยังไม่ได้เลือกเว็บ → ไม่ยิง', async () => {
     localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
     const calls: any[] = []
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
     expect(calls).toHaveLength(0)
   })
 })
@@ -220,7 +220,7 @@ describe('การยิง bootstrap', () => {
 describe('บอกสาเหตุเมื่อไม่โผล่', () => {
   it('ยังไม่ล็อกอิน → บอกว่าไม่พบ auth_token', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' } })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' } })
     expect(info.mock.calls.flat().join(' ')).toContain('auth_token')
     info.mockRestore()
   })
@@ -228,12 +228,12 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
   it('ล็อกอินแล้วแต่ยังไม่เลือกเว็บ → บอกว่าไม่พบ web-service', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' } })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' } })
     expect(info.mock.calls.flat().join(' ')).toContain('web-service')
     info.mockRestore()
   })
 
-  it('403 ORIGIN_NOT_ALLOWED → บอกวิธีแก้', async () => {
+  it('403 ORIGIN_NOT_REGISTERED → บอกโดเมนและวิธีแก้', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
     localStorage.setItem('web-service', 'K11S')
@@ -241,14 +241,15 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
     const orig = globalThis.fetch
     globalThis.fetch = (async () => ({
       ok: false, status: 403,
-      json: async () => ({ message: 'ORIGIN_NOT_ALLOWED', error: 'โดเมนนี้ไม่ได้ลงทะเบียน' }),
+      json: async () => ({ message: 'ORIGIN_NOT_REGISTERED', error: 'โดเมนนี้ยังไม่ได้ลงทะเบียน' }),
     })) as any
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' } })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' } })
     globalThis.fetch = orig
 
     const out = info.mock.calls.flat().join(' ')
-    expect(out).toContain('ORIGIN_NOT_ALLOWED')
+    expect(out).toContain('ORIGIN_NOT_REGISTERED')
     expect(out).toContain('โดเมนที่อนุญาต')
+    expect(out).toContain(location.origin)
     info.mockRestore()
   })
 
@@ -262,7 +263,7 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
       ok: true, status: 200,
       json: async () => ({ payload: { enabled: false, reason: 'not_in_allowlist' } }),
     })) as any
-    await mount({ dataset: { publicKey: 'pk_abc', apiBase: 'https://ai.example.com' } })
+    await mount({ dataset: { apiBase: 'https://ai.example.com' } })
     globalThis.fetch = orig
 
     expect(info.mock.calls.flat().join(' ')).toContain('allowlist')

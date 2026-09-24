@@ -27,13 +27,13 @@ func TestRejectTenantField(t *testing.T) {
 	}
 
 	r := newRouter(t)
-	tok := devToken("adm_ploy", "K11S", "PG99")
+	tok := adminJWT("adm_ploy", "K11S", "PG99")
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := do(t, r, req{
 				method:  http.MethodGet,
-				path:    bootPath(demoKey, "K11S") + tc.query,
+				path:    bootPath("K11S") + tc.query,
 				body:    tc.body,
 				origin:  officeOrigin,
 				token:   tok,
@@ -52,8 +52,8 @@ func TestRejectTenantField(t *testing.T) {
 func TestAllowsCleanRequest(t *testing.T) {
 	r := newRouter(t)
 	w := do(t, r, req{
-		method: http.MethodGet, path: bootPath(demoKey, "K11S"),
-		origin: officeOrigin, token: devToken("adm_ploy", "K11S"),
+		method: http.MethodGet, path: bootPath("K11S"),
+		origin: officeOrigin, token: adminJWT("adm_ploy", "K11S"),
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("request ที่สะอาดต้องผ่าน ได้ %d %s", w.Code, w.Body.String())

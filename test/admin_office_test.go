@@ -2,6 +2,7 @@ package test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"ai-office-backend/internal/core/domain"
@@ -28,7 +29,7 @@ func TestConsole_RequiresConsoleToken(t *testing.T) {
 	}
 }
 
-func TestOffice_CreateGeneratesUniqueKey(t *testing.T) {
+func TestOffice_CreateDefaults(t *testing.T) {
 	r := newRouter(t)
 
 	code, a := admin(t, r, http.MethodPost, "/api/ai/admin/offices", `{"id":"acme","label":"ACME"}`)
@@ -37,6 +38,7 @@ func TestOffice_CreateGeneratesUniqueKey(t *testing.T) {
 	}
 	_, b := admin(t, r, http.MethodPost, "/api/ai/admin/offices", `{"id":"beta","label":"BETA"}`)
 
+	// public_key เลิกใช้ระบุ office แล้ว แต่ยังต้องสุ่มไม่ซ้ำ (Mongo มี unique index เดิมอยู่)
 	if a.PublicKey == "" || a.PublicKey == b.PublicKey {
 		t.Fatalf("key ต้องมีและต้องไม่ซ้ำกัน: %q / %q", a.PublicKey, b.PublicKey)
 	}
@@ -132,5 +134,32 @@ func TestOffice_RecordsWhoChanged(t *testing.T) {
 	_, o := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/demo", `{"label":"ชื่อใหม่"}`)
 	if o.UpdatedBy == "" || o.UpdatedAt.IsZero() {
 		t.Fatalf("ทุกการแก้ต้องมีร่องรอย: %+v", o)
+	}
+}
+
+// 1 โดเมนอยู่ได้แค่ office เดียว — ไม่งั้นแยกไม่ได้ว่าเป็นลูกค้าเจ้าไหน
+func TestOffice_OriginMustBeUniqueAcrossOffices(t *testing.T) {
+	r := newRouter(t)
+	if code, _ := admin(t, r, http.MethodPost, "/api/ai/admin/offices", `{"id":"acme"}`); code != http.StatusCreated {
+		t.Fatalf("create: %d", code)
+	}
+	// เขียนต่างรูปแบบ (ตัวพิมพ์ใหญ่ + / ท้าย) ก็ยังนับว่าซ้ำ
+	w := do(t, r, req{method: http.MethodPatch, path: "/api/ai/admin/offices/acme", console: consoleToken,
+		body: `{"allowed_origins":["http://OFFICE.test/"]}`})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "ORIGIN_TAKEN") {
+		t.Fatalf("โดเมนซ้ำต้อง 409 ORIGIN_TAKEN ได้ %d %s", w.Code, w.Body.String())
+	}
+	owner := payload[struct {
+		OfficeID string `json:"office_id"`
+	}](t, w)
+	if owner.OfficeID != "demo" {
+		t.Fatalf("ต้องบอกว่าโดเมนเป็นของ office ไหน: %+v", owner)
+	}
+
+	// office เดิมบันทึกโดเมนของตัวเองซ้ำได้ + ถูก normalize และตัดตัวซ้ำ
+	code, o := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/demo",
+		`{"allowed_origins":["http://Office.test/","http://office.test","https://new.example:443"]}`)
+	if code != http.StatusOK || len(o.AllowedOrigins) != 2 || o.AllowedOrigins[0] != officeOrigin || o.AllowedOrigins[1] != "https://new.example" {
+		t.Fatalf("normalize/dedupe ผิด: %d %+v", code, o.AllowedOrigins)
 	}
 }

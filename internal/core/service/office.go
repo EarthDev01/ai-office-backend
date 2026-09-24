@@ -12,12 +12,17 @@ import (
 )
 
 type officeService struct {
-	repo port.OfficeRepository
+	repo  port.OfficeRepository
+	audit port.AuditRecorder
 }
 
-func NewOfficeService(repo port.OfficeRepository) port.OfficeService {
-	return &officeService{repo: repo}
+// audit เป็น nil ได้ (ไม่บันทึกประวัติ)
+func NewOfficeService(repo port.OfficeRepository, audit port.AuditRecorder) port.OfficeService {
+	return &officeService{repo: repo, audit: auditOr(audit)}
 }
+
+// field ที่ไม่นับเป็น "การแก้ไข" ในประวัติ — services มีเหตุการณ์ของตัวเองแยก
+var officeDiffSkip = []string{"updated_at", "updated_by", "created_at", "services"}
 
 var (
 	idPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$`)
@@ -46,6 +51,10 @@ func (s *officeService) Create(ctx context.Context, id, label, actor string) (do
 	if err := s.repo.Save(ctx, o); err != nil {
 		return domain.Office{}, err
 	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditOfficeCreate, TargetType: "office", TargetID: o.ID, TargetLabel: o.Label,
+		Summary: fmt.Sprintf("สร้าง office %q (%s)", o.Label, o.ID),
+	})
 	return o, nil
 }
 
@@ -54,6 +63,8 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 	if err != nil {
 		return domain.Office{}, err
 	}
+	before := o
+	before.AllowedOrigins = append([]string(nil), o.AllowedOrigins...)
 
 	if p.Label != nil {
 		o.Label = *p.Label
@@ -63,10 +74,10 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		if err != nil {
 			return domain.Office{}, err
 		}
+		if err := s.ensureOriginsFree(ctx, o.ID, clean); err != nil {
+			return domain.Office{}, err
+		}
 		o.AllowedOrigins = clean
-	}
-	if p.BackofficeAPIURL != nil {
-		o.BackofficeAPIURL = strings.TrimRight(strings.TrimSpace(*p.BackofficeAPIURL), "/")
 	}
 	if p.Enabled != nil {
 		o.Enabled = *p.Enabled
@@ -90,21 +101,43 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		o.Placement = *p.Placement
 	}
 
-	return s.touchSave(ctx, o, actor)
-}
-
-func (s *officeService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
-}
-
-// RotateKey ทำให้ snippet เดิมใช้ไม่ได้ทันที — คนเรียกต้องรู้ตัว
-func (s *officeService) RotateKey(ctx context.Context, id, actor string) (domain.Office, error) {
-	o, err := s.repo.Get(ctx, id)
+	saved, err := s.touchSave(ctx, o, actor)
 	if err != nil {
 		return domain.Office{}, err
 	}
-	o.PublicKey = domain.NewPublicKey()
-	return s.touchSave(ctx, o, actor)
+	if changes := domain.DiffFields(before, saved, officeDiffSkip...); len(changes) > 0 {
+		s.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditOfficeUpdate, TargetType: "office", TargetID: saved.ID, TargetLabel: saved.Label,
+			Summary: fmt.Sprintf("แก้ไข office %q (%s) %d รายการ: %s", saved.Label, saved.ID, len(changes), changedFieldNames(changes)),
+			Changes: changes,
+		})
+	}
+	return saved, nil
+}
+
+func (s *officeService) Delete(ctx context.Context, id string) error {
+	// อ่านก่อนลบ เพื่อให้ประวัติยังบอกได้ว่าลบ office ชื่ออะไร มี service อะไรบ้าง
+	o, getErr := s.repo.Get(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	label := id
+	meta := map[string]string{}
+	if getErr == nil {
+		label = o.Label
+		ids := make([]string, 0, len(o.Services))
+		for _, svc := range o.Services {
+			ids = append(ids, svc.ID)
+		}
+		meta["services"] = strings.Join(ids, ", ")
+		meta["public_key"] = o.PublicKey
+	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditOfficeDelete, TargetType: "office", TargetID: id, TargetLabel: label,
+		Summary: fmt.Sprintf("ลบ office %q (%s)", label, id),
+		Meta:    meta,
+	})
+	return nil
 }
 
 func (s *officeService) AddService(ctx context.Context, officeID, serviceID, label, actor string) (domain.Office, error) {
@@ -122,7 +155,16 @@ func (s *officeService) AddService(ctx context.Context, officeID, serviceID, lab
 		label = serviceID
 	}
 	o.Services = append(o.Services, domain.DefaultService(serviceID, label))
-	return s.touchSave(ctx, o, actor)
+	saved, err := s.touchSave(ctx, o, actor)
+	if err != nil {
+		return domain.Office{}, err
+	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditServiceCreate, TargetType: "service", TargetID: serviceID, TargetLabel: label,
+		Summary: fmt.Sprintf("เพิ่ม service %q (%s) ใน office %q", label, serviceID, saved.Label),
+		Meta:    map[string]string{"office_id": saved.ID, "office_label": saved.Label},
+	})
+	return saved, nil
 }
 
 func (s *officeService) UpdateService(ctx context.Context, officeID, serviceID string, p domain.UpdateService, actor string) (domain.Office, error) {
@@ -142,6 +184,8 @@ func (s *officeService) UpdateService(ctx context.Context, officeID, serviceID s
 	}
 
 	svc := &o.Services[idx]
+	before := *svc
+	before.Allowlist = append([]string(nil), svc.Allowlist...)
 	if p.Label != nil {
 		svc.Label = *p.Label
 	}
@@ -160,7 +204,21 @@ func (s *officeService) UpdateService(ctx context.Context, officeID, serviceID s
 	if p.AvatarURL != nil {
 		svc.AvatarURL = *p.AvatarURL
 	}
-	return s.touchSave(ctx, o, actor)
+	after := *svc
+	saved, err := s.touchSave(ctx, o, actor)
+	if err != nil {
+		return domain.Office{}, err
+	}
+	if changes := domain.DiffFields(before, after); len(changes) > 0 {
+		s.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditServiceUpdate, TargetType: "service", TargetID: after.ID, TargetLabel: after.Label,
+			Summary: fmt.Sprintf("แก้ไข service %q (%s) ใน office %q %d รายการ: %s",
+				after.Label, after.ID, saved.Label, len(changes), changedFieldNames(changes)),
+			Changes: changes,
+			Meta:    map[string]string{"office_id": saved.ID, "office_label": saved.Label},
+		})
+	}
+	return saved, nil
 }
 
 func (s *officeService) RemoveService(ctx context.Context, officeID, serviceID, actor string) (domain.Office, error) {
@@ -169,9 +227,11 @@ func (s *officeService) RemoveService(ctx context.Context, officeID, serviceID, 
 		return domain.Office{}, err
 	}
 	out := o.Services[:0]
+	var removed domain.Service
 	found := false
 	for _, svc := range o.Services {
 		if svc.ID == serviceID {
+			removed = svc
 			found = true
 			continue
 		}
@@ -181,23 +241,87 @@ func (s *officeService) RemoveService(ctx context.Context, officeID, serviceID, 
 		return domain.Office{}, domain.ErrNotFound
 	}
 	o.Services = out
-	return s.touchSave(ctx, o, actor)
+	saved, err := s.touchSave(ctx, o, actor)
+	if err != nil {
+		return domain.Office{}, err
+	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditServiceDelete, TargetType: "service", TargetID: removed.ID, TargetLabel: removed.Label,
+		Summary: fmt.Sprintf("ลบ service %q (%s) ออกจาก office %q", removed.Label, removed.ID, saved.Label),
+		Meta:    map[string]string{"office_id": saved.ID, "office_label": saved.Label},
+	})
+	return saved, nil
 }
 
-func (s *officeService) ResolveByPublicKey(ctx context.Context, publicKey string) (domain.Office, error) {
-	return s.repo.GetByPublicKey(ctx, publicKey)
+// ResolveByOrigin — โดเมนที่เรียกเข้ามาคือตัวบอกว่าเป็นลูกค้าเจ้าไหน
+//
+// fetch ข้ามโดเมนจากเบราว์เซอร์ส่ง Origin มาเสมอ และ script ในหน้าเว็บปลอมค่านี้ไม่ได้
+func (s *officeService) ResolveByOrigin(ctx context.Context, origin string) (domain.Office, error) {
+	if strings.TrimSpace(origin) == "" {
+		return domain.Office{}, domain.ErrOriginRequired
+	}
+	norm, err := domain.NormalizeOrigin(origin)
+	if err != nil {
+		return domain.Office{}, domain.ErrOriginNotAllowed
+	}
+	o, err := s.repo.GetByOrigin(ctx, norm)
+	if err == domain.ErrNotFound {
+		return domain.Office{}, domain.ErrOriginNotAllowed
+	}
+	return o, err
+}
+
+// OriginIssues หาปัญหาในข้อมูลเดิมที่ทำให้หา office จากโดเมนผิดพลาดได้ — ใช้เตือนใน log ตอนเริ่มระบบ
+func (s *officeService) OriginIssues(ctx context.Context) ([]string, error) {
+	list, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owner := map[string]string{}
+	issues := []string{}
+	for _, o := range list {
+		for _, raw := range o.AllowedOrigins {
+			norm, err := domain.NormalizeOrigin(raw)
+			if err != nil {
+				issues = append(issues, fmt.Sprintf("office %s: โดเมน %q รูปแบบไม่ถูกต้อง — จะไม่มีใครเข้าผ่านโดเมนนี้ได้", o.ID, raw))
+				continue
+			}
+			if norm != raw {
+				issues = append(issues, fmt.Sprintf("office %s: โดเมน %q ยังไม่อยู่ในรูปแบบมาตรฐาน (%s) — บันทึก office นี้ใหม่จากคอนโซลหนึ่งครั้ง", o.ID, raw, norm))
+			}
+			if prev, ok := owner[norm]; ok && prev != o.ID {
+				issues = append(issues, fmt.Sprintf("โดเมน %s อยู่ทั้งใน office %s และ %s — ระบบจะเลือก %s", norm, prev, o.ID, prev))
+				continue
+			}
+			owner[norm] = o.ID
+		}
+	}
+	return issues, nil
+}
+
+// ensureOriginsFree กันไม่ให้โดเมนเดียวอยู่ 2 office — ไม่งั้นระบบแยกไม่ได้ว่าเป็นลูกค้าเจ้าไหน
+func (s *officeService) ensureOriginsFree(ctx context.Context, selfID string, origins []string) error {
+	list, err := s.repo.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, o := range list {
+		if o.ID == selfID {
+			continue
+		}
+		for _, want := range origins {
+			if o.AllowsOrigin(want) {
+				return &domain.OriginTakenError{Origin: want, OfficeID: o.ID, OfficeLabel: o.Label}
+			}
+		}
+	}
+	return nil
 }
 
 // Bootstrap ตัดสินให้เสร็จที่ server ว่า widget ควรโผล่ไหม
-func (s *officeService) Bootstrap(ctx context.Context, publicKey, serviceID, origin string, caller domain.Caller) (domain.Bootstrap, error) {
-	o, err := s.repo.GetByPublicKey(ctx, publicKey)
-	if err != nil {
-		return domain.Bootstrap{}, err
-	}
-	// key ที่หลุดออกไปต้องใช้จากโดเมนอื่นไม่ได้
-	if !o.AllowsOrigin(origin) {
-		return domain.Bootstrap{}, domain.ErrOriginNotAllowed
-	}
+//
+// office มาจาก ResolveByOrigin แล้ว (middleware) — ตรงนี้ตรวจต่อเรื่อง office เปิด / token / service
+func (s *officeService) Bootstrap(ctx context.Context, o domain.Office, serviceID string, caller domain.Caller) (domain.Bootstrap, error) {
 	if !o.Enabled {
 		return domain.Bootstrap{Enabled: false, Reason: "office_disabled"}, nil
 	}
@@ -258,20 +382,31 @@ func (s *officeService) touchSave(ctx context.Context, o domain.Office, actor st
 	return o, nil
 }
 
+// normalizeOrigins ทำทุกโดเมนให้เป็นรูปแบบมาตรฐาน ตัดบรรทัดว่างและตัวซ้ำทิ้ง
 func normalizeOrigins(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
 	for _, raw := range in {
-		v := strings.TrimRight(strings.TrimSpace(raw), "/")
-		if v == "" {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
-			return nil, fmt.Errorf("origin ต้องขึ้นต้นด้วย http:// หรือ https:// — เจอ %q", raw)
+		v, err := domain.NormalizeOrigin(raw)
+		if err != nil {
+			return nil, err
 		}
-		if strings.Count(v, "/") != 2 {
-			return nil, fmt.Errorf("origin ต้องมีแค่ scheme กับ host ห้ามมี path — เจอ %q", raw)
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
 		}
-		out = append(out, v)
 	}
 	return out, nil
+}
+
+// changedFieldNames รวมชื่อ field ที่เปลี่ยนไว้ใส่ใน summary ให้อ่านจากตารางได้เลยไม่ต้องกดขยาย
+func changedFieldNames(changes []domain.FieldChange) string {
+	names := make([]string, len(changes))
+	for i, c := range changes {
+		names[i] = c.Field
+	}
+	return strings.Join(names, ", ")
 }

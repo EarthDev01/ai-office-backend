@@ -31,7 +31,7 @@ func TestMongoOfficeRepository(t *testing.T) {
 	}
 	defer res.Close()
 
-	_ = res.DB.Collection("ai_offices").Drop(ctx)
+	_ = res.DB.Collection("offices").Drop(ctx)
 
 	repo, err := repository.NewOfficeRepository(ctx, res.DB)
 	if err != nil {
@@ -54,10 +54,10 @@ func TestMongoOfficeRepository(t *testing.T) {
 		t.Fatalf("service ฝังใน document ไม่ตรง: %+v", got.Services)
 	}
 
-	// public_key ต้องหาเจอ — เป็นเส้นทางที่ snippet ใช้
-	byKey, err := repo.GetByPublicKey(ctx, o.PublicKey)
-	if err != nil || byKey.ID != o.ID {
-		t.Fatalf("หา by public key ไม่เจอ: %v %+v", err, byKey)
+	// หา office จากโดเมนได้ — เป็นเส้นทางที่ widget ใช้
+	byOrigin, err := repo.GetByOrigin(ctx, officeOrigin)
+	if err != nil || byOrigin.ID != o.ID {
+		t.Fatalf("หา by origin ไม่เจอ: %v %+v", err, byOrigin)
 	}
 
 	// key ซ้ำต้องถูกกัน ไม่งั้น key เดียวชี้ได้หลาย office
@@ -67,18 +67,13 @@ func TestMongoOfficeRepository(t *testing.T) {
 		t.Fatalf("public_key ซ้ำต้องถูกปฏิเสธ ได้ %v", err)
 	}
 
-	origins, err := repo.AllOrigins(ctx)
-	if err != nil || len(origins) != 1 || origins[0] != officeOrigin {
-		t.Fatalf("AllOrigins ผิด: %v %+v", err, origins)
-	}
-
 	if err := repo.Delete(ctx, o.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if _, err := repo.Get(ctx, o.ID); err != domain.ErrNotFound {
 		t.Fatalf("ลบแล้วต้องหาไม่เจอ ได้ %v", err)
 	}
-	if _, err := repo.GetByPublicKey(ctx, o.PublicKey); err != domain.ErrNotFound {
-		t.Fatalf("ลบแล้ว key ต้องใช้ไม่ได้ ได้ %v", err)
+	if _, err := repo.GetByOrigin(ctx, officeOrigin); err != domain.ErrNotFound {
+		t.Fatalf("ลบแล้วโดเมนต้องหาไม่เจอ ได้ %v", err)
 	}
 }

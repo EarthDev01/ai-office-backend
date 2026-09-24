@@ -8,10 +8,23 @@ var (
 	ErrForbidden         = errors.New("FORBIDDEN")
 	ErrNotFound          = errors.New("NOT_FOUND")
 	ErrOriginNotAllowed  = errors.New("ORIGIN_NOT_ALLOWED")
+	ErrOriginRequired    = errors.New("ORIGIN_REQUIRED")
 	ErrServiceNotAllowed = errors.New("SERVICE_NOT_ALLOWED")
 	ErrConflict          = errors.New("CONFLICT")
 	ErrUpstream          = errors.New("BACKOFFICE_UNAVAILABLE")
 )
+
+// OriginTakenError — โดเมนนี้เป็นของ office อื่นอยู่แล้ว (1 โดเมนอยู่ได้แค่ office เดียว
+// เพราะโดเมนคือตัวระบุว่าเป็นลูกค้าเจ้าไหน)
+type OriginTakenError struct {
+	Origin      string
+	OfficeID    string
+	OfficeLabel string
+}
+
+func (e *OriginTakenError) Error() string {
+	return "โดเมน " + e.Origin + " ถูกใช้แล้วโดย office " + e.OfficeLabel + " (" + e.OfficeID + ")"
+}
 
 // Credential คือสิ่งที่หน้า office ส่งมาเพื่อยืนยันตัวตน
 //

@@ -94,7 +94,6 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   const previewSelector = ds.previewMount ?? ''
   const preview = previewSelector !== ''
   const apiBase = opts.apiBase ?? ds.apiBase ?? ''
-  const publicKey = ds.publicKey ?? ''
 
   let cfg: Bootstrap
   if (preview) {
@@ -103,7 +102,7 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   } else if (opts.bootstrap) {
     cfg = { ...DEFAULT_BOOTSTRAP, ...opts.bootstrap }
   } else {
-    const fetched = await fetchBootstrap(apiBase, publicKey, opts.onFetch)
+    const fetched = await fetchBootstrap(apiBase, opts.onFetch)
     if (!fetched) return
     cfg = { ...DEFAULT_BOOTSTRAP, ...fetched }
   }
@@ -172,15 +171,9 @@ function onPreviewMessage(ev: MessageEvent) {
   render({ ...state.cfg, ...(safe as Partial<Bootstrap>) })
 }
 
-async function fetchBootstrap(
-  apiBase: string,
-  publicKey: string,
-  onFetch?: MountOptions['onFetch'],
-): Promise<Bootstrap | null> {
-  if (!publicKey) {
-    explain('ไม่พบ public key ใน URL ของ script', 'snippet ต้องเป็น .../widget/v1/<public_key>/ai-office.js')
-    return null
-  }
+// ไม่ต้องส่งว่าเป็น office ไหน — server ดูจากโดเมนของหน้านี้ (header Origin ที่เบราว์เซอร์ใส่ให้เอง)
+// snippet จึงเหมือนกันทุกโดเมนของ officeลูกค้า
+async function fetchBootstrap(apiBase: string, onFetch?: MountOptions['onFetch']): Promise<Bootstrap | null> {
   const token = readOfficeToken()
   const serviceID = readOfficeService()
 
@@ -199,9 +192,7 @@ async function fetchBootstrap(
     return null
   }
 
-  const url =
-    `${apiBase}/api/ai/office/${encodeURIComponent(publicKey)}` +
-    `/service/${encodeURIComponent(serviceID)}/bootstrap`
+  const url = `${apiBase}/api/ai/widget/service/${encodeURIComponent(serviceID)}/bootstrap`
   onFetch?.({ url })
 
   try {
@@ -222,7 +213,7 @@ async function fetchBootstrap(
     return payload
   } catch (e) {
     // widget พังต้องไม่ลากหน้า office พังไปด้วย
-    explain(`เรียก ${url} ไม่สำเร็จ — ${(e as Error).message}`, 'backend ทำงานอยู่ไหม และโดเมนนี้อยู่ใน allowed_origins หรือยัง')
+    explain(`เรียก ${url} ไม่สำเร็จ — ${(e as Error).message}`, 'หลังบ้าน ai ทำงานอยู่ไหม')
     return null
   }
 }
@@ -233,16 +224,16 @@ function explain(reason: string, hint?: string) {
 }
 
 const HINTS: Record<string, string> = {
-  ORIGIN_NOT_ALLOWED: 'เพิ่มโดเมนของหน้านี้ลงใน "โดเมนที่อนุญาต" ของ office ที่คอนโซล',
+  ORIGIN_NOT_REGISTERED: `โดเมน ${location.origin} ยังไม่ได้ลงทะเบียน — เพิ่มใน "โดเมนที่อนุญาต" ของ office ที่ officeai`,
+  ORIGIN_REQUIRED: 'เบราว์เซอร์ไม่ได้ส่ง Origin มา — widget ต้องถูกเรียกจากหน้าเว็บของ officeลูกค้า',
   SERVICE_NOT_ALLOWED: 'บัญชีนี้ไม่มี service นี้ใน Role.ListService ของหลังบ้าน',
-  NOT_FOUND: 'public key ใน snippet ไม่ตรงกับ office ไหนเลย — ถูกลบหรือ rotate key ไปแล้วหรือเปล่า',
   SESSION_EXPIRED: 'token หมดอายุ ให้ล็อกอินหลังบ้านใหม่',
   NOT_AUTHENTICATED: 'ไม่ได้ส่ง token ไป หรือ token ใช้ไม่ได้',
-  BACKOFFICE_UNAVAILABLE: 'ตรวจสอบผู้ใช้กับ office-api ไม่ได้ — ตรวจ backoffice_api_url ของ office',
+  BACKOFFICE_UNAVAILABLE: 'ตรวจสอบผู้ใช้กับ officeลูกค้า ไม่ได้ชั่วคราว',
   office_disabled: 'office นี้ถูกปิดทั้งชุดที่คอนโซล',
   service_disabled: 'service นี้ยังไม่ได้เปิด หรือยังไม่มีใน office นี้',
   not_in_allowlist: 'เพิ่ม username ของบัญชีนี้ลง allowlist ของ service ที่คอนโซล',
-  wrong_office: 'token เป็นของ office อื่น ไม่ตรงกับ key ใน snippet',
+  wrong_office: 'token เป็นของ office อื่น ไม่ตรงกับโดเมนของหน้านี้',
   no_service: 'ยังไม่ได้เลือกเว็บในหลังบ้าน',
 }
 
@@ -293,23 +284,12 @@ function installGlobal() {
 }
 
 // ---- auto-boot เมื่อถูกโหลดเป็น <script> จริง ----
-/**
- * แกะ public key จาก URL ของ script ตัวเอง
- * .../widget/v1/<public_key>/ai-office.js
- */
-export function keyFromScriptURL(src: string): string {
-  const parts = new URL(src, location.href).pathname.split('/').filter(Boolean)
-  const i = parts.lastIndexOf('ai-office.js')
-  return i > 0 ? decodeURIComponent(parts[i - 1]) : ''
-}
-
 const self = document.currentScript as HTMLScriptElement | null
 if (self) {
   const ds: Record<string, string> = {}
   for (const k in self.dataset) ds[k] = self.dataset[k] as string
   if (self.src) {
     if (!ds.apiBase) ds.apiBase = new URL(self.src, location.href).origin
-    if (!ds.publicKey) ds.publicKey = keyFromScriptURL(self.src)
   }
   // ██ office-v10x เป็น SPA — ล็อกอินแล้ว set localStorage โดยไม่ reload หน้า
   // ██ widget จึงต้องเฝ้า session เอง ไม่งั้นปุ่มจะไม่โผล่จนกว่าจะ refresh มือ

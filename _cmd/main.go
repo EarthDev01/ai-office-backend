@@ -63,6 +63,7 @@ func main() {
 	var repo port.OfficeRepository
 	var cuRepo port.ConsoleUserRepository
 	var rmRepo port.RoleConfigRepository
+	var auditRepo port.AuditRepository
 	if cfg.Store.IsMongo() {
 		res, err := mongodb.New(ctx, cfg.Store.URI, cfg.Store.DBName)
 		if err != nil {
@@ -88,6 +89,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] role permission store: %v", err)
 		}
+
+		auditRepo, err = repository.NewAuditRepository(ctx, res.DB)
+		if err != nil {
+			log.Fatalf("[ERROR] audit log store: สร้าง index ไม่สำเร็จ: %v", err)
+		}
 	} else {
 		var err error
 		// path ของ file store — ใช้เฉพาะโหมด STORE_DRIVER=file (dev/ทดลอง) ไม่ได้มาจาก env
@@ -109,12 +115,28 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] open role permission store: %v", err)
 		}
+
+		auditPath := filepath.Join(filepath.Dir(storePath), "audit_logs.jsonl")
+		auditRepo, err = filestore.NewAuditRepository(auditPath)
+		if err != nil {
+			log.Fatalf("[ERROR] open audit log store: %v", err)
+		}
 	}
 
-	officeService := service.NewOfficeService(repo)
+	auditSvc := service.NewAuditService(auditRepo, time.Now)
+	officeService := service.NewOfficeService(repo, auditSvc)
+
+	// widget หา office จากโดเมน — โดเมนซ้ำข้าม office / รูปแบบเก่าที่ยังไม่ normalize ทำให้หาผิดตัวได้
+	if issues, err := officeService.OriginIssues(ctx); err != nil {
+		fmt.Printf("[WARN] ตรวจโดเมนของ office ไม่สำเร็จ: %v\n", err)
+	} else {
+		for _, msg := range issues {
+			fmt.Println("[WARN] " + msg)
+		}
+	}
 
 	// cache ttl เป็นค่าคงที่ (ไม่ได้มาจาก env)
-	identity := service.NewIdentityResolver(60*time.Second, cfg.App.IsDev())
+	identity := service.NewIdentityResolver(60 * time.Second)
 
 	// console session JWT ██ ต้องมี secret จริงบน production — ห้ามปล่อยให้ใช้ dev secret หลุดขึ้นจริง
 	//
@@ -133,8 +155,8 @@ func main() {
 	tokens := auth.NewJWTIssuer(cfg.Console.JWTSecret, 8*time.Hour)
 	totpP := auth.NewTOTPProvider("AI Office Console")
 	tickets := auth.NewTicketIssuer(cfg.Console.JWTSecret, 5*time.Minute)
-	permSvc := service.NewPermissionService(rmRepo)
-	authSvc := service.NewConsoleAuth(cuRepo, tokens, totpP, tickets, permSvc, time.Now)
+	permSvc := service.NewPermissionService(rmRepo, auditSvc)
+	authSvc := service.NewConsoleAuth(cuRepo, tokens, totpP, tickets, permSvc, auditSvc, time.Now)
 
 	r := httpgin.NewRouter(httpgin.Deps{
 		OfficeService: officeService,
@@ -143,13 +165,10 @@ func main() {
 		Tokens:        tokens,
 		Auth:          authSvc,
 		Permissions:   permSvc,
+		Audit:         auditSvc,
 		// break-glass token ปิดอยู่ (ค่าว่าง) — เข้าผ่าน login จริงเท่านั้น
 		ConsoleToken: "",
 	})
-
-	if cfg.App.IsDev() {
-		fmt.Println("[WARN] APP_MODE=dev — office ที่ยังไม่ตั้ง backoffice_api_url จะรับ token ปลอม 'dev:...' ได้ · ห้ามใช้ค่านี้บน production")
-	}
 
 	addr := ":" + cfg.HTTP.Port
 	fmt.Printf("[INFO] listening on %s\n", addr)

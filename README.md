@@ -6,18 +6,21 @@ spec อยู่ที่ `Claude/.workflow/AI Office/` — อ่าน `01-SP
 ## โมเดล 2 ชั้น
 
 ```
-Office  = หลังบ้าน 1 ชุด (1 การติดตั้ง = 1 snippet)   → public_key อยู่ใน snippet
-  └ Service = แบรนด์/เว็บย่อยที่แอดมินสลับดู          → มาจาก session ไม่ใช่ snippet
+Office  = officeลูกค้า 1 เจ้า                        → ระบุจากโดเมนที่เรียกเข้ามา (Origin)
+  └ Service = แบรนด์/เว็บย่อยที่แอดมินสลับดู          → มาจาก localStorage["web-service"]
 ```
 
-1 office มีได้หลาย service และเพิ่ม/ลบ service ได้โดย **ไม่ต้องแก้ snippet** ที่ลูกค้าแปะไว้แล้ว
+snippet **ชุดเดียวใช้ได้ทุกโดเมน** (`/widget/v1/ai-office.js`) — office-v10x เป็นโค้ดชุดเดียวที่ deploy
+หลายโดเมน จึงแยกลูกค้าจาก `allowed_origins` แทน key · 1 โดเมนอยู่ได้แค่ office เดียว
+1 office มีได้หลาย service และเพิ่ม/ลบ service ได้โดย **ไม่ต้องแก้ snippet**
 
 ## ทำอะไรได้แล้ว (รอบนี้)
 
-- `GET /widget/v1/:public_key/ai-office.js` — bundle + ETag · key ไม่มีจริง → 404
-- `GET /api/ai/office/:public_key/service/:service_id/bootstrap` — ตัดสินที่ server ว่า widget ควรโผล่ไหม · ตรวจ `Origin` + สิทธิ์ใน service
-- Office/Service CRUD จากคอนโซล + `rotate-key`
-- CORS อ่าน `allowed_origins` จาก DB — เพิ่มลูกค้าใหม่ไม่ต้อง deploy
+- `GET /widget/v1/ai-office.js` — bundle + ETag (ไฟล์เดียวกันทุกเจ้า)
+- `GET /api/ai/widget/service/:service_id/bootstrap` — หา office จาก `Origin` แล้วตัดสินที่ server ว่า widget ควรโผล่ไหม · ตรวจสิทธิ์ใน service
+  - path เก่าที่มี key (`/widget/v1/:key/...`, `/api/ai/office/:key/service/...`) ยังใช้ได้ชั่วคราว — key ไม่มีผลแล้ว
+- Office/Service CRUD จากคอนโซล · เพิ่มลูกค้าใหม่ = สร้าง office + ใส่โดเมน ไม่ต้องแก้โค้ดลูกค้าหรือ deploy
+- ประวัติการทำงานของผู้ใช้คอนโซล (`/api/ai/admin/audit-logs`)
 - ปฏิเสธ request ที่ client พยายามเลือก service เอง
 - **อ่านตัวตนจาก JWT ของแอดมิน** — decode payload (`result` = EmployeeModel) แล้วเอา `Role.ListService` มาตรวจว่าเข้า service นั้นได้ไหม (cache 60 วิ)
 - **MongoDB** (`STORE_DRIVER=mongo`) หรือไฟล์ JSON (`file`) ไว้ dev เร็ว ๆ
@@ -59,7 +62,7 @@ cd widget && npm test       # 19 test
 
 | ส่วน | ตอนนี้ | ต้องเปลี่ยนเป็น |
 |---|---|---|
-| token ปลอม `dev:<admin>:<services>:<role>` | ใช้ได้เฉพาะ office ที่ยังไม่ตั้ง `backoffice_api_url` + `APP_MODE=dev` | ตั้ง `backoffice_api_url` แล้วระบบจะอ่านตัวตนจาก JWT จริงเอง |
+| อ่านตัวตนจาก JWT ของ officeลูกค้า | ถอด payload อ่านตรง ๆ **ไม่ได้ตรวจลายเซ็น** (secret ผูก UA+IP) | ให้ office-api ยืนยัน token หรือออก service token แยก — ต้องทำก่อนเปิดแชทที่อ่านข้อมูลจริง |
 | `ConsoleAuth` | static token จาก env | JWT คนละ secret กับแอดมินเว็บ (`02-SPEC §6`) |
 | `filestore` | ไฟล์ JSON | MongoDB — สลับที่ `_cmd/main.go` บรรทัดเดียว |
 | `seedOffices()` | office `demo` hardcode | ไม่ต้องมี — สร้างจากคอนโซล |

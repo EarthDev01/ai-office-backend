@@ -16,8 +16,7 @@ import (
 //
 // มี cache สั้น ๆ เพราะทุกข้อความในแชทจะต้อง resolve ใหม่
 type identityResolver struct {
-	ttl     time.Duration
-	devMode bool
+	ttl time.Duration
 
 	mu    sync.RWMutex
 	cache map[string]cachedCaller
@@ -28,25 +27,17 @@ type cachedCaller struct {
 	until  time.Time
 }
 
-func NewIdentityResolver(ttl time.Duration, devMode bool) port.IdentityResolver {
+// รับเฉพาะ JWT จริงที่ officeลูกค้า ออกให้แอดมินตอน login — ไม่มีโหมด token ทดสอบ
+func NewIdentityResolver(ttl time.Duration) port.IdentityResolver {
 	if ttl <= 0 {
 		ttl = 60 * time.Second
 	}
-	return &identityResolver{ttl: ttl, devMode: devMode, cache: map[string]cachedCaller{}}
+	return &identityResolver{ttl: ttl, cache: map[string]cachedCaller{}}
 }
 
 func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cred domain.Credential) (domain.Caller, error) {
 	if cred.Token == "" {
 		return domain.Caller{}, domain.ErrNotAuthenticated
-	}
-
-	// office ที่ยังไม่ได้ตั้ง backoffice_api_url ใช้ไม่ได้จริง
-	// ยกเว้นโหมด dev ที่ยอมให้ใช้ token ปลอมเพื่อทดสอบหน้าจอ
-	if office.BackofficeAPIURL == "" {
-		if r.devMode {
-			return parseDevToken(office, cred)
-		}
-		return domain.Caller{}, domain.ErrUpstream
 	}
 
 	key := office.ID + "|" + cred.Token
@@ -84,37 +75,6 @@ func (r *identityResolver) put(key string, caller domain.Caller) {
 		r.cache = map[string]cachedCaller{}
 	}
 	r.cache[key] = cachedCaller{caller: caller, until: time.Now().Add(r.ttl)}
-}
-
-// parseDevToken รับ token ปลอมรูปแบบ "dev:<admin>:<service1,service2>:<role>"
-//
-// ██ DEV ONLY — ใช้ได้เฉพาะ office ที่ยังไม่ได้ตั้ง backoffice_api_url และ APP_MODE=dev
-// ██ มีไว้ทดสอบหน้าจอโดยไม่ต้องมี JWT จริง
-func parseDevToken(office domain.Office, cred domain.Credential) (domain.Caller, error) {
-	if !strings.HasPrefix(cred.Token, "dev:") {
-		return domain.Caller{}, domain.ErrNotAuthenticated
-	}
-	p := strings.Split(strings.TrimPrefix(cred.Token, "dev:"), ":")
-	if len(p) < 2 || p[0] == "" || p[1] == "" {
-		return domain.Caller{}, domain.ErrNotAuthenticated
-	}
-	role := "admin"
-	if len(p) >= 3 && p[2] != "" {
-		role = p[2]
-	}
-	services := []string{}
-	for _, s := range strings.Split(p[1], ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			services = append(services, s)
-		}
-	}
-	return domain.Caller{
-		AdminID:  p[0],
-		Username: p[0],
-		OfficeID: office.ID,
-		RoleName: role,
-		Services: services,
-	}, nil
 }
 
 // parseOfficeJWT อ่านตัวตนจาก payload ของ JWT หลังบ้านตรง ๆ

@@ -98,22 +98,29 @@ func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 	if err != nil {
 		t.Fatalf("open role permission store: %v", err)
 	}
-	permSvc := service.NewPermissionService(rmRepo)
+	auditRepo, err := filestore.NewAuditRepository(filepath.Join(t.TempDir(), "audit_logs.jsonl"))
+	if err != nil {
+		t.Fatalf("open audit store: %v", err)
+	}
+	auditSvc := service.NewAuditService(auditRepo, time.Now)
+	permSvc := service.NewPermissionService(rmRepo, auditSvc)
 	authSvc := service.NewConsoleAuth(
 		cuRepo,
 		auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
 		auth.NewTOTPProvider("AI Office Console Test"),
 		auth.NewTicketIssuer(consoleJWTSecret, 5*time.Minute),
 		permSvc,
+		auditSvc,
 		time.Now,
 	)
 	return httpgin.NewTestRouter(httpgin.Deps{
-		OfficeService: service.NewOfficeService(repo),
-		Identity:      service.NewIdentityResolver(50*time.Millisecond, true),
+		OfficeService: service.NewOfficeService(repo, auditSvc),
+		Identity:      service.NewIdentityResolver(50 * time.Millisecond),
 		BundlePath:    filepath.Join(t.TempDir(), "missing.js"),
 		Tokens:        auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
 		Auth:          authSvc,
 		Permissions:   permSvc,
+		Audit:         auditSvc,
 		ConsoleToken:  consoleToken,
 	})
 }
@@ -137,6 +144,7 @@ func do(t *testing.T, r http.Handler, in req) *httptest.ResponseRecorder {
 	} else {
 		httpReq, _ = http.NewRequest(in.method, in.path, nil)
 	}
+	httpReq.RemoteAddr = "192.0.2.1:1234" // แบบเดียวกับ httptest.NewRequest — ให้ ClientIP() มีค่า
 	if in.origin != "" {
 		httpReq.Header.Set("Origin", in.origin)
 	}
@@ -167,18 +175,21 @@ func payload[T any](t *testing.T, w *httptest.ResponseRecorder) T {
 	return res.Payload
 }
 
-func bootPath(key, serviceID string) string {
+// bootPath — widget หา office จาก Origin แล้ว path จึงมีแค่ service
+func bootPath(serviceID string) string {
+	return fmt.Sprintf("/api/ai/widget/service/%s/bootstrap", serviceID)
+}
+
+// legacyBootPath — path ของ snippet รุ่นก่อนที่มี key (key ไม่ถูกใช้แล้ว)
+func legacyBootPath(key, serviceID string) string {
 	return fmt.Sprintf("/api/ai/office/%s/service/%s/bootstrap", key, serviceID)
 }
 
-// devToken สร้าง token ปลอมสำหรับ office ที่ยังไม่ได้ตั้ง backoffice_api_url
-func devToken(admin string, services ...string) string {
-	out := "dev:" + admin + ":"
-	for i, s := range services {
-		if i > 0 {
-			out += ","
-		}
-		out += s
+// adminJWT สร้าง JWT ของแอดมิน officeลูกค้า ที่มีสิทธิ์ service ตามที่ระบุ (permission=true ทุกตัว)
+func adminJWT(admin string, services ...string) string {
+	m := make(map[string]bool, len(services))
+	for _, s := range services {
+		m[s] = true
 	}
-	return out
+	return officeJWT(admin, m, nil)
 }

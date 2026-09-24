@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -96,12 +97,27 @@ func rejectTenant(c *gin.Context, where string) {
 	c.Abort()
 }
 
-// ResolveOffice หา office จาก public_key ใน path แล้วแปะไว้ใน context
+// ResolveOffice หา office จากโดเมนที่เรียกเข้ามา (header Origin) แล้วแปะไว้ใน context
+//
+// officeลูกค้า อย่าง office-v10x ใช้ snippet เดียวกันทุกโดเมน โดเมนจึงเป็นตัวบอกว่าเป็นลูกค้าเจ้าไหน
+// ต้องอยู่ก่อน ResolveCaller เพราะตัวตนที่อ่านได้ถูกผูกกับ office นี้ (caller.OfficeID)
 func ResolveOffice(svc port.OfficeService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		o, err := svc.ResolveByPublicKey(c.Request.Context(), c.Param("public_key"))
-		if err != nil {
-			routes.ResData(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบ office ของ key นี้", nil)
+		o, err := svc.ResolveByOrigin(c.Request.Context(), c.GetHeader("Origin"))
+		switch err {
+		case nil:
+		case domain.ErrOriginRequired:
+			routes.ResData(c, http.StatusForbidden, "ORIGIN_REQUIRED",
+				"ไม่พบ Origin — widget ต้องถูกเรียกจากหน้าเว็บของ officeลูกค้า", nil)
+			c.Abort()
+			return
+		case domain.ErrOriginNotAllowed:
+			routes.ResData(c, http.StatusForbidden, "ORIGIN_NOT_REGISTERED",
+				"โดเมนนี้ยังไม่ได้ลงทะเบียนกับ office ไหน — เพิ่มที่ 'โดเมนที่อนุญาต' ในคอนโซล", nil)
+			c.Abort()
+			return
+		default:
+			routes.ResData(c, http.StatusInternalServerError, "INTERNAL_ERROR", "หา office ไม่สำเร็จ", nil)
 			c.Abort()
 			return
 		}
@@ -183,6 +199,7 @@ func ConsoleAuth(tokens port.TokenIssuer, breakGlass string) gin.HandlerFunc {
 			c.Set(ConsoleRoleKey, domain.RoleAdmin)
 			c.Set(ConsoleUsernameKey, "break-glass")
 			c.Set(ConsoleUserIDKey, "")
+			setAuditActor(c, domain.AuditActor{Username: "break-glass", Role: domain.RoleAdmin})
 			c.Next()
 			return
 		}
@@ -197,6 +214,32 @@ func ConsoleAuth(tokens port.TokenIssuer, breakGlass string) gin.HandlerFunc {
 		c.Set(ConsoleUserIDKey, claims.UserID)
 		c.Set(ConsoleUsernameKey, claims.Username)
 		c.Set(ConsoleRoleKey, claims.Role)
+		setAuditActor(c, domain.AuditActor{ID: claims.UserID, Username: claims.Username, Role: claims.Role})
+		c.Next()
+	}
+}
+
+// setAuditActor ใส่ผู้ใช้ที่ล็อกอินอยู่ลงใน request context ให้ service ชั้นล่างบันทึกประวัติได้เอง
+func setAuditActor(c *gin.Context, a domain.AuditActor) {
+	c.Request = c.Request.WithContext(domain.WithAuditActor(c.Request.Context(), a))
+}
+
+// RequestMeta เก็บ ip / user-agent / method / path ไว้ใน request context สำหรับประวัติการทำงาน
+//
+// ip มาจาก c.ClientIP() — ถ้า deploy หลัง reverse proxy ต้องตั้ง gin trusted proxies ให้ถูก
+// ไม่งั้น client ปลอม X-Forwarded-For มาได้
+func RequestMeta() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ua := c.Request.UserAgent()
+		if len(ua) > 300 {
+			ua = ua[:300]
+		}
+		c.Request = c.Request.WithContext(domain.WithRequestMeta(c.Request.Context(), domain.RequestMeta{
+			IP:        c.ClientIP(),
+			UserAgent: ua,
+			Method:    c.Request.Method,
+			Path:      c.Request.URL.Path,
+		}))
 		c.Next()
 	}
 }
@@ -219,7 +262,9 @@ func RequireRole(min domain.Role) gin.HandlerFunc {
 //
 // break-glass เข้ามาเป็น role admin เสมอ (ดู ConsoleAuth) — admin ทุกคนจึงผ่านด่านนี้ได้ตรง ๆ
 // โดยไม่ต้องเช็ค matrix เลย กันไม่ให้ config ผิดพลาดล็อกทางเข้าตั้งค่าตัวเอง (anti-lockout)
-func RequirePermission(perm string, perms *service.PermissionService) gin.HandlerFunc {
+//
+// ถูกปฏิเสธเมื่อไรจะบันทึก access.denied ไว้ด้วย — คนที่พยายามเข้าส่วนที่ไม่มีสิทธิ์ต้องเห็นในประวัติ
+func RequirePermission(perm string, perms *service.PermissionService, audit port.AuditRecorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := ConsoleRoleFrom(c)
 		if role == domain.RoleAdmin {
@@ -233,6 +278,13 @@ func RequirePermission(perm string, perms *service.PermissionService) gin.Handle
 			return
 		}
 		if !ok {
+			if audit != nil {
+				audit.Record(c.Request.Context(), domain.AuditEntry{
+					Action: domain.AuditAccessDenied, Status: domain.AuditFailure, Reason: "FORBIDDEN",
+					Summary: fmt.Sprintf("ถูกปฏิเสธ: ไม่มีสิทธิ์ %s (%s %s)", perm, c.Request.Method, c.Request.URL.Path),
+					Meta:    map[string]string{"permission": perm},
+				})
+			}
 			routes.ResData(c, http.StatusForbidden, "FORBIDDEN", "ไม่มีสิทธิ์ทำรายการนี้", nil)
 			c.Abort()
 			return
@@ -256,7 +308,7 @@ func ConsoleRoleFrom(c *gin.Context) domain.Role {
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

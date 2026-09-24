@@ -24,13 +24,14 @@ func newAuth(t *testing.T) *ConsoleAuth {
 	if err != nil {
 		t.Fatal(err)
 	}
-	permSvc := NewPermissionService(rmRepo)
+	permSvc := NewPermissionService(rmRepo, nil)
 	return NewConsoleAuth(
 		repo,
 		auth.NewJWTIssuer(sec, time.Hour),
 		auth.NewTOTPProvider("AI Office Console Test"),
 		auth.NewTicketIssuer(sec, 5*time.Minute),
 		permSvc,
+		nil,
 		time.Now,
 	)
 }

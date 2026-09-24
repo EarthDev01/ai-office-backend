@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"errors"
 	"net/http"
 
 	"ai-office-backend/internal/core/domain"
@@ -25,6 +26,13 @@ func actorOf(c *gin.Context) string {
 }
 
 func (h *OfficeHandler) fail(c *gin.Context, err error) {
+	var taken *domain.OriginTakenError
+	if errors.As(err, &taken) {
+		ResData(c, http.StatusConflict, "ORIGIN_TAKEN", taken.Error(), gin.H{
+			"origin": taken.Origin, "office_id": taken.OfficeID, "office_label": taken.OfficeLabel,
+		})
+		return
+	}
 	switch err {
 	case domain.ErrNotFound:
 		ResData(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบรายการนี้", nil)
@@ -92,17 +100,6 @@ func (h *OfficeHandler) Delete(c *gin.Context) {
 		return
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", nil)
-}
-
-// RotateKey ทำให้ snippet เดิมของ office นี้ใช้ไม่ได้ทันที
-// คอนโซลต้องถามยืนยันก่อนเรียก
-func (h *OfficeHandler) RotateKey(c *gin.Context) {
-	o, err := h.svc.RotateKey(c.Request.Context(), c.Param("id"), actorOf(c))
-	if err != nil {
-		h.fail(c, err)
-		return
-	}
-	ResData(c, http.StatusOK, "SUCCESS", "", o)
 }
 
 type createServiceReq struct {

@@ -11,13 +11,12 @@ type Placement struct {
 // UpdateOffice ใช้ pointer ทุก field เพื่อให้ PATCH แยกออกว่า
 // "ไม่ได้ส่งมา" (nil) กับ "ส่งมาเป็นค่าว่าง/false" ต่างกัน
 type UpdateOffice struct {
-	Label            *string    `json:"label"`
-	AllowedOrigins   *[]string  `json:"allowed_origins"`
-	BackofficeAPIURL *string    `json:"backoffice_api_url"`
-	Enabled          *bool      `json:"enabled"`
-	IsHidden         *bool      `json:"is_hidden"`
-	Theme            *string    `json:"theme"`
-	Placement        *Placement `json:"placement"`
+	Label          *string    `json:"label"`
+	AllowedOrigins *[]string  `json:"allowed_origins"`
+	Enabled        *bool      `json:"enabled"`
+	IsHidden       *bool      `json:"is_hidden"`
+	Theme          *string    `json:"theme"`
+	Placement      *Placement `json:"placement"`
 }
 
 type UpdateService struct {
@@ -31,7 +30,7 @@ type UpdateService struct {
 
 // Bootstrap คือสิ่งเดียวที่ widget ได้เห็น
 //
-// ไม่มี allowlist / backoffice_api_url / รายชื่อ service อื่น อยู่ในนี้
+// ไม่มี allowlist / allowed_origins / รายชื่อ service อื่น อยู่ในนี้
 // server ตัดสินให้เสร็จแล้วคืนมาแค่ enabled/reason
 type Bootstrap struct {
 	Enabled      bool      `json:"enabled"`

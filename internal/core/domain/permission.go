@@ -10,8 +10,8 @@ const (
 	PermOfficeView   = "office.view"
 	PermOfficeEdit   = "office.edit"
 	PermOfficeDelete = "office.delete"
-	PermOfficeRotate = "office.rotate"
 	PermUserManage   = "user.manage"
+	PermAuditView    = "audit.view"
 )
 
 // roleKeyPattern: role key ต้องขึ้นต้นด้วยตัวอักษร a-z แล้วตามด้วย a-z0-9_- ยาว 2-30 ตัว
@@ -55,10 +55,10 @@ func DefaultRoleConfig() RoleConfig {
 		},
 		Matrix: map[string][]string{
 			string(RoleAdmin): {
-				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermOfficeRotate, PermUserManage,
+				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermUserManage, PermAuditView,
 			},
 			string(RoleOperator): {
-				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermOfficeRotate,
+				PermOfficeView, PermOfficeEdit, PermOfficeDelete,
 			},
 			string(RoleViewer): {
 				PermOfficeView,
@@ -80,8 +80,8 @@ func PermissionCatalog() []struct {
 		{Key: PermOfficeView, Label: "ดู office/service"},
 		{Key: PermOfficeEdit, Label: "สร้าง/แก้ office และ service"},
 		{Key: PermOfficeDelete, Label: "ลบ office/service"},
-		{Key: PermOfficeRotate, Label: "เปลี่ยน public key"},
 		{Key: PermUserManage, Label: "จัดการผู้ใช้ และตั้งสิทธิ์ role"},
+		{Key: PermAuditView, Label: "ดูประวัติการทำงานของผู้ใช้"},
 	}
 }
 

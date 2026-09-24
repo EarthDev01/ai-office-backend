@@ -7,11 +7,11 @@ const BUNDLE = resolve(__dirname, '../../static/widget/ai-office.v1.js')
 
 /**
  * ทดสอบเส้นทางที่หน้า office ใช้จริง — โหลด bundle ที่ build แล้วเป็น <script>
- * แล้วดูว่ามันเรียก /api/ai/office/:key/bootstrap และสร้าง widget เองได้ไหม
+ * แล้วดูว่ามันเรียก /api/ai/widget/service/:id/bootstrap และสร้าง widget เองได้ไหม
  *
  * unit test ตัวอื่นเรียก mount() ตรง ๆ จึงไม่ครอบส่วนนี้
  */
-async function boot(payload: unknown, opts: { attrs?: string; key?: string; loggedIn?: boolean; service?: string } = {}) {
+async function boot(payload: unknown, opts: { attrs?: string; loggedIn?: boolean; service?: string } = {}) {
   const win = new Window({ url: 'https://office.example.com/deposit' })
   const doc = win.document
   const calls: string[] = []
@@ -31,8 +31,6 @@ async function boot(payload: unknown, opts: { attrs?: string; key?: string; logg
 
   const code = readFileSync(BUNDLE, 'utf8')
   const s = doc.createElement('script')
-  // inline script ไม่มี .src ให้แกะ key — จำลอง snippet ด้วย data-public-key แทน
-  s.setAttribute('data-public-key', opts.key ?? KEY)
   s.setAttribute('data-api-base', 'https://ai.example.com')
   if (opts.attrs) {
     for (const pair of opts.attrs.split(' ')) {
@@ -46,8 +44,6 @@ async function boot(payload: unknown, opts: { attrs?: string; key?: string; logg
   await new Promise((r) => setTimeout(r, 20))
   return { win, doc, calls }
 }
-
-const KEY = 'pk_demo_local'
 
 const enabled = {
   enabled: true,
@@ -63,10 +59,10 @@ const enabled = {
 }
 
 describe('auto-boot จาก <script>', () => {
-  it('เรียก /api/ai/office/:key/bootstrap แล้วสร้าง widget ขึ้นมาเอง', async () => {
+  it('เรียก /api/ai/widget/service/:id/bootstrap แล้วสร้าง widget ขึ้นมาเอง (snippet ไม่มี key)', async () => {
     const { doc, calls } = await boot(enabled)
 
-    expect(calls.some((u) => u.endsWith(`/api/ai/office/${KEY}/service/K11S/bootstrap`))).toBe(true)
+    expect(calls.some((u) => u.endsWith('/api/ai/widget/service/K11S/bootstrap'))).toBe(true)
     expect(doc.querySelector('[data-ai-office-host]')).not.toBeNull()
     expect(doc.getElementById('office')!.innerHTML).toBe('เนื้อหาเดิม')
   })
@@ -95,19 +91,13 @@ describe('auto-boot จาก <script>', () => {
     // widget เฝ้า session เอง (poll 800ms) — รอให้รอบ poll ทำงาน
     await new Promise((r) => setTimeout(r, 1000))
 
-    expect(calls.some((u) => u.endsWith(`/api/ai/office/${KEY}/service/K11S/bootstrap`))).toBe(true)
+    expect(calls.some((u) => u.endsWith('/api/ai/widget/service/K11S/bootstrap'))).toBe(true)
     expect(doc.querySelector('[data-ai-office-host]')).not.toBeNull()
   })
 
   it('สลับ service แล้ว URL เปลี่ยนตาม โดย snippet ไม่ต้องแก้', async () => {
     const { calls } = await boot(enabled, { service: 'PG99' })
-    expect(calls[0]).toContain(`/api/ai/office/${KEY}/service/PG99/bootstrap`)
-  })
-
-  it('ไม่มี public key → ไม่ยิง API และไม่สร้าง DOM', async () => {
-    const { doc, calls } = await boot(enabled, { key: '' })
-    expect(calls).toHaveLength(0)
-    expect(doc.querySelector('[data-ai-office-host]')).toBeNull()
+    expect(calls[0]).toContain('/api/ai/widget/service/PG99/bootstrap')
   })
 
   it('bootstrap ล้มเหลว → หน้า office ยังอยู่ครบ ไม่พังตาม', async () => {
@@ -120,7 +110,6 @@ describe('auto-boot จาก <script>', () => {
     win.localStorage.setItem('web-service', 'K11S')
 
     const s = win.document.createElement('script')
-    s.setAttribute('data-public-key', KEY)
     s.setAttribute('data-api-base', 'https://ai.example.com')
     s.textContent = readFileSync(BUNDLE, 'utf8')
     win.document.head.appendChild(s)
@@ -128,18 +117,5 @@ describe('auto-boot จาก <script>', () => {
 
     expect(win.document.getElementById('office')!.innerHTML).toBe('เนื้อหาเดิม')
     expect(win.document.querySelector('[data-ai-office-host]')).toBeNull()
-  })
-})
-
-describe('keyFromScriptURL', () => {
-  it('แกะ key จาก URL ของ snippet ได้', async () => {
-    const { keyFromScriptURL } = await import('../src/index')
-    expect(keyFromScriptURL('https://ai.example.com/widget/v1/pk_abc123/ai-office.js')).toBe('pk_abc123')
-    expect(keyFromScriptURL('/widget/v1/pk_xyz/ai-office.js')).toBe('pk_xyz')
-  })
-
-  it('URL ที่ไม่มี key คืนค่าว่าง ไม่พัง', async () => {
-    const { keyFromScriptURL } = await import('../src/index')
-    expect(keyFromScriptURL('https://ai.example.com/ai-office.js')).toBe('')
   })
 })
