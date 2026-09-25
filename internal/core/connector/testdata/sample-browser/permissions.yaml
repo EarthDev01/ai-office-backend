@@ -1,0 +1,5 @@
+rules:
+  withdraw: {any_of: [W_VIEW], menu: รายการถอน, grant_hint: ให้ผู้ดูแลเปิดสิทธิ์เมนูรายการถอน}
+  member: {any_of: [M_VIEW], menu: รายการสมาชิก}
+  logged_in: {logged_in: true}
+  bills: {min_level: 7, menu: บิล}

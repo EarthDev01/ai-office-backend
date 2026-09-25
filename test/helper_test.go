@@ -14,6 +14,7 @@ import (
 	"ai-office-backend/internal/adapter/auth"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
 	"ai-office-backend/internal/adapter/storage/filestore"
+	"ai-office-backend/internal/core/connector"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/service"
 
@@ -83,6 +84,14 @@ func demoOffice() domain.Office {
 
 func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 	t.Helper()
+	return httpgin.NewTestRouter(newDeps(t, seed...))
+}
+
+const chatTicketSecret = "test-chat-ticket-secret"
+
+// newDeps ประกอบ Deps ของ router ทั้งชุด — แชทปิดอยู่ (Chat = nil) ให้ test ที่ต้องใช้ใส่เอง
+func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
+	t.Helper()
 	if len(seed) == 0 {
 		seed = []domain.Office{demoOffice()}
 	}
@@ -113,7 +122,11 @@ func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 		auditSvc,
 		time.Now,
 	)
-	return httpgin.NewTestRouter(httpgin.Deps{
+	conn, err := connector.Load("../connectors/office-v10x")
+	if err != nil {
+		t.Fatalf("load connector: %v", err)
+	}
+	return httpgin.Deps{
 		OfficeService: service.NewOfficeService(repo, auditSvc),
 		Identity:      service.NewIdentityResolver(50 * time.Millisecond),
 		BundlePath:    filepath.Join(t.TempDir(), "missing.js"),
@@ -122,7 +135,10 @@ func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 		Permissions:   permSvc,
 		Audit:         auditSvc,
 		ConsoleToken:  consoleToken,
-	})
+		Relay:         service.NewRelay(),
+		Tickets:       auth.NewChatTicketIssuer(chatTicketSecret, time.Hour),
+		Connector:     conn,
+	}
 }
 
 type req struct {

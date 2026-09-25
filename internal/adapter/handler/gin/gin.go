@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"ai-office-backend/internal/adapter/handler/gin/routes"
+	"ai-office-backend/internal/core/connector"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 	"ai-office-backend/internal/core/service"
@@ -20,7 +21,12 @@ type Deps struct {
 	Permissions   *service.PermissionService
 	Audit         *service.AuditService // nil = ไม่บันทึก/ไม่เปิด endpoint ประวัติ
 	ConsoleToken  string
-	LLM           port.LLMClient // nil = ปิดแชท
+
+	// แชท — Chat.Enabled() = false (ไม่มี LLM) → /chat ตอบ 503 แต่ออกตั๋วได้ตามปกติ
+	Chat      *service.ChatService
+	Relay     *service.Relay
+	Tickets   port.ChatTicketIssuer
+	Connector *connector.Connector
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -60,13 +66,28 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	bootstrap := func(c *gin.Context) { boot.Bootstrap(c, OfficeFrom(c), CallerFrom(c)) }
 
-	chatHandler := routes.NewChatHandler(d.OfficeService, d.LLM)
-	chat := func(c *gin.Context) { chatHandler.Chat(c, OfficeFrom(c), CallerFrom(c)) }
+	chatHandler := routes.NewChatHandler(d.OfficeService, d.Chat, d.Relay, d.Tickets, d.Connector)
 
-	api := r.Group("/api/ai/widget/service/:service_id", widgetAPI...)
+	// page-config ยังไม่ต้องมีตัวตน — มีแค่ที่อยู่ API หลังบ้าน ไม่มีข้อมูลของใคร
+	r.GET("/api/ai/widget/page-config", RejectTenantFields(), ResolveOffice(d.OfficeService),
+		func(c *gin.Context) { chatHandler.PageConfig(c, OfficeFrom(c)) })
+
+	api := r.Group("/api/ai/widget/service/:service_id")
 	{
-		api.GET("/bootstrap", bootstrap)
-		api.POST("/chat", chat)
+		api.GET("/bootstrap", append(widgetAPI, bootstrap)...)
+		api.POST("/browser-session", append(widgetAPI, func(c *gin.Context) {
+			chatHandler.OpenSession(c, OfficeFrom(c), CallerFrom(c))
+		})...)
+
+		// แชทใช้ตั๋ว ไม่ใช้ token ของหน้า office
+		ticketAPI := []gin.HandlerFunc{RejectTenantFields(), ResolveOffice(d.OfficeService), ResolveTicket(d.Tickets)}
+		api.POST("/chat", append(ticketAPI, func(c *gin.Context) {
+			chatHandler.Chat(c, OfficeFrom(c), TicketFrom(c))
+		})...)
+		// ผลจากหลังบ้านได้ถึง 2 MB (+ ซอง JSON)
+		api.POST("/chat/relay/:id", append([]gin.HandlerFunc{LimitBody(service.RelayMaxBody + 64<<10)}, append(ticketAPI, func(c *gin.Context) {
+			chatHandler.Relay(c, OfficeFrom(c), TicketFrom(c))
+		})...)...)
 	}
 	// ██ path เก่าที่มี key (snippet รุ่นก่อน) — key ไม่ถูกใช้แล้ว หา office จาก Origin เหมือนกัน
 	// ลบได้เมื่อไม่มี officeลูกค้า ไหนใช้ snippet เก่าแล้ว

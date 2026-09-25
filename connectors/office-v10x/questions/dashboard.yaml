@@ -1,0 +1,88 @@
+# GET /api/dashboard-summary-select-day (office-api-v10 route/report.go · controller/report.go GetDashboardSummaryALLSelectDayV2)
+# frontend: api-service/report/index.ts getDashboardSummaryTodaySelectDay · DashboardView.vue ส่ง select_day=YYYY-MM-DD~YYYY-MM-DD
+#   (UI ไม่ส่ง service = รวมทุกเว็บ) → connector ส่ง service={service} เสมอ (param ที่ handler รองรับอยู่แล้ว) เพื่อผูกกับเว็บที่เปิดอยู่
+# response data = {dashboard_now, dashboard_before} · ⚠️ dashboard_before.* = ค่าช่วงนี้ − ค่าช่วงก่อน (ส่วนต่าง) ไม่ใช่ยอดช่วงก่อน
+#   ช่วงก่อน = จำนวนวันเท่ากันต่อท้ายก่อนหน้า · profit = ฝาก − ถอน (ไม่หักโบนัส) · อ่าน report_active_user_day อย่างเดียว (แคช Redis ถูก comment)
+questions: [BQ-01, BQ-12]
+tools:
+  - name: dashboard_summary
+    description: >-
+      ยอดฝาก ยอดถอน โบนัส กำไร (ฝากลบถอน ยังไม่หักโบนัส) และจำนวนสมาชิกที่มีรายการ ของเว็บที่เปิดอยู่ ตามวันหรือช่วงวันที่ถาม
+      พร้อมเทียบช่วงก่อนหน้าที่ยาวเท่ากัน (ถามวันนี้ = เทียบเมื่อวาน) · ใช้เมื่อถามยอดวันนี้ ภาพรวม เทียบเมื่อวาน หรือกำไรแบบฝากลบถอนตามช่วงวัน
+      · ไม่ระบุวัน = วันนี้ตามเวลาไทย
+    questions: [BQ-01, BQ-12]
+    permission: dashboard
+    freshness: live
+    input:
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: d
+        method: GET
+        path: /dashboard-summary-select-day
+        query:
+          select_day: "{date:input.date_from|date:today}~{date:input.date_to|date:input.date_from|date:today}"
+          service: "{service}"
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [dashboard_now, dashboard_before]
+          properties:
+            dashboard_now: &sum
+              type: object
+              required: [deposit, withdraw, bonus, profit, count_member_online, count_member_new, count_member_old, profit_per_deposit]
+              properties:
+                deposit: {type: number}
+                withdraw: {type: number}
+                bonus: {type: number}
+                profit: {type: number}
+                count_member_online: {type: number}
+                count_member_new: {type: number}
+                count_member_old: {type: number}
+                profit_per_deposit: {type: number}
+            dashboard_before: *sum
+    values:
+      - {name: cur_deposit, from: d, path: dashboard_now.deposit}
+      - {name: cur_withdraw, from: d, path: dashboard_now.withdraw}
+      - {name: cur_bonus, from: d, path: dashboard_now.bonus}
+      - {name: cur_profit, from: d, path: dashboard_now.profit}
+      - {name: cur_ppd, from: d, path: dashboard_now.profit_per_deposit}
+      - {name: cur_new, from: d, path: dashboard_now.count_member_new}
+      - {name: cur_old, from: d, path: dashboard_now.count_member_old}
+      - {name: cur_online, from: d, path: dashboard_now.count_member_online}
+      - {name: diff_deposit, from: d, path: dashboard_before.deposit}
+      - {name: diff_withdraw, from: d, path: dashboard_before.withdraw}
+      - {name: diff_bonus, from: d, path: dashboard_before.bonus}
+      - {name: diff_profit, from: d, path: dashboard_before.profit}
+      - {name: prev_deposit, expr: "cur_deposit - diff_deposit"}
+      - {name: prev_withdraw, expr: "cur_withdraw - diff_withdraw"}
+      - {name: prev_bonus, expr: "cur_bonus - diff_bonus"}
+      - {name: prev_profit, expr: "cur_profit - diff_profit"}
+    card:
+      title: ภาพรวมยอดฝาก-ถอนของเว็บนี้
+      fields:
+        - {label: ยอดฝาก, value: cur_deposit, format: money, suffix: " บาท"}
+        - {label: ยอดถอน, value: cur_withdraw, format: money, suffix: " บาท"}
+        - {label: โบนัส, value: cur_bonus, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝาก − ถอน), value: cur_profit, format: money, suffix: " บาท"}
+        - {label: กำไรต่อยอดฝาก, value: cur_ppd, format: percent}
+        - {label: สมาชิกใหม่ที่มีรายการ, value: cur_new, format: int, suffix: " คน"}
+        - {label: สมาชิกเดิมที่มีรายการ, value: cur_old, format: int, suffix: " คน"}
+        - {label: สมาชิกที่มีรายการทั้งหมด, value: cur_online, format: int, suffix: " คน"}
+        - {label: ยอดฝาก ช่วงก่อนหน้า, value: prev_deposit, format: money, suffix: " บาท"}
+        - {label: ยอดถอน ช่วงก่อนหน้า, value: prev_withdraw, format: money, suffix: " บาท"}
+        - {label: โบนัส ช่วงก่อนหน้า, value: prev_bonus, format: money, suffix: " บาท"}
+        - {label: กำไร ช่วงก่อนหน้า, value: prev_profit, format: money, suffix: " บาท"}
+        - {label: ยอดฝาก เปลี่ยนแปลง, value: diff_deposit, format: money, suffix: " บาท"}
+        - {label: ยอดถอน เปลี่ยนแปลง, value: diff_withdraw, format: money, suffix: " บาท"}
+        - {label: กำไร เปลี่ยนแปลง, value: diff_profit, format: money, suffix: " บาท"}
+      note: >-
+        ยอดของเว็บที่เปิดอยู่เท่านั้น (การ์ดบนของหน้า Dashboard รวมทุกเว็บ) · ช่วงก่อนหน้า = จำนวนวันเท่ากันก่อนวันแรกที่ถาม
+        · กำไรคือยอดฝากลบยอดถอน ยังไม่หักโบนัสและส่วนแบ่ง · ยอดของวันที่ยังไม่จบอัปเดตตามรอบของระบบรายงาน
+      link: {label: เปิด Dashboard, path: /dashboard}
+    model_context:
+      - {name: deposit_up, type: bool, expr: "diff_deposit > 0"}
+      - {name: withdraw_up, type: bool, expr: "diff_withdraw > 0"}
+      - {name: profit_positive, type: bool, expr: "cur_profit > 0"}
+      - {name: profit_up, type: bool, expr: "diff_profit > 0"}
+      - {name: note_numbers, type: text, text: ตัวเลขทั้งหมดอยู่ในการ์ดแล้ว กำไรคือฝากลบถอนยังไม่หักโบนัส ช่วงก่อนหน้ายาวเท่าช่วงที่ถาม}

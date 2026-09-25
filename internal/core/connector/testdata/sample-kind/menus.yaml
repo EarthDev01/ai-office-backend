@@ -1,0 +1,5 @@
+menus:
+  - {id: withdraw, name: รายการถอน, path: /withdraw, permission: withdraw, keywords: [ถอน]}
+  - {id: member, name: รายการสมาชิก, path: /member, permission: member, keywords: [สมาชิก]}
+guides:
+  - {id: add_credit, title: เพิ่มเครดิต, menu: member, steps: [เปิดเมนู, กรอกข้อมูล]}

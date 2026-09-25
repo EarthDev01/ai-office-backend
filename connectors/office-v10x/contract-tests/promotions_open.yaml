@@ -1,0 +1,33 @@
+# response ตาม controller/bonus.go GetBonusList (data[] model.Bonus + count)
+tool: promotions_open
+cases:
+  - name: มีโปรเปิดและปิด
+    responses:
+      b:
+        body:
+          code: 0
+          message: Success
+          count: 3
+          data:
+            - {id: 66f2a1b2c3d4e5f60123cc01, bonus_id: 801, bonus_name: สมาชิกใหม่ 100%, fix_deposit: 100, bonus_percent: 100, bonus_limit: 500, fix_multiple: 5, fix_withdraw: 3000, start_date: "2026-09-01T00:00:00+07:00", end_date: "2026-09-30T00:00:00+07:00", status: 1, order: 1}
+            - {id: 66f2a1b2c3d4e5f60123cc02, bonus_id: 802, bonus_name: ฝากแรกของวัน, fix_deposit: 300, bonus_percent: 10, bonus_limit: 1000, fix_multiple: 2.5, fix_withdraw: 0, start_date: "2026-01-01T00:00:00+07:00", end_date: "0001-01-01T00:00:00Z", status: 1, order: 2}
+            - {id: 66f2a1b2c3d4e5f60123cc03, bonus_id: 803, bonus_name: โปรปิดแล้ว, fix_deposit: 50, bonus_percent: 20, status: 0, order: 3}
+    expect:
+      status: ok
+      calls:
+        b: {path: /bonus-list/DEMO-SVC, query: {sort: order, order: "1", limit: "200", page: "1"}}
+      fields: {เปิดใช้งาน: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - [สมาชิกใหม่ 100%, "100.00", "100", "500.00", "5", "3,000.00", 01/09/2026, 30/09/2026]
+        - [ฝากแรกของวัน, "300.00", "10", "1,000.00", "2.5", "0.00", 01/01/2026]
+      model_context: {has_open: true, may_have_more: false}
+      link: /setting/bonus
+  - name: ไม่มีโปรที่เปิด
+    responses:
+      b: {body: {code: 0, data: [{bonus_name: ปิด, status: 0}], count: 1}}
+    expect: {status: not_found}
+  - name: DB error เขียน JSON สองก้อน = ดึงไม่ได้
+    responses:
+      b: {raw: '{"code":1,"message":"err","data":[]}{"code":0,"message":"Success","data":[],"count":0}'}
+    expect: {status: error, error_code: bad_json}

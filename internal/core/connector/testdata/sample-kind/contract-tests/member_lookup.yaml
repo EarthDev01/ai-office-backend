@@ -1,0 +1,22 @@
+tool: member_lookup
+cases:
+  - name: พบสมาชิก
+    input: {username: somchai99}
+    responses:
+      m: {body: {code: 0, data: {username: somchai99, date_regis: "2026-01-05T03:00:00Z"}}}
+    expect:
+      status: ok
+      calls:
+        m: {query: {username: somchai99}}
+      fields: {ยูสเซอร์เนม: somchai99, วันสมัคร: "05/01/2026 10:00"}
+      link: /member/somchai99
+  - name: host ตอบ 404 = ไม่พบ
+    input: {username: nobody}
+    responses:
+      m: {status: 404, body: {code: 404, message: NOT_FOUND, data: null}}
+    expect: {status: not_found}
+  - name: body code 1 = ไม่พบ
+    input: {username: nobody}
+    responses:
+      m: {body: {code: 1, message: ไม่พบข้อมูล}}
+    expect: {status: not_found}

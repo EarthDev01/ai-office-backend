@@ -163,3 +163,47 @@ func TestOffice_OriginMustBeUniqueAcrossOffices(t *testing.T) {
 		t.Fatalf("normalize/dedupe ผิด: %d %+v", code, o.AllowedOrigins)
 	}
 }
+
+func TestAdmin_HostAPIBase_UsedByPageConfig(t *testing.T) {
+	r := newRouter(t)
+	pageBase := func() string {
+		w := do(t, r, req{method: "GET", path: "/api/ai/widget/page-config", origin: officeOrigin})
+		return payload[struct {
+			HostAPIBase string `json:"host_api_base"`
+		}](t, w).HostAPIBase
+	}
+	if got := pageBase(); got != officeOrigin+"/api" {
+		t.Fatalf("ไม่ได้ตั้งค่า ต้องใช้ {origin}/api ได้ %q", got)
+	}
+
+	code, o := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/demo", `{"host_api_base":" https://API.dev.example/api/ "}`)
+	if code != http.StatusOK || o.HostAPIBase != "https://api.dev.example/api" {
+		t.Fatalf("บันทึก = %d %q", code, o.HostAPIBase)
+	}
+	if got := pageBase(); got != "https://api.dev.example/api" {
+		t.Fatalf("page-config ต้องใช้ค่าที่ตั้งไว้ ได้ %q", got)
+	}
+
+	// ส่งค่าว่าง = ล้าง กลับไปใช้ {origin}/api
+	if code, o := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/demo", `{"host_api_base":""}`); code != http.StatusOK || o.HostAPIBase != "" {
+		t.Fatalf("ล้างค่า = %d %q", code, o.HostAPIBase)
+	}
+	if got := pageBase(); got != officeOrigin+"/api" {
+		t.Fatalf("ล้างแล้วต้องกลับไปใช้ {origin}/api ได้ %q", got)
+	}
+}
+
+func TestAdmin_HostAPIBase_Rejects(t *testing.T) {
+	r := newRouter(t)
+	for name, body := range map[string]string{
+		"ไม่มี scheme": `{"host_api_base":"api.example/api"}`,
+		"มี query":     `{"host_api_base":"https://api.example/api?x=1"}`,
+		"javascript:":  `{"host_api_base":"javascript:alert(1)"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code, _ := admin(t, r, http.MethodPatch, "/api/ai/admin/offices/demo", body); code != http.StatusBadRequest {
+				t.Fatalf("ต้องได้ 400 ได้ %d", code)
+			}
+		})
+	}
+}

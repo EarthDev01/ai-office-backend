@@ -1,0 +1,24 @@
+kind: sample-browser
+label: หลังบ้านทดสอบ (โหมด browser)
+mode: browser
+page_auth:
+  token: {source: localStorage, key: tok, format: raw}
+  service: {source: query, key: svc, encoding: base64}
+  host_api_base: "{origin}/api"
+  session_path: ""
+  identity:
+    source: jwt
+    root: result
+    id: _id
+    username: username
+    display_name: full_name
+    level: level
+    permissions: {path: role.permission, pluck: code, where_field: active, where_value: 1}
+host_api:
+  envelope: {code_field: code, ok_codes: [0], data_field: data, message_field: message}
+  timeout_ms: 3000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support
+facts:
+  - {id: emergency_button, title: ปุ่มฉุกเฉิน, text: หลังบ้านนี้ไม่มีปุ่มสถานการณ์ฉุกเฉิน, keywords: [ฉุกเฉิน]}

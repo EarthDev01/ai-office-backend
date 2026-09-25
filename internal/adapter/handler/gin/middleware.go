@@ -19,6 +19,7 @@ import (
 const (
 	CallerKey = "ai_office_caller"
 	OfficeKey = "ai_office_office"
+	TicketKey = "ai_office_ticket"
 )
 
 // คีย์ที่ห้าม client แอบยัดมาใน body/query/header
@@ -159,6 +160,37 @@ func ResolveCaller(r port.IdentityResolver) gin.HandlerFunc {
 		}
 
 		c.Set(CallerKey, caller)
+		c.Next()
+	}
+}
+
+// ResolveTicket ตรวจตั๋วแชท (Bearer) — ตั๋วต้องออกให้ office เดียวกับโดเมนที่เรียกเข้ามา
+func ResolveTicket(tickets port.ChatTicketIssuer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+		t, err := tickets.Verify(raw)
+		if err != nil || t.OfficeID != OfficeFrom(c).ID {
+			routes.ResData(c, http.StatusUnauthorized, "TICKET_INVALID", "ตั๋วแชทไม่ถูกต้องหรือหมดอายุ — ขอตั๋วใหม่", nil)
+			c.Abort()
+			return
+		}
+		c.Set(TicketKey, t)
+		c.Next()
+	}
+}
+
+func TicketFrom(c *gin.Context) domain.ChatTicket {
+	v, _ := c.Get(TicketKey)
+	t, _ := v.(domain.ChatTicket)
+	return t
+}
+
+// LimitBody จำกัดขนาด body — ต้องอยู่ก่อน RejectTenantFields ที่อ่าน body ทั้งก้อน
+func LimitBody(n int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, n)
+		}
 		c.Next()
 	}
 }

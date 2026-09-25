@@ -1,0 +1,44 @@
+tool: withdraw_find
+cases:
+  - name: พบรายการค้างของยูส (username เป็น regex → กรองตรงตัว)
+    input: {username: user01}
+    responses:
+      l:
+        body:
+          code: 0
+          count: 2
+          data:
+            - {id: 66f2a1b2c3d4e5f601230011, datetime: "2026-09-24T12:00:00+07:00", username: user01, amount: 700, status: 9, bank_code: SCB, operator_name: admin_b, comment: รอ OTP}
+            - {id: 66f2a1b2c3d4e5f601230012, datetime: "2026-09-24T11:00:00+07:00", username: user012, amount: 50, status: 3, bank_code: KBANK}
+    expect:
+      status: ok
+      calls:
+        l: {path: /GetWithdrawStatementv2/DEMO-SVC, query: {username: user01, range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "20", page: "1"}}
+      fields: {พบ: "1 รายการ"}
+      table_rows: 1
+      table_cells:
+        - ["24/09/2026 12:00", user01, "700.00", ได้รับ OTP รอยืนยัน, SCB, admin_b, รอ OTP, 66f2a1b2c3d4e5f601230011]
+      model_context: {statuses: [ได้รับ OTP รอยืนยัน]}
+      link: /transection/withdraw
+  - name: ไม่พบ · ช่วงวันที่ระบุ
+    input: {username: user01, date_from: "2026-09-01", date_to: "2026-09-03"}
+    responses:
+      l: {body: {code: 0, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {range_dt: "2026-09-01 00:00:00~2026-09-03 23:59:59"}}
+  - name: ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    input: {username: user01}
+    responses:
+      l: {body: {code: 0, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: หลังบ้าน timeout
+    input: {username: user01}
+    responses:
+      l: {error: timeout}
+    expect: {status: error, error_code: timeout}

@@ -1,0 +1,37 @@
+# response ตาม controller/withdraw.go GetWithdrawStatementHistory (status ∈ {1,4,11} เมื่อไม่ส่ง withdraw_filter)
+tool: withdraw_history_find
+cases:
+  - name: พบรายการที่จบแล้ว
+    input: {username: user01}
+    responses:
+      h:
+        body:
+          code: 0
+          count: 2
+          data:
+            - {id: 66f2a1b2c3d4e5f601230021, datetime: "2026-09-24T10:00:00+07:00", username: user01, amount: 1500, status: 1, bank_code: KBANK, operator_name: AUTO, comment: ""}
+            - {id: 66f2a1b2c3d4e5f601230022, datetime: "2026-09-24T09:00:00+07:00", username: user01, amount: 200, status: 4, bank_code: KBANK, operator_name: admin_a, comment: ลูกค้าขอยกเลิก}
+    expect:
+      status: ok
+      calls:
+        h: {path: /GetWithdrawStatementHistory/DEMO-SVC, query: {search: user01, username: username, range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "20", page: "1"}}
+      fields: {พบ: "2 รายการ"}
+      table_cells:
+        - ["24/09/2026 10:00", user01, "1,500.00", สำเร็จ, KBANK, AUTO]
+        - ["24/09/2026 09:00", user01, "200.00", ยกเลิก, KBANK, admin_a, ลูกค้าขอยกเลิก]
+      model_context: {statuses: [สำเร็จ, ยกเลิก]}
+      link: /transection/withdraw
+  - name: ไม่พบ · ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    input: {username: user01}
+    responses:
+      h: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        h: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: หลังบ้านตอบ 500
+    input: {username: user01}
+    responses:
+      h: {status: 500, raw: ""}
+    expect: {status: error, error_code: http_error}

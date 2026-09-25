@@ -1,0 +1,24 @@
+# response ตาม controller/credit.go CheckCredit (POST body {username} · data CheckCreditModel)
+tool: member_credit_live
+cases:
+  - name: เช็คเครดิตสำเร็จ
+    input: {username: user01}
+    responses:
+      c: {body: {code: 0, message: Success, data: {OCode: "0", currentCredit: 1520.5, payload: [{code: 1001, name: CREDIT, amount: 1520.5, unit: THB, updated_at: 1790234400}], service: DEMO-SVC, username: user01}, count: 0}}
+    expect:
+      status: ok
+      calls:
+        c: {path: /credit-check/DEMO-SVC, body: {username: user01}}
+      fields: {Username: user01, เครดิตคงเหลือ: "1,520.50"}
+      model_context: {has_credit: true}
+      link: /member/user01
+  - name: ไม่มีสิทธิ์ / ไม่พบยูส / ระบบเกมไม่ตอบ (code 1) = ไม่พบ พร้อมข้อความตามจริง
+    input: {username: nobody}
+    responses:
+      c: {body: {code: 1, message: ไม่พบข้อมูล ยูสน์นี้ในระบบ, data: null}}
+    expect: {status: not_found}
+  - name: token หมดอายุ
+    input: {username: user01}
+    responses:
+      c: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+    expect: {status: error, error_code: host_error}

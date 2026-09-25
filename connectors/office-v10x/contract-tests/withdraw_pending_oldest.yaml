@@ -1,0 +1,42 @@
+tool: withdraw_pending_oldest
+cases:
+  - name: ค้างนานสุดห้ารายการแรก
+    responses:
+      o:
+        body:
+          code: 0
+          message: Success
+          count: 12
+          data:
+            - {id: 66f2a1b2c3d4e5f601230001, datetime: "2026-09-24T01:15:00+07:00", username: u1, amount: 1000, status: 13, operator_name: ระบบ, comment: ไม่แน่ใจว่าโอนแล้ว}
+            - {id: 66f2a1b2c3d4e5f601230002, datetime: "2026-09-24T02:00:00+07:00", username: u2, amount: 200, status: 3, operator_name: "", comment: ""}
+    expect:
+      status: ok
+      calls:
+        o: {path: /GetWithdrawStatementv2/DEMO-SVC, query: {sort: datetime, order: "1", limit: "5", page: "1", range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59"}}
+      fields: {รายการค้างทั้งหมด: "12 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 01:15", u1, "1,000.00", รบกวนตรวจสอบยอดที่ธนาคาร, ระบบ, ไม่แน่ใจว่าโอนแล้ว]
+      model_context: {statuses: [รบกวนตรวจสอบยอดที่ธนาคาร, รอตรวจสอบ]}
+      link: /transection/withdraw
+  - name: สถานะที่ไม่มีในตาราง → การ์ดบอกตามจริง โมเดลไม่เห็นตัวเลข
+    responses:
+      o: {body: {code: 0, count: 1, data: [{datetime: "2026-09-24T01:15:00+07:00", username: u1, amount: 10, status: 99}]}}
+    expect:
+      status: ok
+      table_cells:
+        - ["24/09/2026 01:15", u1, "10.00", "สถานะ 99 (ยังไม่มีคำอธิบาย)"]
+      model_context: {statuses: [สถานะที่ยังไม่มีคำอธิบายในระบบ]}
+  - name: ไม่มีรายการค้าง · ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      o: {body: {code: 0, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        o: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: rate limit / session ถูกปฏิเสธ (HTTP 401)
+    responses:
+      o: {status: 401, body: {code: 1, message: rate limit error}}
+    expect: {status: error, error_code: unauthorized}

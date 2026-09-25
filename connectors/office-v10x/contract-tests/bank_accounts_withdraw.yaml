@@ -1,0 +1,28 @@
+tool: bank_accounts_withdraw
+cases:
+  - name: บัญชีถอนเปิดหนึ่งปิดหนึ่ง
+    responses:
+      b:
+        body:
+          code: 0
+          count: 2
+          data:
+            - {bank_code: KBANK, bank_number: "1234567890", status: 1, is_show: 0, balance: 88000}
+            - {bank_code: SCB, bank_number: "2234567890", status: 0, is_show: 0, balance: 100}
+    expect:
+      status: ok
+      calls:
+        b: {path: /GetBankConfigWithdraw/DEMO-SVC, query: {sort: created_at, order: "-1", limit: "200", page: "1"}}
+      fields: {บัญชีถอนทั้งหมด: "2 บัญชี", เปิดใช้งาน: "1 บัญชี"}
+      table_cells:
+        - [KBANK, "1 บัญชี", "88,000.00"]
+      model_context: {has_active: true}
+      link: /statement/managebank
+  - name: ไม่มีบัญชีถอน (data null)
+    responses:
+      b: {body: {code: 0, data: null, count: 0}}
+    expect: {status: not_found}
+  - name: response ผิดรูป (status เป็นข้อความ)
+    responses:
+      b: {body: {code: 0, data: [{bank_code: KBANK, status: "1", is_show: 1}]}}
+    expect: {status: error, error_code: schema_mismatch}

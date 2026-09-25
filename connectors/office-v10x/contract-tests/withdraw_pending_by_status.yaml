@@ -1,0 +1,62 @@
+# response ตาม controller/withdraw.go GetWithdrawStatementV2 (helper.Response → {code, message, data[], count}) · ไม่ส่ง id = status ∉ {1,4,11}
+tool: withdraw_pending_by_status
+cases:
+  - name: ค้างหลายสถานะ (นับครบ)
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      p:
+        body:
+          code: 0
+          message: Success
+          count: 4
+          data:
+            - {id: 66f2a1b2c3d4e5f601230001, datetime: "2026-09-24T08:10:00+07:00", username: u1, amount: 1000, status: 3, bank_number: "1234567890"}
+            - {id: 66f2a1b2c3d4e5f601230002, datetime: "2026-09-24T09:00:00+07:00", username: u2, amount: 2500.5, status: 13}
+            - {id: 66f2a1b2c3d4e5f601230003, datetime: "2026-09-24T10:00:00+07:00", username: u3, amount: 500, status: 3}
+            - {id: 66f2a1b2c3d4e5f601230004, datetime: "2026-09-24T11:00:00+07:00", username: u4, amount: 300, status: 12}
+    expect:
+      status: ok
+      calls:
+        p: {path: /GetWithdrawStatementv2/DEMO-DEV-OFFICEX-24, query: {range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "1", limit: "300", page: "1"}}
+      fields:
+        รายการค้างทั้งหมด: "4 รายการ"
+        ยอดรวมของรายการที่นับ: "4,300.50 บาท"
+        รายการเก่าสุดสร้างเมื่อ: "24/09/2026 08:10"
+      no_fields: [นับแยกสถานะจากรายการเก่าสุด]
+      table_rows: 3
+      table_cells:
+        - [รอตรวจสอบ, "2 รายการ", "1,500.00"]
+      model_context: {has_pending: true, counted_partially: false, needs_bank_check: true}
+      link: /transection/withdraw
+  - name: ค้างมากกว่าที่ดึงมา (นับแยกสถานะได้บางส่วน)
+    responses:
+      p:
+        body:
+          code: 0
+          count: 350
+          data:
+            - {datetime: "2026-09-24T00:01:00+07:00", username: u1, amount: 100, status: 2}
+    expect:
+      status: ok
+      fields: {รายการค้างทั้งหมด: "350 รายการ", นับแยกสถานะจากรายการเก่าสุด: "1 รายการ"}
+      model_context: {counted_partially: true, statuses: [เตรียมการโอนเงิน]}
+  - name: ไม่มีรายการค้าง
+    input: {date_from: "2026-09-22"}
+    responses:
+      p: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        p: {query: {range_dt: "2026-09-22 00:00:00~2026-09-22 23:59:59"}}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      p: {body: {code: 0, data: null, count: 0}}
+    expect:
+      status: not_found
+      calls:
+        p: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: หลังบ้านตอบ error (code 1 data null ไม่มี count)
+    responses:
+      p: {body: {code: 1, message: "context deadline exceeded", data: null}}
+    expect: {status: error, error_code: schema_mismatch}

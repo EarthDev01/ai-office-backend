@@ -1,0 +1,32 @@
+# get-member-all-count → data {all, current} · member-summary → data {all_member, get_bonus, uncomfirm_account, register_today}
+tool: member_stats
+cases:
+  - name: มีสมาชิกใหม่และยังไม่ยืนยัน
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      c: {body: {code: 0, message: Success, data: {all: 15230, current: 37}}}
+      s: {body: {code: 0, message: Success, data: {all_member: 15300, get_bonus: 800, uncomfirm_account: 412, register_today: 30}}}
+    expect:
+      status: ok
+      calls:
+        c: {path: /get-member-all-count/DEMO-DEV-OFFICEX-24}
+        s: {path: /member-summary/DEMO-DEV-OFFICEX-24}
+      fields:
+        สมาชิกทั้งหมด (ไม่รวมที่ลบ): "15,230 คน"
+        สมัครวันนี้: "37 คน"
+        ยังไม่ยืนยันตัวตน: "412 คน"
+      model_context: {has_new_today: true, has_unverified: true}
+      link: /member/memberlist
+  - name: ยังไม่มีสมาชิกใหม่วันนี้ (ศูนย์จริงจากการนับ)
+    responses:
+      c: {body: {code: 0, data: {all: 10, current: 0}}}
+      s: {body: {code: 0, data: {all_member: 10, get_bonus: 0, uncomfirm_account: 0, register_today: 0}}}
+    expect:
+      status: ok
+      fields: {สมัครวันนี้: "0 คน"}
+      model_context: {has_new_today: false, has_unverified: false}
+  - name: member-summary ล้ม (code 1 Error) = ทั้งการ์ดดึงไม่ได้
+    responses:
+      c: {body: {code: 0, data: {all: 10, current: 1}}}
+      s: {body: {code: 1, message: Error, data: null}}
+    expect: {status: error, error_code: host_error}

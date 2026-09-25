@@ -1,0 +1,121 @@
+# office-v10x → office-api-v10 (module goofficev10) · โหมด browser (ตัดสินใจ 24/09/2026 — ไม่แก้หลังบ้าน)
+# widget ยิง API เดิมที่หน้า v10x ใช้อยู่ (location.origin + "/api") ด้วย token ของแอดมินเอง
+#
+# ที่มา (ตรวจกับโค้ดจริง office-v10x 561548f63 · office-api-v10 e7babdd4 · 24/09/2026):
+#   token   : src/stores/auth.ts setAuthToken → helper.setItemWithExpireV2("auth_token", jwt, exp)
+#             = JSON {value, expiration} · expiration = JWT exp หน่วยวินาที (getItemWithExpireV2 เทียบกับวินาที)
+#   header  : src/services/api-config.ts แนบแค่ "Authorization: Bearer <jwt>" (+ Cache-Control ไม่จำเป็น) → ไม่ต้องมี extra_headers
+#             token ผูก User-Agent (helper.GenAccessSecretJWT) — widget ยิงจาก browser เดียวกันจึงผ่าน
+#   service : src/services/web-service.ts → store ก่อน แล้ว localStorage["web-service"] (ชื่อ service ตรงตัว ไม่เข้ารหัส)
+#   base    : src/services/base-url.ts → prod = location.origin + "/api"
+#   envelope: helper.Response / ResponseV2 → HTTP 200 เสมอ {code, message, data[, count][, summary]} · code 0 = สำเร็จ
+#             auth ล้ม = HTTP 200 {code 401|4011} → ไม่อยู่ใน ok_codes = "ดึงไม่ได้" · rate limit บางเส้น = HTTP 401
+#   identity: JWT claim "result" = model.EmployeeModel (json: id, username, full_name, level, deptcode, role{...})
+#             ⚠️ role.permission ถูกตั้งเป็น null ก่อนเซ็นทุกจุด (controller/employee.go · config.go · callbackLogin.go)
+#             → สิทธิ์จริงอ่านจาก GET /GetPrefixOfficeMainSuperCom/{service} (layouts/mainLayout.vue ใช้เส้นนี้ set permission ของหน้า)
+#               response ระดับบนสุดมี permission[] = Role.Permission ของแอดมิน (controller/config.go GetPrefixOfficeMainMenuSuperCom · อ่านอย่างเดียว)
+#             level = result.level (ตัวเดียวกับที่ router ใช้กั้น /dashboard `result.level < 6`)
+kind: office-v10x
+label: หลังบ้าน v10x
+mode: browser
+page_auth:
+  token: {source: localStorage, key: auth_token, format: json-expiration, value_field: value, expiration_field: expiration}
+  service: {source: localStorage, key: web-service, encoding: none}
+  host_api_base: "{origin}/api"
+  session_path: ""
+  auth_scheme: Bearer
+  identity:
+    source: jwt
+    root: result
+    id: id
+    username: username
+    display_name: full_name
+    level: level
+    dept: deptcode
+    # UI (helper.checkPermission) ให้สิทธิ์เมื่อ Role.Permission[].code ตรง และ action.is_view = true
+    permissions: {path: permission, pluck: code, where_field: action.is_view, where_value: true}
+    permissions_request: /GetPrefixOfficeMainSuperCom/{service}
+host_api:
+  envelope: {code_field: code, ok_codes: [0], data_field: data, message_field: message}
+  timeout_ms: 8000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support ในห้องแชทประจำของเว็บ
+facts:
+  - id: profit_report_not_available
+    title: รายงานกำไรขาดทุนตามช่วงวัน
+    text: >-
+      ผู้ช่วยดึงรายงานหน้า "สรุปกำไรขาดทุน" (หน้า /report/profit) ให้ไม่ได้ เพราะหน้านั้นคำนวณส่วนแบ่ง COMPANY จากระบบเกมทีละวันและบันทึกแคชรายงาน
+      ซึ่งผู้ช่วยไม่เรียกใช้ ดูเองได้ที่เมนูนั้นโดยเลือกช่วงวันที่ต้องการ
+      ถ้ามีสิทธิ์ Dashboard ถามผู้ช่วยเรื่องยอดฝาก ยอดถอน โบนัส และกำไรแบบฝากลบถอน (ยังไม่หักโบนัสและส่วนแบ่ง) ตามช่วงวันได้
+    keywords: [กำไรขาดทุน, กำไร, ขาดทุน, รายงานกำไร, profit, COMPANY, ส่วนแบ่ง]
+    questions: [BQ-12]
+  - id: no_credit_forecast
+    title: คาดการณ์เวลาเครดิตหมด
+    text: >-
+      ระบบเก็บยอดเครดิตเอเจ้นไว้เพียงค่าล่าสุดค่าเดียว ไม่มีประวัติย้อนหลัง จึงประเมินไม่ได้ว่าเครดิตจะหมดเมื่อไหร่
+      ผู้ช่วยบอกได้แค่ยอดคงเหลือล่าสุดที่บันทึกไว้และเวลาที่อัปเดต ดูได้ที่แถบด้านบนของหลังบ้าน "เครดิตเอเจ้นคงเหลือ"
+    keywords: [เครดิตจะหมด, หมดเมื่อไหร่, พอใช้ถึง, คาดการณ์]
+    questions: [BQ-43]
+  - id: agent_credit_snapshot
+    title: ยอดเครดิตเอเจ้นที่ผู้ช่วยแสดง
+    text: >-
+      ยอดเครดิตเอเจ้นที่ผู้ช่วยแสดงคือค่าล่าสุดที่ระบบบันทึกไว้ พร้อมเวลาที่อัปเดต ผู้ช่วยไม่กดรีเฟรชยอดให้
+      เพราะการรีเฟรชจะบันทึกยอดใหม่ลงระบบ ถ้าต้องการยอดล่าสุดจากระบบเกม ให้กดไอคอนรีเฟรชข้างยอดเครดิตเอเจ้นที่แถบด้านบนเอง
+    keywords: [รีเฟรชเครดิต, เครดิตล่าสุด, เครดิตไม่อัปเดต, ยอดเครดิตไม่ตรง]
+    questions: [BQ-41]
+  - id: topup_system_credit
+    title: เติมเครดิตระบบ (เครดิตเอเจ้น / SMS)
+    text: >-
+      หลังบ้านนี้ไม่มีหน้าจอสำหรับเติมเครดิตระบบเอง และผู้ช่วยทำรายการแทนไม่ได้
+      ให้ติดต่อทีม support ในห้องแชทประจำของเว็บเพื่อขอเติม ถ้ามีบิลที่ต้องชำระ ดูได้ที่เมนู "บิลค่าใช้จ่าย"
+    keywords: [เติมเครดิตระบบ, เติมเครดิตเอเจ้น, เติม SMS, ซื้อเครดิต]
+    questions: [BQ-45]
+  - id: topup_not_arrived
+    title: เติมเครดิตระบบแล้วยังไม่เข้า
+    text: >-
+      ระบบไม่มีข้อมูลรายการเติมเครดิตระบบให้ผู้ช่วยตรวจ จึงบอกไม่ได้ว่ารายการเติมถึงไหนแล้ว
+      ที่ตรวจได้คือบิลที่ชำระแล้วแต่ยังรอคอนเฟิร์ม (ถามผู้ช่วยว่ามีบิลรอคอนเฟิร์มไหม หรือดูที่เมนู "บิลค่าใช้จ่าย")
+      ถ้าบิลยืนยันแล้วแต่เครดิตยังไม่เข้า ให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [เติมแล้วไม่เข้า, เครดิตไม่เข้า, จ่ายแล้วไม่เข้า]
+    questions: [BQ-46]
+  - id: no_ip_answer
+    title: IP ของผู้ทำรายการ
+    text: >-
+      ผู้ช่วยไม่แสดง IP ของผู้ทำรายการหรือพนักงาน ถ้าต้องการตรวจว่าใครแก้รายการ
+      ถามผู้ช่วยเรื่องประวัติการทำงานของพนักงานได้ หรือเปิดเมนู "ประวัติการทำงานของพนักงาน" (หน้า /worklog)
+      ประวัติการเข้าระบบของพนักงานระบบบันทึกโดยไม่ระบุเว็บ ผู้ช่วยจึงค้นให้ตามเว็บไม่ได้ ดูได้ที่เมนูเดียวกัน
+    keywords: [IP, ไอพี, เข้าจากที่ไหน, ใครเข้าระบบ, ล็อกอิน]
+    questions: [BQ-06, BQ-35]
+  - id: no_deposit_by_id
+    title: ค้นรายการฝากตามรหัสรายการ
+    text: >-
+      หน้ารายการฝากของหลังบ้านนี้ค้นตามรหัสรายการไม่ได้ ผู้ช่วยจึงค้นรายการฝากได้ด้วยยูสเซอร์เนมและวันที่เท่านั้น
+      รายการถอนค้นด้วยรหัสรายการได้
+    keywords: [รหัสรายการฝาก, เลขรายการฝาก, id ฝาก]
+    questions: [BQ-06]
+  - id: no_online_time
+    title: เวลาออนไลน์ล่าสุดของสมาชิก
+    text: >-
+      ระบบไม่มีเวลาออนไลน์ล่าสุดแบบนาทีของสมาชิก หน้ารายการสมาชิกมีเพียงคอลัมน์ ออนไลน์ ที่บอกว่าสมาชิกมีรายการในเจ็ดวันล่าสุดวันไหนบ้าง
+      ผู้ช่วยแสดงวันสมัคร สถานะบัญชี สถานะฝากเงิน และบัญชีธนาคารของสมาชิก ถ้าต้องการดูวันที่มีรายการให้เปิดหน้าข้อมูลสมาชิก
+    keywords: [ออนไลน์ล่าสุด, เข้าเล่นล่าสุด, last login, ฝากล่าสุด]
+    questions: [BQ-05]
+  - id: emergency_page
+    title: หน้าสถานการณ์ฉุกเฉิน
+    text: >-
+      หลังบ้านนี้มีหน้า "สถานการณ์ฉุกเฉิน" (หน้า /disable) เข้าได้จากปุ่มสีแดงท้ายเมนูด้านซ้าย ทุกคนที่ล็อกอินเข้าได้
+      ในหน้านี้มีปุ่ม DISABLE ซึ่งปิดการใช้งานบัญชีพนักงานของตัวเองแล้วออกจากระบบ และปุ่ม SOS ซึ่งสั่งปิดระบบของเว็บที่เลือกอยู่
+      (หน้าหลังบ้านของเว็บนั้นที่เปิดอยู่จะถูกพาออกจากระบบ) หน้าจอเตือนว่ากดแล้วระบบจะปิดตามตัวเลือกทันที
+      ในหลังบ้านนี้ไม่พบปุ่มเปิดระบบกลับหลังกด SOS
+      ผู้ช่วยไม่กดปุ่มใดแทน และไม่แนะนำให้กด ถ้ามีเหตุฉุกเฉินให้แจ้งหัวหน้าหรือทีม support ในห้องแชทประจำของเว็บก่อน
+    keywords: [ฉุกเฉิน, SOS, ปิดเว็บ, ปิดระบบ, disable, ปุ่มแดง]
+    questions: [BQ-55]
+  - id: assistant_scope
+    title: ผู้ช่วยทำอะไรได้บ้าง
+    text: >-
+      ผู้ช่วยเป็นระบบอัตโนมัติ อ่านข้อมูลหลังบ้านได้อย่างเดียวด้วยสิทธิ์ของผู้ที่ล็อกอินอยู่ เช่น ยอดฝากถอน รายการค้าง ข้อมูลสมาชิก บัญชีธนาคาร
+      โปรโมชั่น เครดิตระบบ และบิล และบอกทางไปเมนูได้ แต่ทำรายการ แก้ค่า หรือเพิ่มเครดิตแทนไม่ได้
+      เรื่องเทคนิคหรือระบบขัดข้องให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [ทำอะไรได้, เป็นใคร, คุยกับคน, ติดต่อ support, ระบบล่ม]
+    questions: [BQ-52, BQ-53, BQ-54, BQ-56]

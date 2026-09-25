@@ -1,0 +1,44 @@
+# response ตาม controller/log.go GetWorklogList (data[] WorkLog · count) — ip / data / data_old ไม่ขึ้นการ์ด
+tool: worklog_search
+cases:
+  - name: ค้นตามยูสสมาชิก
+    service: DEMO-DEV-OFFICEX-24
+    input: {keyword: user01}
+    responses:
+      w:
+        body:
+          code: 0
+          message: Success
+          count: 1
+          data:
+            - {id: 66f2a1b2c3d4e5f60123dd01, datetime: "2026-09-24T13:00:05+07:00", service: DEMO-DEV-OFFICEX-24, action: เพิ่มเครดิต, form: จัดการเครดิต, description: "เพิ่มเครดิต user01", ip: "203.0.113.7", data: [], data_old: null, operator_name: แอดมินเอ, operator_username: admin_a, operator_dept: CS}
+    expect:
+      status: ok
+      calls:
+        w: {path: /worklog-list, query: {service: DEMO-DEV-OFFICEX-24, search: user01, operator_username: "", range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "20", page: "1"}}
+      fields: {พบทั้งหมด: "1 รายการ", แสดงในการ์ด: "1 รายการ"}
+      table_cells:
+        - ["24/09/2026 13:00", เพิ่มเครดิต, จัดการเครดิต, "เพิ่มเครดิต user01", แอดมินเอ]
+      model_context: {more_than_shown: false}
+      link: /worklog
+  - name: กรองพนักงาน ช่วงวัน
+    input: {operator_username: admin_a, date_from: "2026-09-20", date_to: "2026-09-24"}
+    responses:
+      w: {body: {code: 0, count: 60, data: [{datetime: "2026-09-24T13:00:05+07:00", action: แก้ไขโบนัส, form: ตั้งค่าโบนัส, description: แก้ไขโปร, operator_name: แอดมินเอ}]}}
+    expect:
+      status: ok
+      calls:
+        w: {query: {operator_username: admin_a, range_dt: "2026-09-20 00:00:00~2026-09-24 23:59:59"}}
+      model_context: {more_than_shown: true}
+  - name: ไม่พบ · ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      w: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        w: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: token หมดอายุ
+    responses:
+      w: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+    expect: {status: error, error_code: schema_mismatch}

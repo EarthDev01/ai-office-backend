@@ -36,3 +36,17 @@ export const PREVIEW_ALLOWED_FIELDS = [
 
 export type PreviewField = (typeof PREVIEW_ALLOWED_FIELDS)[number]
 export type PreviewConfig = Partial<Pick<Bootstrap, PreviewField>>
+
+/** การ์ดข้อมูลที่ระบบสร้างจากผล API — ค่าทั้งหมดอยู่ที่นี่ ไม่ผ่าน LLM */
+export interface Card {
+  id: string
+  kind: 'ok' | 'not_found' | 'denied' | 'error' | 'reference'
+  tool: string
+  title: string
+  fields: { label: string; display: string }[] | null
+  table?: { columns: { label: string }[]; rows: { display: string }[][] }
+  note?: string
+  fetched_at: string
+  link?: { label: string; path: string }
+  cached?: boolean
+}

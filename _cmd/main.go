@@ -6,16 +6,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/adapter/config"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
+	anthropicllm "ai-office-backend/internal/adapter/llm/anthropic"
 	"ai-office-backend/internal/adapter/llm/gemini"
 	"ai-office-backend/internal/adapter/llm/openaicompat"
 	"ai-office-backend/internal/adapter/storage/filestore"
 	mongodb "ai-office-backend/internal/adapter/storage/mongodb"
 	"ai-office-backend/internal/adapter/storage/mongodb/repository"
+	"ai-office-backend/internal/core/connector"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 	"ai-office-backend/internal/core/service"
@@ -66,6 +69,7 @@ func main() {
 	var cuRepo port.ConsoleUserRepository
 	var rmRepo port.RoleConfigRepository
 	var auditRepo port.AuditRepository
+	var chatRepo port.ChatRepository
 	if cfg.Store.IsMongo() {
 		res, err := mongodb.New(ctx, cfg.Store.URI, cfg.Store.DBName)
 		if err != nil {
@@ -96,6 +100,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] audit log store: สร้าง index ไม่สำเร็จ: %v", err)
 		}
+
+		chatRepo, err = repository.NewChatRepository(ctx, res.DB)
+		if err != nil {
+			log.Fatalf("[ERROR] chat store: สร้าง index ไม่สำเร็จ: %v", err)
+		}
 	} else {
 		var err error
 		// path ของ file store — ใช้เฉพาะโหมด STORE_DRIVER=file (dev/ทดลอง) ไม่ได้มาจาก env
@@ -122,6 +131,13 @@ func main() {
 		auditRepo, err = filestore.NewAuditRepository(auditPath)
 		if err != nil {
 			log.Fatalf("[ERROR] open audit log store: %v", err)
+		}
+
+		chatRepo, err = filestore.NewChatRepository(
+			filepath.Join(filepath.Dir(storePath), "conversations.jsonl"),
+			filepath.Join(filepath.Dir(storePath), "messages.jsonl"))
+		if err != nil {
+			log.Fatalf("[ERROR] open chat store: %v", err)
 		}
 	}
 
@@ -160,18 +176,71 @@ func main() {
 	permSvc := service.NewPermissionService(rmRepo, auditSvc)
 	authSvc := service.NewConsoleAuth(cuRepo, tokens, totpP, tickets, permSvc, auditSvc, time.Now)
 
-	// แชท ██ SPIKE — ไม่มี key = ปิดแชท แต่ระบบส่วนอื่นยังทำงานปกติ
+	// ---- แชท ----
+	//
+	// provider ผิด = ไม่ยอมเปิด server ทุก mode · ไม่มี key = ปิดแชท แต่ระบบส่วนอื่นยังทำงานปกติ
+	if err := cfg.LLM.Validate(); err != nil {
+		log.Fatalf("[ERROR] %v", err)
+	}
 	var llm port.LLMClient
 	switch {
-	case cfg.LLM.Provider == "glm" && cfg.LLM.GLMKey != "":
-		// glm-5.3 ปิดการคิดได้เฉพาะ endpoint coding — ปิดแล้วตอบไวกว่า low ราว 2 เท่า
-		llm = openaicompat.New(cfg.LLM.GLMBaseURL, cfg.LLM.GLMKey, cfg.LLM.GLMModel, map[string]string{"type": "disabled"})
-		fmt.Printf("[INFO] chat LLM: glm · model=%s ✔\n", cfg.LLM.GLMModel)
-	case cfg.LLM.Provider == "gemini" && cfg.LLM.APIKey != "":
+	case cfg.LLM.APIKey == "":
+		fmt.Printf("[WARN] LLM_API_KEY ว่าง (provider=%s) — ปิดแชท (/chat ตอบ 503)\n", cfg.LLM.Provider)
+	case cfg.LLM.Provider == "anthropic":
+		llm = anthropicllm.New(cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Effort)
+	case cfg.LLM.Provider == "gemini":
 		llm = gemini.New(cfg.LLM.APIKey, cfg.LLM.Model)
-		fmt.Printf("[INFO] chat LLM: gemini · model=%s ✔\n", cfg.LLM.Model)
-	default:
-		fmt.Printf("[WARN] LLM_PROVIDER=%s แต่ไม่มี key ของตัวนั้น — ปิดแชท (/chat ตอบ 503)\n", cfg.LLM.Provider)
+	case cfg.LLM.Provider == "openai":
+		// GLM ปิดการคิดได้ผ่าน field thinking — ปิดแล้วตอบไวกว่าราว 2 เท่า · provider อื่นไม่รู้จัก field นี้
+		var thinking map[string]string
+		if strings.Contains(cfg.LLM.BaseURL, "z.ai") || strings.Contains(cfg.LLM.BaseURL, "bigmodel") {
+			thinking = map[string]string{"type": "disabled"}
+		}
+		llm = openaicompat.New(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, thinking)
+	}
+	if llm != nil {
+		fmt.Printf("[INFO] chat LLM: %s · model=%s ✔\n", cfg.LLM.Provider, cfg.LLM.Model)
+		if cfg.LLM.Provider != "anthropic" && !cfg.App.IsDev() {
+			fmt.Printf("[WARN] production ควรใช้ LLM_PROVIDER=anthropic — %s ใช้ทดสอบเท่านั้น\n", cfg.LLM.Provider)
+		}
+	}
+
+	// connector — ผิดแม้ไฟล์เดียวก็ไม่เปิด server · office ทุกเจ้าตอนนี้เป็น office-v10x
+	const connectorsDir, connectorKind = "./connectors", "office-v10x"
+	connectors, err := connector.LoadDir(connectorsDir)
+	if err != nil {
+		log.Fatalf("[ERROR] %v", err)
+	}
+	conn, ok := connectors[connectorKind]
+	if !ok {
+		log.Fatalf("[ERROR] ไม่พบ connector %s ใน %s", connectorKind, connectorsDir)
+	}
+	if !conn.Host.IsBrowser() {
+		// backend ยิงหลังบ้านเองไม่ได้ (Cloudflare + IP whitelist) — รองรับเฉพาะโหมด browser
+		log.Fatalf("[ERROR] connector %s ต้องเป็น mode: browser", connectorKind)
+	}
+	fmt.Printf("[INFO] connector: %s · %d tool · %d เมนู ✔\n", connectorKind, len(conn.Tools), len(conn.Menus.Menus))
+
+	// ตั๋วแชท ██ secret จริงต้องตั้งบน production (เหตุผลเดียวกับ CONSOLE_JWT_SECRET ข้างบน)
+	if os.Getenv("CHAT_TICKET_SECRET") == "" {
+		if !cfg.App.IsDev() {
+			log.Fatal("[ERROR] CHAT_TICKET_SECRET ต้องตั้งค่าก่อนรันบน production")
+		}
+		fmt.Println("[WARN] CHAT_TICKET_SECRET ไม่ได้ตั้งค่า — ใช้ dev secret ชั่วคราว ██ ห้ามใช้บน production")
+	}
+	// ตั๋วอายุ 30 นาที — widget ต่ออายุเองก่อนหมด 60 วิ
+	chatTickets := auth.NewChatTicketIssuer(cfg.Console.ChatTicketSecret, 30*time.Minute)
+	relay := service.NewRelay()
+	var chatSvc *service.ChatService
+	if llm != nil {
+		loc, _ := conn.Location()
+		chatSvc = service.NewChatService(llm, chatRepo, service.NewToolRunner(relay), loc, service.ChatSettings{
+			LLMTimeout:      25 * time.Second,
+			StreamTimeout:   60 * time.Second,
+			MaxOutputTokens: 1024,
+			MaxConcurrent:   5,
+			MonthlyQuota:    0, // ██ ยังไม่มีเพดานค่าใช้จ่าย (O7) — ไม่จำกัด
+		})
 	}
 
 	r := httpgin.NewRouter(httpgin.Deps{
@@ -184,7 +253,10 @@ func main() {
 		Audit:         auditSvc,
 		// break-glass token ปิดอยู่ (ค่าว่าง) — เข้าผ่าน login จริงเท่านั้น
 		ConsoleToken: "",
-		LLM:          llm,
+		Chat:         chatSvc,
+		Relay:        relay,
+		Tickets:      chatTickets,
+		Connector:    conn,
 	})
 
 	addr := ":" + cfg.HTTP.Port

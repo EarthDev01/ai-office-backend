@@ -1,0 +1,79 @@
+# response ตาม controller/report.go GetDashboardSummaryALLSelectDayV2 (helper.Response → {code, message, data})
+# dashboard_before = ค่าช่วงนี้ − ค่าช่วงก่อน (ส่วนต่าง)
+tool: dashboard_summary
+cases:
+  - name: วันนี้เทียบเมื่อวาน
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      d:
+        body:
+          code: 0
+          message: Success
+          data:
+            dashboard_now: {deposit: 152300, withdraw: 98750.5, bonus: 4200, profit: 53549.5, count_member_online: 449, count_member_new: 37, count_member_old: 412, profit_per_deposit: 35.16}
+            dashboard_before: {deposit: 12200, withdraw: -21249.5, bonus: 300, profit: 33449.5, count_member_online: 22, count_member_new: 8, count_member_old: 14, profit_per_deposit: 20.81}
+    expect:
+      status: ok
+      calls:
+        d: {path: /dashboard-summary-select-day, query: {select_day: "2026-09-24~2026-09-24", service: DEMO-DEV-OFFICEX-24}}
+      fields:
+        ยอดฝาก: "152,300.00 บาท"
+        ยอดถอน: "98,750.50 บาท"
+        โบนัส: "4,200.00 บาท"
+        กำไร (ฝาก − ถอน): "53,549.50 บาท"
+        กำไรต่อยอดฝาก: "35.2%"
+        สมาชิกใหม่ที่มีรายการ: "37 คน"
+        สมาชิกที่มีรายการทั้งหมด: "449 คน"
+        ยอดฝาก ช่วงก่อนหน้า: "140,100.00 บาท"
+        ยอดถอน ช่วงก่อนหน้า: "120,000.00 บาท"
+        กำไร ช่วงก่อนหน้า: "20,100.00 บาท"
+        ยอดถอน เปลี่ยนแปลง: "-21,249.50 บาท"
+        กำไร เปลี่ยนแปลง: "33,449.50 บาท"
+      model_context: {deposit_up: true, withdraw_up: false, profit_positive: true, profit_up: true}
+      link: /dashboard
+  - name: ช่วงวันที่ผู้ใช้ระบุ (มีแค่วันแรก → วันสุดท้ายเท่ากับวันแรก) ยอดศูนย์จริง
+    input: {date_from: "2026-09-20"}
+    responses:
+      d:
+        body:
+          code: 0
+          data:
+            dashboard_now: {deposit: 0, withdraw: 0, bonus: 0, profit: 0, count_member_online: 0, count_member_new: 0, count_member_old: 0, profit_per_deposit: 0}
+            dashboard_before: {deposit: 0, withdraw: 0, bonus: 0, profit: 0, count_member_online: 0, count_member_new: 0, count_member_old: 0, profit_per_deposit: 0}
+    expect:
+      status: ok
+      calls:
+        d: {query: {select_day: "2026-09-20~2026-09-20", service: DEMO-SVC}}
+      fields: {ยอดฝาก: "0.00 บาท", ยอดฝาก ช่วงก่อนหน้า: "0.00 บาท"}
+      model_context: {deposit_up: false, profit_positive: false}
+  - name: ช่วงหลายวัน (ถามกำไรตามช่วง BQ-12)
+    input: {date_from: "2026-09-01", date_to: "2026-09-15"}
+    responses:
+      d:
+        body:
+          code: 0
+          data:
+            dashboard_now: {deposit: 1000000, withdraw: 750000, bonus: 20000, profit: 250000, count_member_online: 900, count_member_new: 120, count_member_old: 780, profit_per_deposit: 25}
+            dashboard_before: {deposit: 100000, withdraw: 50000, bonus: 1000, profit: 50000, count_member_online: 40, count_member_new: 10, count_member_old: 30, profit_per_deposit: 2.78}
+    expect:
+      status: ok
+      calls:
+        d: {query: {select_day: "2026-09-01~2026-09-15"}}
+      fields: {กำไร (ฝาก − ถอน): "250,000.00 บาท", กำไร ช่วงก่อนหน้า: "200,000.00 บาท"}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย · หลังบ้านล่ม
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      d: {status: 502, raw: "bad gateway"}
+    expect:
+      status: error
+      error_code: http_error
+      calls:
+        d: {query: {select_day: "2026-09-25~2026-09-25"}}
+  - name: token หมดอายุ (หลังบ้านตอบ HTTP 200 code 401) = ดึงไม่ได้
+    responses:
+      d: {body: {code: 401, message: เซสชั่นหมดอายุ กรุณาเข้าสู่ระบบใหม่}}
+    expect: {status: error, error_code: host_error}
+  - name: response ผิดรูป (ไม่มี dashboard_before) = ดึงไม่ได้
+    responses:
+      d: {body: {code: 0, data: {dashboard_now: {deposit: 1}}}}
+    expect: {status: error, error_code: schema_mismatch}

@@ -1,0 +1,28 @@
+tool: bills_pending_confirm
+cases:
+  - name: มีบิลรอคอนเฟิร์ม
+    responses:
+      b:
+        body:
+          code: 0
+          count: 2
+          data:
+            - {billpayment_id: 1035, title: ค่า SMS, billpayment_name: SMS, total: 3500, status: 4, end_date: "2026-09-15T00:00:00+07:00", service: demo-svc}
+            - {billpayment_id: 1041, title: ค่าบริการรายเดือน, billpayment_name: ค่าบริการ กันยายน, total: 25000, status: 3, end_date: "2026-09-30T00:00:00+07:00", service: demo-svc}
+    expect:
+      status: ok
+      calls:
+        b: {path: /get-bill-payment/DEMO-SVC, query: {sort: created_at, order: "-1", limit: "200", page: "1"}}
+      fields: {รอคอนเฟิร์ม: "1 บิล"}
+      table_cells:
+        - ["1035", ค่า SMS, SMS, "3,500.00", 15/09/2026, จ่ายแล้ว - รอคอนเฟิร์ม, demo-svc]
+      model_context: {has_waiting: true}
+      link: /bill
+  - name: ไม่มีบิลรอคอนเฟิร์ม
+    responses:
+      b: {body: {code: 0, data: [{billpayment_id: 1, total: 1, status: 6}], count: 1}}
+    expect: {status: not_found}
+  - name: หลังบ้านตอบ 502
+    responses:
+      b: {status: 502, raw: ""}
+    expect: {status: error, error_code: http_error}

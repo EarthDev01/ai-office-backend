@@ -79,6 +79,16 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		}
 		o.AllowedOrigins = clean
 	}
+	if p.HostAPIBase != nil {
+		o.HostAPIBase = ""
+		if strings.TrimSpace(*p.HostAPIBase) != "" {
+			v, err := domain.NormalizeHostAPIBase(*p.HostAPIBase)
+			if err != nil {
+				return domain.Office{}, err
+			}
+			o.HostAPIBase = v
+		}
+	}
 	if p.Enabled != nil {
 		o.Enabled = *p.Enabled
 	}

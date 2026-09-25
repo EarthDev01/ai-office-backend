@@ -1,0 +1,99 @@
+# GET /api/get-bill-payment/:service (route/report.go · controller/report.go GetBillPayment)
+#   frontend: api-service/report/index.ts getBillPayment · views/bill/ListView.vue (เมนู navbar บิลค่าใช้จ่าย · SYSTEM_BILL)
+#   UI ส่ง sort=created_at · order=-1 · limit · page · handler ไม่สนใจ :service — ส่งรายชื่อทุกเว็บ (database_config.status=1) ไประบบบิล
+#   → ได้บิลของทุกเว็บใน office นี้ (เหมือนที่หน้าบิลแสดง) = ข้อมูลระดับ office → scope: office · การ์ดแสดงคอลัมน์ service ให้แยกเว็บเอง
+#   data[] {billpayment_id, title, billpayment_name, total, overdue_amount, status 1-6, end_date, service, created_at, ...} · ว่าง = null
+#   ⚠️ ไม่ใช้ GET /bill-payment-status-update/:service (ยืนยันบิลจริง = เส้นเขียน)
+questions: [BQ-44, BQ-46]
+tools:
+  - name: bills_unpaid
+    description: >-
+      บิลค่าใช้จ่ายที่ยังไม่ได้ชำระ (สถานะ รอจ่าย และ ค้างชำระ) พร้อมยอด ยอดค้าง กำหนดชำระ · ใช้เมื่อถามว่ามีบิลค้างชำระไหม
+      · บิลในหน้านี้รวมทุกเว็บของหลังบ้านนี้ ดูคอลัมน์ service
+    questions: [BQ-44]
+    permission: bill
+    freshness: live
+    calls:
+      - id: b
+        method: GET
+        path: /get-bill-payment/{service}
+        query: &bq {sort: created_at, order: "-1", limit: "200", page: "1"}
+        scope: office
+        timeout_ms: 15000
+        schema: &bschema
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [billpayment_id, status, total]
+            properties:
+              billpayment_id: {type: integer}
+              title: {type: string}
+              billpayment_name: {type: string}
+              total: {type: number}
+              overdue_amount: {type: number}
+              status: {type: integer}
+              end_date: {type: string}
+              created_at: {type: string}
+              service: {type: string}
+    values:
+      - {name: rows, from: b, path: "", filter: "item.status == 3 || item.status == 5", sort_by: end_date, order: asc}
+      - {name: unpaid_count, expr: "len(rows)"}
+      - {name: unpaid_total, from: b, path: "", filter: "item.status == 3 || item.status == 5", agg: sum, field: total}
+      - {name: overdue_count, from: b, path: "", filter: "item.status == 5", agg: count}
+    not_found: {when: "empty(rows)", message: ไม่มีบิลที่รอจ่ายหรือค้างชำระ}
+    card:
+      title: บิลที่ยังไม่ได้ชำระ
+      fields:
+        - {label: บิลที่ยังไม่ชำระ, value: unpaid_count, format: int, suffix: " บิล"}
+        - {label: ค้างชำระ (เลยกำหนด), value: overdue_count, format: int, suffix: " บิล"}
+        - {label: ยอดรวม, value: unpaid_total, format: money, suffix: " บาท"}
+      table:
+        rows: rows
+        max_rows: 30
+        columns: &bcols
+          - {label: รายการ, field: billpayment_id}
+          - {label: ประเภท, field: title}
+          - {label: เรื่อง, field: billpayment_name}
+          - {label: ยอดเงิน (บาท), field: total, format: money}
+          - {label: กำหนดชำระ, field: end_date, format: date}
+          - {label: สถานะ, field: status, format: "status:bill"}
+          - {label: service, field: service}
+      note: บิลรวมทุกเว็บของหลังบ้านนี้ตามที่หน้าบิลค่าใช้จ่ายแสดง · ชำระตามรายละเอียดในหน้าบิล
+      link: {label: เปิดบิลค่าใช้จ่าย, path: /bill}
+    model_context:
+      - {name: has_unpaid, type: bool, expr: "unpaid_count > 0"}
+      - {name: has_overdue, type: bool, expr: "overdue_count > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:bill"}
+
+  - name: bills_pending_confirm
+    description: >-
+      บิลที่แจ้งชำระแล้วแต่ยังรอทีมคอนเฟิร์ม (สถานะ จ่ายแล้ว - รอคอนเฟิร์ม) · ใช้เมื่อถามว่าจ่ายบิลหรือเติมเครดิตระบบแล้วทำไมยังไม่เข้า
+      · บอกไม่ได้ว่ารายการเติมเครดิตระบบถึงไหนแล้ว
+    questions: [BQ-46]
+    permission: bill
+    freshness: live
+    calls:
+      - id: b
+        method: GET
+        path: /get-bill-payment/{service}
+        query: *bq
+        scope: office
+        timeout_ms: 15000
+        schema: *bschema
+    values:
+      - {name: rows, from: b, path: "", filter: "item.status == 4"}
+      - {name: waiting_count, expr: "len(rows)"}
+    not_found: {when: "empty(rows)", message: ไม่มีบิลที่รอคอนเฟิร์ม}
+    card:
+      title: บิลที่จ่ายแล้ว รอคอนเฟิร์ม
+      fields:
+        - {label: รอคอนเฟิร์ม, value: waiting_count, format: int, suffix: " บิล"}
+      table:
+        rows: rows
+        max_rows: 30
+        columns: *bcols
+      note: ถ้าบิลยืนยันแล้วแต่เครดิตยังไม่เข้า ให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+      link: {label: เปิดบิลค่าใช้จ่าย, path: /bill}
+    model_context:
+      - {name: has_waiting, type: bool, expr: "waiting_count > 0"}

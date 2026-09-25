@@ -1,6 +1,6 @@
-// Package gemini เรียก Gemini API (generativelanguage.googleapis.com) แบบ streaming
+// Package gemini เรียก Gemini API (generativelanguage.googleapis.com)
 //
-// ██ SPIKE — ยังไม่มี tool / retry / นับ token · key ส่งทาง header ไม่ใส่ใน URL กันหลุดลง log
+// ใช้ทดสอบเท่านั้น — production ใช้ Claude · key ส่งทาง header ไม่ใส่ใน URL กันหลุดลง log
 package gemini
 
 import (
@@ -32,8 +32,24 @@ func New(apiKey, model string) *Client {
 	}}}
 }
 
+type functionCall struct {
+	ID   string         `json:"id,omitempty"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+type functionResponse struct {
+	ID       string         `json:"id,omitempty"`
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
+}
+
 type part struct {
-	Text string `json:"text"`
+	Text             string            `json:"text,omitempty"`
+	Thought          bool              `json:"thought,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
+	FunctionCall     *functionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *functionResponse `json:"functionResponse,omitempty"`
 }
 
 type content struct {
@@ -41,72 +57,162 @@ type content struct {
 	Parts []part `json:"parts"`
 }
 
+type functionDecl struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parametersJsonSchema"`
+}
+
 type request struct {
 	SystemInstruction *content  `json:"systemInstruction,omitempty"`
 	Contents          []content `json:"contents"`
-	GenerationConfig  genConfig `json:"generationConfig"`
+	Tools             []struct {
+		FunctionDeclarations []functionDecl `json:"functionDeclarations"`
+	} `json:"tools,omitempty"`
+	ToolConfig *struct {
+		FunctionCallingConfig struct {
+			Mode string `json:"mode"`
+		} `json:"functionCallingConfig"`
+	} `json:"toolConfig,omitempty"`
+	GenerationConfig genConfig `json:"generationConfig"`
 }
 
 type genConfig struct {
-	ThinkingConfig struct {
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	ThinkingConfig  struct {
 		// minimal = ไม่คิดก่อนตอบ — แชทตอบไวขึ้นเกือบเท่าตัว (วัดได้ ~3.3s เทียบ ~7.5s ของ low)
 		ThinkingLevel string `json:"thinkingLevel"`
 	} `json:"thinkingConfig"`
 }
 
-type chunk struct {
+type response struct {
 	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text    string `json:"text"`
-				Thought bool   `json:"thought"`
-			} `json:"parts"`
-		} `json:"content"`
+		Content content `json:"content"`
 	} `json:"candidates"`
+	UsageMetadata struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+	} `json:"usageMetadata"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-func (c *Client) Stream(ctx context.Context, system string, turns []port.ChatTurn, onDelta func(string) error) error {
-	req := request{Contents: make([]content, 0, len(turns))}
-	if system != "" {
-		req.SystemInstruction = &content{Parts: []part{{Text: system}}}
+func (c *Client) build(req port.LLMRequest) request {
+	r := request{Contents: make([]content, 0, len(req.Messages))}
+	if req.System != "" {
+		r.SystemInstruction = &content{Parts: []part{{Text: req.System}}}
 	}
-	for _, t := range turns {
+	for _, m := range req.Messages {
 		role := "user"
-		if t.Role == "ai" {
+		if m.Role == "assistant" {
 			role = "model"
 		}
-		req.Contents = append(req.Contents, content{Role: role, Parts: []part{{Text: t.Text}}})
+		var parts []part
+		if m.Text != "" {
+			parts = append(parts, part{Text: m.Text})
+		}
+		for _, u := range m.ToolUses {
+			parts = append(parts, part{
+				FunctionCall:     &functionCall{ID: u.ID, Name: u.Name, Args: u.Input},
+				ThoughtSignature: u.Signature, // Gemini 3 ต้องได้ signature เดิมกลับไป ไม่งั้นตอบ 400
+			})
+		}
+		for _, tr := range m.ToolResults {
+			parts = append(parts, part{FunctionResponse: &functionResponse{
+				ID: tr.ToolUseID, Name: tr.Name, Response: map[string]any{"result": tr.Content},
+			}})
+		}
+		r.Contents = append(r.Contents, content{Role: role, Parts: parts})
 	}
-	req.GenerationConfig.ThinkingConfig.ThinkingLevel = "minimal"
+	if len(req.Tools) > 0 {
+		decls := make([]functionDecl, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			decls = append(decls, functionDecl{Name: t.Name, Description: t.Description, Parameters: t.InputSchema})
+		}
+		r.Tools = append(r.Tools, struct {
+			FunctionDeclarations []functionDecl `json:"functionDeclarations"`
+		}{decls})
+		r.ToolConfig = &struct {
+			FunctionCallingConfig struct {
+				Mode string `json:"mode"`
+			} `json:"functionCallingConfig"`
+		}{}
+		r.ToolConfig.FunctionCallingConfig.Mode = "AUTO"
+		if req.ToolChoice == port.ToolChoiceNone {
+			r.ToolConfig.FunctionCallingConfig.Mode = "NONE"
+		}
+	}
+	r.GenerationConfig.MaxOutputTokens = req.MaxTokens
+	r.GenerationConfig.ThinkingConfig.ThinkingLevel = "minimal"
+	return r
+}
 
-	body, err := json.Marshal(req)
+func (c *Client) post(ctx context.Context, method string, r request) (*http.Response, error) {
+	body, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	url := baseURL + c.model + ":streamGenerateContent?alt=sse"
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+c.model+method, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("x-goog-api-key", c.apiKey)
-
 	res, err := c.http.Do(hreq)
 	if err != nil {
-		return fmt.Errorf("gemini: %w", err)
+		return nil, fmt.Errorf("gemini: %w", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 300))
+		return nil, fmt.Errorf("gemini %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return res, nil
+}
+
+func (c *Client) Complete(ctx context.Context, req port.LLMRequest) (port.LLMResponse, error) {
+	res, err := c.post(ctx, ":generateContent", c.build(req))
+	if err != nil {
+		return port.LLMResponse{}, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		var e chunk
-		if json.Unmarshal(raw, &e) == nil && e.Error != nil {
-			return fmt.Errorf("gemini %d: %s", res.StatusCode, e.Error.Message)
-		}
-		return fmt.Errorf("gemini %d", res.StatusCode)
+	var out response
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return port.LLMResponse{}, fmt.Errorf("gemini: decode: %w", err)
 	}
+	if out.Error != nil {
+		return port.LLMResponse{}, fmt.Errorf("gemini: %s", out.Error.Message)
+	}
+	r := port.LLMResponse{Usage: port.LLMUsage{
+		InputTokens: out.UsageMetadata.PromptTokenCount, OutputTokens: out.UsageMetadata.CandidatesTokenCount,
+	}}
+	if len(out.Candidates) > 0 { // ใช้ candidate แรกเท่านั้น
+		for i, p := range out.Candidates[0].Content.Parts {
+			switch {
+			case p.FunctionCall != nil:
+				id := p.FunctionCall.ID
+				if id == "" {
+					id = fmt.Sprintf("call_%d", i)
+				}
+				r.ToolUses = append(r.ToolUses, port.ToolUse{
+					ID: id, Name: p.FunctionCall.Name, Input: p.FunctionCall.Args, Signature: p.ThoughtSignature,
+				})
+			case !p.Thought && p.Text != "":
+				r.Text += p.Text
+			}
+		}
+	}
+	return r, nil
+}
+
+func (c *Client) Stream(ctx context.Context, req port.LLMRequest, onDelta func(string) error) (port.LLMUsage, error) {
+	var u port.LLMUsage
+	res, err := c.post(ctx, ":streamGenerateContent?alt=sse", c.build(req))
+	if err != nil {
+		return u, err
+	}
+	defer res.Body.Close()
 
 	sc := bufio.NewScanner(res.Body)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024) // thoughtSignature ยาวได้หลาย KB ต่อบรรทัด
@@ -115,12 +221,15 @@ func (c *Client) Stream(ctx context.Context, system string, turns []port.ChatTur
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		var ch chunk
+		var ch response
 		if err := json.Unmarshal([]byte(strings.TrimSpace(line[5:])), &ch); err != nil {
 			continue
 		}
 		if ch.Error != nil {
-			return fmt.Errorf("gemini: %s", ch.Error.Message)
+			return u, fmt.Errorf("gemini: %s", ch.Error.Message)
+		}
+		if ch.UsageMetadata.PromptTokenCount > 0 {
+			u = port.LLMUsage{InputTokens: ch.UsageMetadata.PromptTokenCount, OutputTokens: ch.UsageMetadata.CandidatesTokenCount}
 		}
 		for _, cand := range ch.Candidates {
 			for _, p := range cand.Content.Parts {
@@ -128,10 +237,10 @@ func (c *Client) Stream(ctx context.Context, system string, turns []port.ChatTur
 					continue
 				}
 				if err := onDelta(p.Text); err != nil {
-					return err
+					return u, err
 				}
 			}
 		}
 	}
-	return sc.Err()
+	return u, sc.Err()
 }

@@ -19,18 +19,21 @@ import (
 //
 // public_key เลิกใช้ระบุ office แล้ว — เก็บไว้เพราะ Mongo มี unique index อยู่ และ snippet เก่ายังพกมา
 type Office struct {
-	ID             string    `json:"id"                 bson:"_id"`
-	Label          string    `json:"label"              bson:"label"`
-	PublicKey      string    `json:"public_key"         bson:"public_key"`
-	AllowedOrigins []string  `json:"allowed_origins"    bson:"allowed_origins"`
-	Enabled        bool      `json:"enabled"            bson:"enabled"`
-	IsHidden       bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
-	Theme          string    `json:"theme"              bson:"theme"`
-	Placement      Placement `json:"placement"          bson:"placement"`
-	Services       []Service `json:"services"           bson:"services"`
-	CreatedAt      time.Time `json:"created_at"         bson:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"         bson:"updated_at"`
-	UpdatedBy      string    `json:"updated_by"         bson:"updated_by"`
+	ID             string   `json:"id"                 bson:"_id"`
+	Label          string   `json:"label"              bson:"label"`
+	PublicKey      string   `json:"public_key"         bson:"public_key"`
+	AllowedOrigins []string `json:"allowed_origins"    bson:"allowed_origins"`
+	// HostAPIBase — URL API หลังบ้านที่ widget ของ office นี้ยิง · ว่าง = {origin}/api ตาม connector
+	// ใช้กับ office ที่หน้าเว็บกับ API อยู่คนละโดเมน (เช่น หน้า dev ที่ localhost) — ทุกโดเมนของ office นี้ยิงไปที่เดียวกัน
+	HostAPIBase string    `json:"host_api_base" bson:"host_api_base,omitempty"`
+	Enabled     bool      `json:"enabled"            bson:"enabled"`
+	IsHidden    bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
+	Theme       string    `json:"theme"              bson:"theme"`
+	Placement   Placement `json:"placement"          bson:"placement"`
+	Services    []Service `json:"services"           bson:"services"`
+	CreatedAt   time.Time `json:"created_at"         bson:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"         bson:"updated_at"`
+	UpdatedBy   string    `json:"updated_by"         bson:"updated_by"`
 }
 
 // Service คือแบรนด์/เว็บย่อยใต้ office หนึ่ง
@@ -99,6 +102,24 @@ func NormalizeOrigin(raw string) (string, error) {
 		host += ":" + port
 	}
 	return scheme + "://" + host, nil
+}
+
+// NormalizeHostAPIBase ตรวจ URL API หลังบ้าน: http(s)://host[:port][/path] ห้ามมี query, fragment, user:pass
+// คืนค่าที่ตัด / ท้ายแล้ว และ scheme/host เป็นตัวพิมพ์เล็ก
+func NormalizeHostAPIBase(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("URL API ไม่ถูกต้อง — เจอ %q", raw)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("URL API ต้องขึ้นต้นด้วย http:// หรือ https:// — เจอ %q", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", fmt.Errorf("URL API ห้ามมี query, # หรือ user:pass — เจอ %q", raw)
+	}
+	return scheme + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/"), nil
 }
 
 func NewPublicKey() string {

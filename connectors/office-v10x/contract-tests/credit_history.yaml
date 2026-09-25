@@ -1,0 +1,46 @@
+# response ตาม controller/credit.go GetCreditList (helper.ResponseV2 → {code, message, data[], summary, count})
+tool: credit_history
+cases:
+  - name: ประวัติจัดการเครดิตของยูส
+    input: {username: user01}
+    responses:
+      h:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          summary: 700
+          data:
+            - {datetime: "2026-09-24T13:00:00+07:00", username: user01, amount: 0, before_credit: 100, after_credit: 600, operator_name: admin_a, bonus: 500, withdraw_fix: 0, comment: ""}
+            - {datetime: "2026-09-24T09:00:00+07:00", username: user01, amount: 0, before_credit: 0, after_credit: 200, operator_name: admin_b, bonus: 200, withdraw_fix: 0, comment: ""}
+    expect:
+      status: ok
+      calls:
+        h: {path: /get-credit-list/DEMO-SVC, query: {username: user01, range_dt: "2026-09-24 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "20", page: "1"}}
+      fields: {พบทั้งหมด: "2 รายการ", ยอดเครดิตรวม: "700.00 บาท", แสดงในการ์ด: "2 รายการล่าสุด"}
+      table_cells:
+        - ["24/09/2026 13:00", user01, "500.00", "100.00", "600.00", admin_a]
+      model_context: {more_than_shown: false}
+      link: /transection/managecredit?menu=credit
+  - name: ทุกยูส ช่วงวัน มีมากกว่าที่แสดง
+    input: {date_from: "2026-09-01", date_to: "2026-09-10"}
+    responses:
+      h: {body: {code: 0, count: 45, summary: 9000, data: [{datetime: "2026-09-10T20:00:00+07:00", username: u9, before_credit: 0, after_credit: 10, operator_name: admin_a, bonus: 10}]}}
+    expect:
+      status: ok
+      calls:
+        h: {query: {range_dt: "2026-09-01 00:00:00~2026-09-10 23:59:59"}}
+      fields: {พบทั้งหมด: "45 รายการ"}
+      model_context: {more_than_shown: true}
+  - name: ไม่พบ · ข้ามเที่ยงคืน
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      h: {body: {code: 0, message: Success, data: [], count: 0, summary: 0}}
+    expect:
+      status: not_found
+      calls:
+        h: {query: {range_dt: "2026-09-25 00:00:00~2026-09-25 23:59:59"}}
+  - name: หลังบ้าน error (code 1 data null)
+    responses:
+      h: {body: {code: 1, message: err, data: null}}
+    expect: {status: error, error_code: schema_mismatch}

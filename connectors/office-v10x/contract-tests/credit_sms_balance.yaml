@@ -1,0 +1,24 @@
+# response ตาม controller/Agent.go GetBalanceSMS (data = number)
+tool: credit_sms_balance
+cases:
+  - name: มียอด SMS
+    responses:
+      s: {body: {code: 0, message: Success, data: 1520}}
+    expect:
+      status: ok
+      calls:
+        s: {path: /credit-sms-balance/DEMO-SVC}
+      fields: {เครดิต Sms คงเหลือ: "1,520"}
+      model_context: {is_zero: false}
+      link: /
+  - name: ผู้ให้บริการตอบผิดพลาด (หลังบ้านแปลงเป็นศูนย์)
+    responses:
+      s: {body: {code: 0, message: Success, data: 0}}
+    expect:
+      status: ok
+      fields: {เครดิต Sms คงเหลือ: "0"}
+      model_context: {is_zero: true}
+  - name: อ่าน config ไม่ได้ (code 1)
+    responses:
+      s: {body: {code: 1, message: "mongo: no documents in result", data: null}}
+    expect: {status: error, error_code: host_error}

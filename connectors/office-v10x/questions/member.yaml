@@ -1,0 +1,157 @@
+# GET /api/get-member-list-v3/:service (controller/member.go GetMemberListV3 · rate limit "get-member-list" 100 ครั้ง/60 วิ ต่อพนักงาน)
+#   frontend: api-service/members/index.ts getMemberListV3 · MemberListView.vue ส่ง search=<คำค้น> + selector username=username
+#   (selector = ชื่อ field ตัวเอง) · sort=date_regis · order=-1 · limit · page → regex บน username (escape แล้ว) · กรองตรงตัวใน values
+#   data[] GetMemberData {id, username, phone_number (mask ถ้าไม่มี MEMBER_INFO_PHONENUMBER), full_name, bank_list[], active, topup_status, date_regis, time, count_online}
+#   ⚠️ ไม่ใช้ GetMemberByUsername(V2) — handler อาจเขียน member_account.hydra_adv (goroutine UpdateOneStatement) = ไม่ใช่เส้นอ่านอย่างเดียว
+# GET /api/get-member-all-count/:service (controller/member.go GetMemberAllCount) · frontend getMemberAllCount (MemberListView.vue)
+#   data {all: สมาชิกที่ active ≠ ลบ, current: สมัครวันนี้ตามเวลาของ server}
+# GET /api/member-summary/:service (controller/member.go MemberSummary) · frontend getMemberSummary (มีใน api-service แต่ไม่มีหน้าจอเรียก)
+#   data {all_member, get_bonus, uncomfirm_account (active = ยังไม่ยืนยันตัวตน · สะกดตามโค้ด), register_today (ตัดวันแบบ UTC — ไม่ใช้)}
+# GET /api/bank-member/check-approve/:service (controller/approveBank.go CheckApproveBankNow) · frontend getBankMemberListCount
+#   data = จำนวนบัญชีธนาคารสมาชิกที่ bank_list.status รออนุมัติ (ไม่นับสมาชิกที่ลบ/ปิดกั้น) · ⚠️ DB error ถูกกลืนเป็น 0
+questions: [BQ-05, BQ-07, BQ-08, BQ-09]
+tools:
+  - name: member_lookup
+    description: >-
+      ข้อมูลสมาชิกรายคนตามยูสเซอร์เนม (ตรงตัว): วันสมัคร สถานะบัญชี (ยืนยันตัวตนหรือยัง) สถานะฝากเงิน และบัญชีธนาคารที่ผูกไว้พร้อมสถานะอนุมัติ
+      · ไม่มีเวลาออนไลน์ล่าสุดแบบนาที · ไม่แสดงเบอร์โทรและเลขบัญชี
+    questions: [BQ-05]
+    permission: member
+    freshness: summary
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: l
+        method: GET
+        path: /get-member-list-v3/{service}
+        query:
+          search: "{input.username}"
+          username: username
+          sort: date_regis
+          order: "-1"
+          limit: "10"
+          page: "1"
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [username, active, topup_status, date_regis]
+            properties:
+              username: {type: string}
+              full_name: {type: string}
+              active: {type: integer}
+              topup_status: {type: integer}
+              date_regis: {type: string}
+              bank_list:
+                type: array
+                nullable: true
+                items:
+                  type: object
+                  properties:
+                    bank_code: {type: string}
+                    bank_name: {type: string}
+                    Status: {type: integer}
+                    verify_status: {type: string}
+    values:
+      - {name: mem, from: l, path: "", filter: "lower(item.username) == lower(input.username)", agg: first}
+      - {name: m_user, expr: "mem.username"}
+      - {name: m_name, expr: "mem.full_name"}
+      - {name: m_regis, expr: "mem.date_regis"}
+      - {name: m_active, expr: "mem.active"}
+      - {name: m_topup, expr: "mem.topup_status"}
+      - {name: m_banks, expr: "mem.bank_list"}
+      - {name: bank_count, expr: "len(m_banks)"}
+    not_found: {when: "empty(mem)", message: ไม่พบสมาชิกยูสเซอร์เนมนี้ในเว็บนี้}
+    card:
+      title: ข้อมูลสมาชิก
+      fields:
+        - {label: Username, value: m_user}
+        - {label: ชื่อ, value: m_name, when: "!empty(m_name)"}
+        - {label: วันที่สมัคร, value: m_regis, format: datetime}
+        - {label: สถานะ, value: m_active, format: "status:member_active"}
+        - {label: สถานะฝากเงิน, value: m_topup, format: "status:member_topup"}
+        - {label: บัญชีธนาคาร, value: bank_count, format: int, suffix: " บัญชี"}
+      table:
+        rows: m_banks
+        columns:
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ชื่อบัญชี, field: bank_name}
+          - {label: สถานะบัญชี, field: Status, format: "status:member_bank"}
+      note: ไม่แสดงเบอร์โทรและเลขบัญชี ดูได้ที่หน้าข้อมูลสมาชิก (ต้องมีสิทธิ์ดูเบอร์โทร)
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: verified, type: bool, expr: "m_active == 1"}
+      - {name: blocked, type: bool, expr: "m_active == 99"}
+      - {name: has_deposited, type: bool, expr: "m_topup != 0"}
+      - {name: has_bank_account, type: bool, expr: "bank_count > 0"}
+
+  - name: member_stats
+    description: >-
+      จำนวนสมาชิกของเว็บ ณ ตอนนี้: สมาชิกทั้งหมด (ไม่รวมที่ลบ) สมาชิกที่สมัครวันนี้ และสมาชิกที่ยังไม่ยืนยันตัวตน
+      · ใช้เมื่อถามสมาชิกใหม่วันนี้ หรือยังไม่ยืนยันตัวตนกี่คน · ระบุวันอื่นไม่ได้ (หลังบ้านนับได้เฉพาะวันนี้)
+    questions: [BQ-07, BQ-08]
+    permission: member
+    freshness: summary
+    calls:
+      - id: c
+        method: GET
+        path: /get-member-all-count/{service}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [all, current]
+          properties:
+            all: {type: integer}
+            current: {type: integer}
+      - id: s
+        method: GET
+        path: /member-summary/{service}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [uncomfirm_account]
+          properties:
+            uncomfirm_account: {type: integer}
+    values:
+      - {name: all_members, from: c, path: all}
+      - {name: new_today, from: c, path: current}
+      - {name: unverified, from: s, path: uncomfirm_account}
+    card:
+      title: จำนวนสมาชิก
+      fields:
+        - {label: สมาชิกทั้งหมด (ไม่รวมที่ลบ), value: all_members, format: int, suffix: " คน"}
+        - {label: สมัครวันนี้, value: new_today, format: int, suffix: " คน"}
+        - {label: ยังไม่ยืนยันตัวตน, value: unverified, format: int, suffix: " คน"}
+      note: สมัครวันนี้นับตามวันของเซิร์ฟเวอร์หลังบ้าน · ยังไม่ยืนยันตัวตน = ยังไม่ยืนยันผ่านเบอร์หรือบัญชีธนาคาร
+      link: {label: เปิดรายการสมาชิก, path: /member/memberlist}
+    model_context:
+      - {name: has_new_today, type: bool, expr: "new_today > 0"}
+      - {name: has_unverified, type: bool, expr: "unverified > 0"}
+
+  - name: bank_member_pending
+    description: จำนวนบัญชีธนาคารของสมาชิกที่รออนุมัติอยู่ตอนนี้ (หน้าอนุมัติบัญชีสมาชิก)
+    questions: [BQ-09]
+    permission: member_approve_bank
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /bank-member/check-approve/{service}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema: {type: integer}
+    values:
+      - {name: pending, from: b, path: ""}
+    not_found: {when: "pending == 0", message: ไม่มีบัญชีธนาคารของสมาชิกที่รออนุมัติ}
+    card:
+      title: บัญชีสมาชิกที่รออนุมัติ
+      fields:
+        - {label: รออนุมัติ, value: pending, format: int, suffix: " บัญชี"}
+      link: {label: เปิดอนุมัติบัญชีสมาชิก, path: /member/approvebank}
+    model_context:
+      - {name: has_pending, type: bool, expr: "pending > 0"}

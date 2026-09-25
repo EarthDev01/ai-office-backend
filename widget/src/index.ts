@@ -1,6 +1,8 @@
 import { createShadow, injectFonts } from './shadow'
-import { buildUI, addBubble, addNote, applyPlacement, applyAppearance, type UI } from './ui'
+import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, el, renderCard, scroll, type UI } from './ui'
 import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
+import { ChatSession } from './session'
+import { runChat, ChatError } from './chat'
 
 // data-* ที่ห้ามมาจากหน้าเว็บ — service ที่เปิดอยู่เราอ่านจาก localStorage ของ office เอง
 // (data-public-key ไม่อยู่ในนี้ เพราะมันระบุแค่ว่าหน้านี้เป็นของ office ไหน)
@@ -63,16 +65,10 @@ interface State {
   cfg: Bootstrap
   preview: boolean
   apiBase: string
-  history: ChatTurn[] // บทสนทนาในห้องนี้ — ส่งไปทั้งก้อนทุกครั้ง (server ยังไม่เก็บ session)
+  session: ChatSession
+  conversationID: string // ห้องแชทฝั่ง server — ว่าง = ข้อความถัดไปเปิดห้องใหม่
   busy: boolean
 }
-
-interface ChatTurn {
-  role: 'user' | 'ai'
-  text: string
-}
-
-const CHAT_MAX_TURNS = 40 // ต้องไม่เกิน chatMaxTurns ของ server
 
 let state: State | null = null
 
@@ -131,14 +127,20 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   injectFonts(root)
 
   const ui = buildUI(root)
-  state = { ui, host, cfg, preview, apiBase, history: [], busy: false }
+  const session = new ChatSession(apiBase, readOfficeToken)
+  state = { ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false }
 
   render(cfg)
 
   ui.launcher.addEventListener('click', () => toggle())
   ui.send.addEventListener('click', () => send(opts))
   ui.input.addEventListener('keydown', (e) => {
-    if ((e as KeyboardEvent).key === 'Enter') send(opts)
+    const k = e as KeyboardEvent
+    // Enter = ส่ง · Shift+Enter = ขึ้นบรรทัด · กำลังพิมพ์ภาษาไทยด้วย IME อย่าส่ง
+    if (k.key === 'Enter' && !k.shiftKey && !k.isComposing) {
+      k.preventDefault()
+      void send(opts)
+    }
   })
 
   if (preview) {
@@ -161,7 +163,7 @@ function render(cfg: Bootstrap) {
 
   state.ui.log.textContent = ''
   if (cfg.greeting) addBubble(state.ui.log, 'ai', cfg.greeting)
-  addNote(state.ui.log, 'ยังต่อกับข้อมูลจริงไม่ได้ — รอบนี้ทดสอบการติดตั้งและการตั้งค่าเท่านั้น')
+  if (state.preview) addSys(state.ui.log, MESSAGES.preview)
 }
 
 function onPreviewMessage(ev: MessageEvent) {
@@ -254,9 +256,16 @@ function toggle(open?: boolean) {
   if (next) state.ui.input.focus()
 }
 
+/** ข้อความที่ผู้ใช้เห็นเมื่อเรียกผู้ช่วยไม่สำเร็จ และ server ไม่ได้ส่งข้อความมาเอง */
+const MESSAGES = {
+  preview: 'โหมดตัวอย่าง — ไม่ได้ส่งคำถามจริง',
+  unavailable: 'ผู้ช่วยไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ภายหลัง',
+  empty: '(ไม่มีคำตอบ)',
+}
+
 async function send(opts: MountOptions) {
   const s = state
-  if (!s || s.busy) return
+  if (!s || s.busy || s.ui.input.disabled) return
   const text = s.ui.input.value.trim()
   if (!text) return
   s.ui.input.value = ''
@@ -264,71 +273,57 @@ async function send(opts: MountOptions) {
 
   // preview (หน้า console) ไม่มี session ของ office — ไม่ยิงแชทจริง
   if (s.preview) {
-    addBubble(s.ui.log, 'ai', 'นี่คือตัวอย่างหน้าตา — แชทจริงใช้ได้ในหน้า office ที่ล็อกอินแล้ว')
+    addBubble(s.ui.log, 'ai', MESSAGES.preview)
     return
   }
 
-  s.history.push({ role: 'user', text })
-  const turns = s.history.slice(-CHAT_MAX_TURNS)
-  const url = `${s.apiBase}/api/ai/widget/service/${encodeURIComponent(readOfficeService())}/chat`
-  opts.onFetch?.({ url, body: { messages: turns } })
+  const service = readOfficeService()
+  opts.onFetch?.({ url: `${s.apiBase}/api/ai/widget/service/${encodeURIComponent(service)}/chat`, body: { text } })
 
   s.busy = true
   s.ui.send.disabled = true
-  const bubble = addBubble(s.ui.log, 'ai', '…')
-  let answer = ''
+  const loader = addLoader(s.ui.log, 'กำลังส่งคำถาม…')
+  // ฟองคำตอบสร้างเมื่อมีของให้โชว์ครั้งแรก — การ์ดอยู่ในฟองเดียวกับข้อความของ AI
+  let txt: HTMLElement | null = null
+  let cards: HTMLElement | null = null
+  const ensure = () => {
+    if (txt) return
+    const bubble = addBubble(s.ui.log, 'ai', '')
+    txt = bubble.querySelector('.txt')
+    cards = el('div', 'cards')
+    bubble.appendChild(cards)
+  }
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${readOfficeToken()}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: turns }),
+    s.conversationID = await runChat({
+      apiBase: s.apiBase,
+      service,
+      session: s.session,
+      readToken: readOfficeToken,
+      conversationID: s.conversationID,
+      text,
+      on: {
+        status: (t) => loader.set(t || 'กำลังทำงาน…'),
+        card: (card) => {
+          ensure()
+          cards!.appendChild(renderCard(card))
+          scroll(s.ui.log)
+        },
+        token: (t) => {
+          loader.remove()
+          ensure()
+          txt!.textContent = (txt!.textContent ?? '') + t
+          scroll(s.ui.log)
+        },
+      },
     })
-    if (!res.ok || !res.body) {
-      const json = (await res.json().catch(() => null)) as { message?: string; error?: string } | null
-      throw new Error(json?.error || `เซิร์ฟเวอร์ตอบ ${res.status}`)
-    }
-    await readSSE(res.body, (event, data) => {
-      if (event === 'delta') {
-        answer += (data as { text?: string }).text ?? ''
-        bubble.textContent = answer
-        s.ui.log.scrollTop = s.ui.log.scrollHeight
-      } else if (event === 'error') {
-        throw new Error((data as { message?: string }).message || 'ผู้ช่วยตอบไม่สำเร็จ')
-      }
-    })
-    if (answer) s.history.push({ role: 'ai', text: answer })
-    else bubble.textContent = '(ไม่มีคำตอบ)'
+    if (!txt) addBubble(s.ui.log, 'ai', MESSAGES.empty)
   } catch (e) {
-    // คำถามที่ตอบไม่สำเร็จไม่เก็บไว้ในประวัติ — ไม่งั้นรอบหน้าจะมี user ติดกัน 2 ข้อความ
-    s.history.pop()
-    bubble.textContent = answer || '⚠︎ ' + (e as Error).message
+    const msg = e instanceof ChatError ? e.message : MESSAGES.unavailable
+    addBubble(s.ui.log, 'ai', msg, 'err')
   } finally {
+    loader.remove()
     s.busy = false
     s.ui.send.disabled = false
-  }
-}
-
-/** อ่าน text/event-stream จาก fetch — EventSource ใช้ไม่ได้เพราะต้อง POST + ส่ง Authorization */
-async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: unknown) => void) {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let i: number
-    while ((i = buf.indexOf('\n\n')) >= 0) {
-      const block = buf.slice(0, i)
-      buf = buf.slice(i + 2)
-      let event = 'message'
-      let data = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) data += line.slice(5).trim()
-      }
-      if (data) onEvent(event, JSON.parse(data))
-    }
   }
 }
 
@@ -351,6 +346,13 @@ function installGlobal() {
     __launcherStyle: () => (state ? state.ui.launcher.style : ({} as CSSStyleDeclaration)),
     __config: () => (state ? { ...state.cfg } : {}),
     __host: () => state?.host ?? null,
+    __send: async (text: string) => {
+      if (!state) return
+      state.ui.input.value = text
+      await send({})
+    },
+    __logText: () => state?.ui.log.textContent ?? '',
+    __conversationID: () => state?.conversationID ?? '',
   }
   Object.defineProperty(window, '__aiOffice', { value: Object.freeze(api), configurable: true })
 }

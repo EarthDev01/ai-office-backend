@@ -1,0 +1,38 @@
+# response ตาม controller/bank.go GetBankConfigDeposit (data[] BankConfig — มี field ลับติดมาด้วย แต่ไม่ขึ้นการ์ด)
+tool: bank_accounts_deposit
+cases:
+  - name: หลายธนาคาร เปิดบ้างปิดบ้าง
+    service: DEMO-DEV-OFFICEX-24
+    responses:
+      b:
+        body:
+          code: 0
+          message: Success
+          count: 4
+          data:
+            - {id: 66f2a1b2c3d4e5f60123bb01, bank_code: KBANK, bank_name: บจก เดโม่, bank_number: "1234567890", status: 1, is_show: 1, balance: 150000.25, open_time: "00:00", close_time: "23:59", access_token: secret-a, device_id: dev-a}
+            - {id: 66f2a1b2c3d4e5f60123bb02, bank_code: KBANK, bank_number: "1234567891", status: 1, is_show: 0, balance: 20000}
+            - {id: 66f2a1b2c3d4e5f60123bb03, bank_code: SCB, bank_number: "2234567890", status: 1, is_show: 1, balance: 5000}
+            - {id: 66f2a1b2c3d4e5f60123bb04, bank_code: BAY, bank_number: "3234567890", status: 0, is_show: 0, balance: 0}
+    expect:
+      status: ok
+      calls:
+        b: {path: /GetBankConfigDeposit/DEMO-DEV-OFFICEX-24, query: {sort: created_at, order: "-1", limit: "200", page: "1"}}
+      fields:
+        บัญชีฝากทั้งหมด: "4 บัญชี"
+        เปิดใช้งาน: "3 บัญชี"
+        เปิดใช้งานและแสดงหน้าเว็บ: "2 บัญชี"
+      table_rows: 2
+      table_cells:
+        - [KBANK, "2 บัญชี", "170,000.25"]
+        - [SCB, "1 บัญชี", "5,000.00"]
+      model_context: {has_active: true, some_hidden: true}
+      link: /statement/managebank
+  - name: ไม่มีบัญชีฝาก (DB ล้มก็ตอบแบบนี้ — code 0 data [])
+    responses:
+      b: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect: {status: not_found}
+  - name: token หมดอายุ
+    responses:
+      b: {body: {code: 401, message: เซสชั่นหมดอายุ}}
+    expect: {status: error, error_code: host_error}

@@ -1,13 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
 )
 
 // Container เก็บเฉพาะค่าที่มาจาก env จริง: APP_MODE, HTTP_PORT, STORE_DRIVER,
-// DB_URI, DB_NAME, CONSOLE_JWT_SECRET, LLM_* / GLM_* · ค่าคงที่อื่น ๆ (CORS origin, TTL, timeout,
+// DB_URI, DB_NAME, CONSOLE_JWT_SECRET, CHAT_TICKET_SECRET, LLM_* · ค่าคงที่อื่น ๆ (CORS origin, TTL, timeout,
 // path ของ file store) ไม่ได้อยู่ตรงนี้ — ฝังไว้ที่จุดใช้ใน _cmd/main.go แทน
 type Container struct {
 	App     *App
@@ -17,17 +18,38 @@ type Container struct {
 	LLM     *LLM
 }
 
-// LLM ██ SPIKE — Provider เลือกตัวที่ใช้ตอบ (gemini | glm) · key ว่าง = ปิดแชท (endpoint ตอบ 503)
-// ตัวจริงจะเป็น Claude — gemini/glm มีไว้ทดสอบเท่านั้น · key ทุกตัว ██ secret ห้าม log
+// LLM เลือกตัวที่ใช้ตอบแชท · key ว่าง = ปิดแชท (endpoint ตอบ 503) · key ██ secret ห้าม log
+//
+//	anthropic  Claude — ตัวที่ใช้บน production
+//	gemini     ทดสอบเท่านั้น
+//	openai     API แบบ Chat Completions (เช่น GLM ของ z.ai) ทดสอบเท่านั้น · ต้องตั้ง LLM_BASE_URL
 type LLM struct {
 	Provider string
+	APIKey   string
+	Model    string
+	BaseURL  string // openai เท่านั้น — key ของ GLM Coding Plan ใช้ได้เฉพาะ /api/coding/paas/v4
+	Effort   string // anthropic เท่านั้น
+}
 
-	APIKey string // gemini
-	Model  string // gemini
+// LLMProviders คือค่า LLM_PROVIDER ที่โค้ดรู้จัก — ค่าอื่นต้องไม่ถูกปล่อยผ่านเงียบ ๆ
+var LLMProviders = map[string]bool{"anthropic": true, "gemini": true, "openai": true}
 
-	GLMKey     string
-	GLMModel   string
-	GLMBaseURL string // key ของ Coding Plan ใช้ได้เฉพาะ endpoint /api/coding/paas/v4
+// Validate ตรวจตอนเปิด server ทุก mode — provider ที่พิมพ์ผิดเคยทำให้ตกไปใช้ตัวอื่นด้วย key ผิด
+// แล้วแชทตอบ "ไม่ตอบกลับในเวลาที่กำหนด" ทุกข้อความโดยไม่มีใครรู้สาเหตุ
+func (l *LLM) Validate() error {
+	if !LLMProviders[l.Provider] {
+		return fmt.Errorf("LLM_PROVIDER=%q ไม่รู้จัก — ใช้ได้: anthropic | gemini | openai", l.Provider)
+	}
+	if l.APIKey == "" {
+		return nil // ปิดแชท แต่ระบบส่วนอื่นยังทำงาน
+	}
+	if l.Model == "" {
+		return fmt.Errorf("LLM_MODEL ว่าง (provider=%s)", l.Provider)
+	}
+	if l.Provider == "openai" && l.BaseURL == "" {
+		return fmt.Errorf("LLM_PROVIDER=openai ต้องตั้ง LLM_BASE_URL")
+	}
+	return nil
 }
 
 type App struct {
@@ -50,8 +72,10 @@ func (s *Store) IsMongo() bool { return s.Driver == "mongo" }
 
 // Console = ai-office console auth (JWT session)
 // JWTSecret ██ secret ห้าม log — ใช้เซ็น/ตรวจ session token
+// ChatTicketSecret ██ secret ห้าม log — เซ็นตั๋วแชทของ widget (คนละ secret กับคอนโซล)
 type Console struct {
-	JWTSecret string
+	JWTSecret        string
+	ChatTicketSecret string
 }
 
 func New() (*Container, error) {
@@ -67,14 +91,16 @@ func New() (*Container, error) {
 			URI:    os.Getenv("DB_URI"),
 			DBName: env("DB_NAME", "ai_office"),
 		},
-		Console: &Console{JWTSecret: env("CONSOLE_JWT_SECRET", "dev-console-jwt-secret")},
+		Console: &Console{
+			JWTSecret:        env("CONSOLE_JWT_SECRET", "dev-console-jwt-secret"),
+			ChatTicketSecret: env("CHAT_TICKET_SECRET", "dev-chat-ticket-secret"),
+		},
 		LLM: &LLM{
-			Provider:   env("LLM_PROVIDER", "gemini"),
-			APIKey:     os.Getenv("LLM_API_KEY"),
-			Model:      env("LLM_MODEL", "gemini-3.6-flash"),
-			GLMKey:     os.Getenv("GLM_API_KEY"),
-			GLMModel:   env("GLM_MODEL", "glm-5.3"),
-			GLMBaseURL: env("GLM_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+			Provider: env("LLM_PROVIDER", "anthropic"),
+			APIKey:   os.Getenv("LLM_API_KEY"),
+			Model:    os.Getenv("LLM_MODEL"),
+			BaseURL:  os.Getenv("LLM_BASE_URL"),
+			Effort:   env("LLM_EFFORT", "low"),
 		},
 	}, nil
 }

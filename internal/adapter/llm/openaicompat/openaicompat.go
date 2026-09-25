@@ -1,6 +1,6 @@
-// Package openaicompat เรียก LLM ที่ใช้ Chat Completions แบบ OpenAI (เช่น GLM ของ z.ai) แบบ streaming
+// Package openaicompat เรียก LLM ที่ใช้ Chat Completions แบบ OpenAI (เช่น GLM ของ z.ai)
 //
-// ██ SPIKE — ยังไม่มี tool / retry / นับ token
+// ใช้ทดสอบเท่านั้น — production ใช้ Claude
 package openaicompat
 
 import (
@@ -33,68 +33,160 @@ func New(baseURL, apiKey, model string, thinking map[string]string) *Client {
 	}
 }
 
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+type tool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Parameters  map[string]any `json:"parameters"`
+	} `json:"function"`
 }
 
 type request struct {
-	Model    string            `json:"model"`
-	Stream   bool              `json:"stream"`
-	Messages []message         `json:"messages"`
-	Thinking map[string]string `json:"thinking,omitempty"`
+	Model         string            `json:"model"`
+	Stream        bool              `json:"stream"`
+	Messages      []message         `json:"messages"`
+	Tools         []tool            `json:"tools,omitempty"`
+	ToolChoice    string            `json:"tool_choice,omitempty"`
+	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Thinking      map[string]string `json:"thinking,omitempty"`
+	StreamOptions map[string]bool   `json:"stream_options,omitempty"`
 }
 
-type chunk struct {
-	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-			// reasoning_content = ความคิดของ model — ไม่ส่งให้ผู้ใช้
-		} `json:"delta"`
-	} `json:"choices"`
-	Error *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
+type usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
-func (c *Client) Stream(ctx context.Context, system string, turns []port.ChatTurn, onDelta func(string) error) error {
-	req := request{Model: c.model, Stream: true, Thinking: c.thinking, Messages: make([]message, 0, len(turns)+1)}
-	if system != "" {
-		req.Messages = append(req.Messages, message{Role: "system", Content: system})
+type apiError struct {
+	Code    any    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (c *Client) build(req port.LLMRequest, stream bool) request {
+	r := request{Model: c.model, Stream: stream, Thinking: c.thinking, MaxTokens: req.MaxTokens}
+	if req.System != "" {
+		r.Messages = append(r.Messages, message{Role: "system", Content: req.System})
 	}
-	for _, t := range turns {
-		role := "user"
-		if t.Role == "ai" {
-			role = "assistant"
+	for _, m := range req.Messages {
+		if len(m.ToolResults) > 0 {
+			// ผล tool ของ OpenAI เป็นข้อความ role=tool แยกทีละตัว
+			for _, tr := range m.ToolResults {
+				r.Messages = append(r.Messages, message{Role: "tool", ToolCallID: tr.ToolUseID, Content: tr.Content})
+			}
+			if m.Text != "" {
+				r.Messages = append(r.Messages, message{Role: "user", Content: m.Text})
+			}
+			continue
 		}
-		req.Messages = append(req.Messages, message{Role: role, Content: t.Text})
+		msg := message{Role: m.Role, Content: m.Text}
+		for _, u := range m.ToolUses {
+			args, _ := json.Marshal(u.Input)
+			tc := toolCall{ID: u.ID, Type: "function"}
+			tc.Function.Name = u.Name
+			tc.Function.Arguments = string(args)
+			msg.ToolCalls = append(msg.ToolCalls, tc)
+		}
+		r.Messages = append(r.Messages, msg)
 	}
+	for _, t := range req.Tools {
+		var tl tool
+		tl.Type = "function"
+		tl.Function.Name = t.Name
+		tl.Function.Description = t.Description
+		tl.Function.Parameters = t.InputSchema
+		r.Tools = append(r.Tools, tl)
+	}
+	if len(r.Tools) > 0 {
+		r.ToolChoice = req.ToolChoice
+		if r.ToolChoice == "" {
+			r.ToolChoice = port.ToolChoiceAuto
+		}
+	}
+	if stream {
+		r.StreamOptions = map[string]bool{"include_usage": true}
+	}
+	return r
+}
 
-	body, err := json.Marshal(req)
+func (c *Client) post(ctx context.Context, r request) (*http.Response, error) {
+	body, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+c.apiKey)
-
 	res, err := c.http.Do(hreq)
 	if err != nil {
-		return fmt.Errorf("llm: %w", err)
+		return nil, fmt.Errorf("llm: %w", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 300)) // body บอกเหตุผลจริง (เช่น 429 เพราะผิด endpoint)
+		return nil, fmt.Errorf("llm %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return res, nil
+}
+
+func (c *Client) Complete(ctx context.Context, req port.LLMRequest) (port.LLMResponse, error) {
+	res, err := c.post(ctx, c.build(req, false))
+	if err != nil {
+		return port.LLMResponse{}, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		var e chunk
-		if json.Unmarshal(raw, &e) == nil && e.Error != nil {
-			return fmt.Errorf("llm %d: %s %s", res.StatusCode, e.Error.Code, e.Error.Message)
-		}
-		return fmt.Errorf("llm %d", res.StatusCode)
+	var out struct {
+		Choices []struct {
+			Message message `json:"message"`
+		} `json:"choices"`
+		Usage usage     `json:"usage"`
+		Error *apiError `json:"error"`
 	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return port.LLMResponse{}, fmt.Errorf("llm: decode: %w", err)
+	}
+	if out.Error != nil {
+		return port.LLMResponse{}, fmt.Errorf("llm: %v %s", out.Error.Code, out.Error.Message)
+	}
+	r := port.LLMResponse{Usage: port.LLMUsage{InputTokens: out.Usage.PromptTokens, OutputTokens: out.Usage.CompletionTokens}}
+	if len(out.Choices) > 0 {
+		m := out.Choices[0].Message
+		r.Text = m.Content
+		for _, tc := range m.ToolCalls {
+			in := map[string]any{}
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &in)
+			r.ToolUses = append(r.ToolUses, port.ToolUse{ID: tc.ID, Name: tc.Function.Name, Input: in})
+		}
+	}
+	return r, nil
+}
+
+func (c *Client) Stream(ctx context.Context, req port.LLMRequest, onDelta func(string) error) (port.LLMUsage, error) {
+	var u port.LLMUsage
+	res, err := c.post(ctx, c.build(req, true))
+	if err != nil {
+		return u, err
+	}
+	defer res.Body.Close()
 
 	sc := bufio.NewScanner(res.Body)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -105,23 +197,35 @@ func (c *Client) Stream(ctx context.Context, system string, turns []port.ChatTur
 		}
 		data := strings.TrimSpace(line[5:])
 		if data == "[DONE]" {
-			return nil
+			return u, nil
 		}
-		var ch chunk
+		var ch struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+					// reasoning_content = ความคิดของ model — ไม่ส่งให้ผู้ใช้
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *usage    `json:"usage"`
+			Error *apiError `json:"error"`
+		}
 		if err := json.Unmarshal([]byte(data), &ch); err != nil {
 			continue
 		}
 		if ch.Error != nil {
-			return fmt.Errorf("llm: %s %s", ch.Error.Code, ch.Error.Message)
+			return u, fmt.Errorf("llm: %v %s", ch.Error.Code, ch.Error.Message)
+		}
+		if ch.Usage != nil {
+			u = port.LLMUsage{InputTokens: ch.Usage.PromptTokens, OutputTokens: ch.Usage.CompletionTokens}
 		}
 		for _, choice := range ch.Choices {
 			if choice.Delta.Content == "" {
 				continue
 			}
 			if err := onDelta(choice.Delta.Content); err != nil {
-				return err
+				return u, err
 			}
 		}
 	}
-	return sc.Err()
+	return u, sc.Err()
 }
