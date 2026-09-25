@@ -61,18 +61,14 @@ func (h *OfficeHandler) Get(c *gin.Context) {
 	ResData(c, http.StatusOK, "SUCCESS", "", o)
 }
 
-type createOfficeReq struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-}
-
+// Create — POST /offices {id, label, group_id, origin}
 func (h *OfficeHandler) Create(c *gin.Context) {
-	var req createOfficeReq
+	var req domain.CreateOffice
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, err)
 		return
 	}
-	o, err := h.svc.Create(c.Request.Context(), req.ID, req.Label, actorOf(c))
+	o, err := h.svc.Create(c.Request.Context(), req, actorOf(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -142,4 +138,55 @@ func (h *OfficeHandler) RemoveService(c *gin.Context) {
 		return
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", o)
+}
+
+// ---- กลุ่มของ domain ----
+
+func (h *OfficeHandler) Groups(c *gin.Context) {
+	list, err := h.svc.ListGroups(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", gin.H{"data": list})
+}
+
+type groupReq struct {
+	Name string `json:"name"`
+}
+
+func (h *OfficeHandler) CreateGroup(c *gin.Context) {
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.fail(c, err)
+		return
+	}
+	g, err := h.svc.CreateGroup(c.Request.Context(), req.Name, actorOf(c))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	ResData(c, http.StatusCreated, "SUCCESS", "", g)
+}
+
+func (h *OfficeHandler) RenameGroup(c *gin.Context) {
+	var req groupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.fail(c, err)
+		return
+	}
+	g, err := h.svc.RenameGroup(c.Request.Context(), c.Param("gid"), req.Name, actorOf(c))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", g)
+}
+
+func (h *OfficeHandler) DeleteGroup(c *gin.Context) {
+	if err := h.svc.DeleteGroup(c.Request.Context(), c.Param("gid"), actorOf(c)); err != nil {
+		h.fail(c, err)
+		return
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", nil)
 }

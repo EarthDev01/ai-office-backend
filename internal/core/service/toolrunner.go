@@ -14,8 +14,6 @@ import (
 // Emitter ส่ง SSE event ให้ widget — ต้องปลอดภัยเมื่อเรียกพร้อมกันหลาย goroutine
 type Emitter func(event string, data any) error
 
-const defaultCallTimeout = 20 * time.Second
-
 // ToolRun คือผลของ tool 1 ตัว
 //
 // NoCard = input ไม่ผ่าน (ให้ LLM ถามผู้ใช้ใหม่) · Outcome.ModelContext คือสิ่งเดียวที่ LLM เห็นจากผลนี้
@@ -28,13 +26,14 @@ type ToolRun struct {
 // ToolRunner เช็คสิทธิ์ → ตรวจ input → render request จาก template → ยิงผ่าน relay (ขนานกันทุก call)
 // → ถอดซอง/ตรวจ schema → cache (เฉพาะ tool ที่ไม่ใช่ live) → คำนวณการ์ดและ model_context
 type ToolRunner struct {
-	relay *Relay
-	cache *ttlCache
-	now   func() time.Time
+	relay    *Relay
+	cache    *ttlCache
+	settings *SettingsService // timeout เริ่มต้นเมื่อ connector ไม่ได้ตั้ง
+	now      func() time.Time
 }
 
-func NewToolRunner(relay *Relay) *ToolRunner {
-	return &ToolRunner{relay: relay, cache: newTTLCache(), now: time.Now}
+func NewToolRunner(relay *Relay, settings *SettingsService) *ToolRunner {
+	return &ToolRunner{relay: relay, cache: newTTLCache(), settings: settings, now: time.Now}
 }
 
 func (r *ToolRunner) Run(ctx context.Context, conn *connector.Connector, t domain.ChatTicket, tool *connector.Tool,
@@ -145,10 +144,7 @@ func (r *ToolRunner) call(ctx context.Context, conn *connector.Connector, t doma
 		}
 	}
 
-	timeout := defaultCallTimeout
-	if ms := firstPositive(cl.TimeoutMs, conn.Host.HostAPI.TimeoutMs); ms > 0 {
-		timeout = time.Duration(ms) * time.Millisecond
-	}
+	timeout := time.Duration(firstPositive(cl.TimeoutMs, conn.Host.HostAPI.TimeoutMs, r.settings.Get(ctx).ToolTimeoutMs)) * time.Millisecond
 	started := r.now()
 	out, err := r.relay.Fetch(ctx, t.ID, req, timeout, emit)
 	rec.Ms = r.now().Sub(started).Milliseconds()

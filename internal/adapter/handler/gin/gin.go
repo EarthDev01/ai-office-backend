@@ -27,6 +27,16 @@ type Deps struct {
 	Relay     *service.Relay
 	Tickets   port.ChatTicketIssuer
 	Connector *connector.Connector
+	ChatAdmin *service.ChatAdminService // nil = ไม่เปิดหน้าประวัติแชท/ตรวจคำตอบ
+
+	// ChatRepo — ไม่ได้ใช้ใน router · เปิดไว้ให้ test ประกอบ service อื่นบนที่เก็บเดียวกัน
+	ChatRepo port.ChatRepository
+
+	// ตั้งค่าระบบ · การใช้ token · ลบตามคำขอ — nil = ไม่เปิด endpoint ชุดนี้
+	Settings *service.SettingsService
+	Usage    *service.UsageService
+	Deletion *service.DeletionService
+	LLMInfo  routes.LLMInfo
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -130,6 +140,11 @@ func NewRouter(d Deps) *gin.Engine {
 		userManage := RequirePermission(domain.PermUserManage, d.Permissions, audit)
 		auditView := RequirePermission(domain.PermAuditView, d.Permissions, audit)
 
+		admin.GET("/groups", officeView, office.Groups)
+		admin.POST("/groups", officeEdit, office.CreateGroup)
+		admin.PATCH("/groups/:gid", officeEdit, office.RenameGroup)
+		admin.DELETE("/groups/:gid", officeDelete, office.DeleteGroup)
+
 		admin.GET("/offices", officeView, office.List)
 		admin.GET("/offices/:id", officeView, office.Get)
 
@@ -167,6 +182,31 @@ func NewRouter(d Deps) *gin.Engine {
 			roles.POST("", permHandler.AddRole)
 			roles.PATCH("/:key", permHandler.RenameRole)
 			roles.DELETE("/:key", permHandler.DeleteRole)
+		}
+
+		// ประวัติแชท / ตรวจคำตอบ — อ่านแชทข้ามทุกเว็บ ทุกการเปิดอ่านบันทึก access_log
+		if d.ChatAdmin != nil {
+			chats := routes.NewChatAdminHandler(d.ChatAdmin)
+			convRead := RequirePermission(domain.PermConversationRead, d.Permissions, audit)
+			verify := RequirePermission(domain.PermVerificationWrite, d.Permissions, audit)
+			admin.GET("/conversations", convRead, chats.Conversations)
+			admin.GET("/conversations/:id", convRead, chats.Conversation)
+			admin.GET("/verifications/queue", verify, chats.VerificationQueue)
+			admin.POST("/verifications", verify, chats.Verify)
+			admin.GET("/verifications/stats", verify, chats.VerificationStats)
+		}
+
+		if d.Settings != nil && d.Usage != nil && d.Deletion != nil {
+			ops := routes.NewOpsHandler(d.Settings, d.Usage, d.Deletion, d.LLMInfo)
+			usageView := RequirePermission(domain.PermUsageView, d.Permissions, audit)
+			deletion := RequirePermission(domain.PermDeletionManage, d.Permissions, audit)
+			admin.GET("/settings", officeView, ops.GetSettings)
+			admin.PATCH("/settings", RequirePermission(domain.PermSettingsManage, d.Permissions, audit), ops.PatchSettings)
+			admin.GET("/usage", usageView, ops.Usage)
+			admin.GET("/rollups", usageView, ops.Rollups)
+			admin.POST("/deletion-requests", deletion, ops.CreateDeletion)
+			admin.GET("/deletion-requests", deletion, ops.Deletions)
+			admin.GET("/access-log", RequirePermission(domain.PermAccessLogView, d.Permissions, audit), ops.AccessLog)
 		}
 
 		// ประวัติการทำงาน — อ่านอย่างเดียว

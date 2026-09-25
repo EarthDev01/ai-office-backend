@@ -8,14 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
-	"ai-office-backend/internal/adapter/storage/filestore"
 	"ai-office-backend/internal/core/port"
 	"ai-office-backend/internal/core/service"
 )
@@ -53,12 +51,7 @@ type sseEvent struct {
 func chatServer(t *testing.T, llm port.LLMClient) *httptest.Server {
 	t.Helper()
 	d := newDeps(t)
-	repo, err := filestore.NewChatRepository(filepath.Join(t.TempDir(), "c.jsonl"), filepath.Join(t.TempDir(), "m.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	loc, _ := time.LoadLocation("Asia/Bangkok")
-	d.Chat = service.NewChatService(llm, repo, service.NewToolRunner(d.Relay), loc, service.ChatSettings{})
+	d.Chat = service.NewChatService(llm, d.ChatRepo, service.NewToolRunner(d.Relay, d.Settings), time.UTC, d.Settings, d.Usage)
 	srv := httptest.NewServer(httpgin.NewTestRouter(d))
 	t.Cleanup(srv.Close)
 	return srv

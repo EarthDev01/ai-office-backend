@@ -4,7 +4,6 @@ go 1.24
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.75.0
-	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1

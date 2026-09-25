@@ -106,21 +106,27 @@ type ToolCall struct {
 	Error    string `json:"error,omitempty" bson:"error,omitempty"`
 }
 
-// Usage คือ token ที่ใช้ไปทั้งสองรอบของคำตอบ 1 ครั้ง
+// Usage คือ token ที่ใช้ไปทุกรอบของคำตอบ 1 ครั้ง
+//
+// InputTokens ไม่รวม cache · CacheRead = input ที่อ่านจาก prompt cache · CacheWrite = input ที่เขียนลง cache
 type Usage struct {
-	InputTokens  int `json:"input_tokens"  bson:"input_tokens"`
-	OutputTokens int `json:"output_tokens" bson:"output_tokens"`
+	InputTokens  int `json:"input_tokens"          bson:"input_tokens"`
+	OutputTokens int `json:"output_tokens"         bson:"output_tokens"`
+	CacheRead    int `json:"cache_read,omitempty"  bson:"cache_read,omitempty"`
+	CacheWrite   int `json:"cache_write,omitempty" bson:"cache_write,omitempty"`
 }
 
 type Conversation struct {
-	ID        string    `json:"id"         bson:"_id"`
-	OfficeID  string    `json:"office_id"  bson:"office_id"`
-	ServiceID string    `json:"service_id" bson:"service_id"`
-	AdminID   string    `json:"admin_id"   bson:"admin_id"`
-	Username  string    `json:"username"   bson:"username"`
-	Title     string    `json:"title"      bson:"title"`
-	CreatedAt time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
+	ID        string `json:"id"         bson:"_id"`
+	OfficeID  string `json:"office_id"  bson:"office_id"`
+	ServiceID string `json:"service_id" bson:"service_id"`
+	AdminID   string `json:"admin_id"   bson:"admin_id"`
+	Username  string `json:"username"   bson:"username"`
+	Title     string `json:"title"      bson:"title"`
+	// MessageCount +2 ต่อ 1 รอบถาม-ตอบ
+	MessageCount int       `json:"message_count" bson:"message_count"`
+	CreatedAt    time.Time `json:"created_at"    bson:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"    bson:"updated_at"`
 }
 
 // ChatMessage คือข้อความ 1 ชิ้นในห้อง — Role: user | assistant
@@ -140,5 +146,54 @@ type ChatMessage struct {
 	GuardHits      int        `json:"guard_hits,omitempty"       bson:"guard_hits,omitempty"`
 	Category       string     `json:"category,omitempty"         bson:"category,omitempty"`
 	Status         string     `json:"status,omitempty"           bson:"status,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"                 bson:"created_at"`
+	// VerificationStatus — คำตอบที่ตอบสำเร็จเข้าคิวตรวจเป็น pending · ข้อความผู้ใช้/คำตอบที่ล้มไม่ต้องตรวจ ("")
+	VerificationStatus string    `json:"verification_status,omitempty" bson:"verification_status,omitempty"`
+	CreatedAt          time.Time `json:"created_at"                 bson:"created_at"`
+}
+
+// สถานะการตรวจคำตอบ
+const (
+	VerifyPending = "pending"
+	VerifyCorrect = "correct"
+	VerifyWrong   = "wrong"
+)
+
+// VerificationErrorTypes — ประเภทความผิด (ตอบผิดต้องเลือก 1 ใน 5)
+var VerificationErrorTypes = map[string]string{
+	"wrong_number":   "ตัวเลขไม่ตรง",
+	"wrong_question": "ตอบผิดคำถาม",
+	"wrong_menu":     "บอกเมนูผิด",
+	"should_refuse":  "ควรปฏิเสธแต่ตอบ",
+	"should_answer":  "ควรตอบแต่ปฏิเสธ",
+}
+
+// Verification คือผลตรวจคำตอบ 1 ข้อความ (1 ข้อความมีได้ผลเดียว — ตรวจซ้ำทับผลเดิม)
+type Verification struct {
+	ID             string    `json:"id"                       bson:"_id"`
+	OfficeID       string    `json:"office_id"                bson:"office_id"`
+	ServiceID      string    `json:"service_id"               bson:"service_id"`
+	MessageID      string    `json:"message_id"               bson:"message_id"`
+	ConversationID string    `json:"conversation_id"          bson:"conversation_id"`
+	Status         string    `json:"status"                   bson:"status"`
+	ErrorType      string    `json:"error_type,omitempty"     bson:"error_type,omitempty"`
+	CorrectAnswer  string    `json:"correct_answer,omitempty" bson:"correct_answer,omitempty"`
+	Note           string    `json:"note,omitempty"           bson:"note,omitempty"`
+	VerifiedBy     string    `json:"verified_by"              bson:"verified_by"`
+	VerifiedAt     time.Time `json:"verified_at"              bson:"verified_at"`
+	CreatedAt      time.Time `json:"created_at"               bson:"created_at"`
+}
+
+// AccessLog คือบันทึกว่าใครเปิดดู/ค้น/ตรวจ ข้อมูลแชท (แยกจาก audit_logs ที่เก็บการแก้การตั้งค่า)
+//
+// Action: search | read_conversation | read_old | read_queue | verify
+type AccessLog struct {
+	ID             string    `json:"id"                        bson:"_id"`
+	Operator       string    `json:"operator"                  bson:"operator"`
+	Action         string    `json:"action"                    bson:"action"`
+	OfficeID       string    `json:"office_id,omitempty"       bson:"office_id,omitempty"`
+	ServiceID      string    `json:"service_id,omitempty"      bson:"service_id,omitempty"`
+	ConversationID string    `json:"conversation_id,omitempty" bson:"conversation_id,omitempty"`
+	MessageID      string    `json:"message_id,omitempty"      bson:"message_id,omitempty"`
+	Detail         string    `json:"detail,omitempty"          bson:"detail,omitempty"`
+	At             time.Time `json:"at"                        bson:"at"`
 }

@@ -65,8 +65,11 @@ func (s *PermissionService) invalidate() {
 	s.mu.Unlock()
 }
 
-// Can เช็คว่า role มี permission key นี้ไหมตาม matrix ปัจจุบัน
+// Can เช็คว่า role มี permission key นี้ไหมตาม matrix ปัจจุบัน · admin ได้ทุกสิทธิ์เสมอ
 func (s *PermissionService) Can(ctx context.Context, role domain.Role, perm string) (bool, error) {
+	if role == domain.RoleAdmin {
+		return true, nil
+	}
 	cfg, err := s.Config(ctx)
 	if err != nil {
 		return false, err
@@ -75,7 +78,17 @@ func (s *PermissionService) Can(ctx context.Context, role domain.Role, perm stri
 }
 
 // For คืน permission key ทั้งหมดของ role นี้ (ใช้ตอบ /auth/me)
+//
+// admin ได้ทุกสิทธิ์ใน catalog เสมอ ไม่ว่า matrix ที่เก็บไว้จะมีอะไร — ตรงกับ RequirePermission ที่ให้ admin ผ่านทุกด่าน
+// (matrix ที่บันทึกไว้ก่อนมีสิทธิ์ใหม่จะขาดสิทธิ์นั้น ถ้าอ่านจาก matrix เมนูของ admin จะหายทั้งที่ API ให้ผ่าน)
 func (s *PermissionService) For(ctx context.Context, role domain.Role) ([]string, error) {
+	if role == domain.RoleAdmin {
+		all := []string{}
+		for _, p := range domain.PermissionCatalog() {
+			all = append(all, p.Key)
+		}
+		return all, nil
+	}
 	cfg, err := s.Config(ctx)
 	if err != nil {
 		return nil, err

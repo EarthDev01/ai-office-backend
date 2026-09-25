@@ -248,7 +248,7 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
 
     const out = info.mock.calls.flat().join(' ')
     expect(out).toContain('ORIGIN_NOT_REGISTERED')
-    expect(out).toContain('โดเมนที่อนุญาต')
+    expect(out).toContain('URL ของ domain')
     expect(out).toContain(location.origin)
     info.mockRestore()
   })

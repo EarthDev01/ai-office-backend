@@ -12,13 +12,16 @@ import (
 )
 
 type officeService struct {
-	repo  port.OfficeRepository
-	audit port.AuditRecorder
+	repo   port.OfficeRepository
+	groups port.OfficeGroupRepository
+	audit  port.AuditRecorder
 }
 
 // audit เป็น nil ได้ (ไม่บันทึกประวัติ)
-func NewOfficeService(repo port.OfficeRepository, audit port.AuditRecorder) port.OfficeService {
-	return &officeService{repo: repo, audit: auditOr(audit)}
+//
+// บนหน้าจอเรียก Office ว่า "domain" (1 ตัว = 1 URL) และจัดเป็นกลุ่มด้วย groups
+func NewOfficeService(repo port.OfficeRepository, groups port.OfficeGroupRepository, audit port.AuditRecorder) port.OfficeService {
+	return &officeService{repo: repo, groups: groups, audit: auditOr(audit)}
 }
 
 // field ที่ไม่นับเป็น "การแก้ไข" ในประวัติ — services มีเหตุการณ์ของตัวเองแยก
@@ -36,26 +39,50 @@ func (s *officeService) Get(ctx context.Context, id string) (domain.Office, erro
 	return s.repo.Get(ctx, id)
 }
 
-func (s *officeService) Create(ctx context.Context, id, label, actor string) (domain.Office, error) {
+func (s *officeService) Create(ctx context.Context, in domain.CreateOffice, actor string) (domain.Office, error) {
+	id, label := strings.TrimSpace(in.ID), strings.TrimSpace(in.Label)
 	if !idPattern.MatchString(id) {
-		return domain.Office{}, fmt.Errorf("id ต้องเป็น a-z A-Z 0-9 _ - ยาวไม่เกิน 40 ตัว")
+		return domain.Office{}, fmt.Errorf("รหัสต้องเป็น a-z A-Z 0-9 _ - ยาวไม่เกิน 40 ตัว")
 	}
 	if _, err := s.repo.Get(ctx, id); err == nil {
 		return domain.Office{}, domain.ErrConflict
 	}
-	if strings.TrimSpace(label) == "" {
+	if err := s.requireGroup(ctx, in.GroupID); err != nil {
+		return domain.Office{}, err
+	}
+	origins, err := normalizeOrigins([]string{in.Origin})
+	if err != nil {
+		return domain.Office{}, err
+	}
+	if err := s.ensureOriginsFree(ctx, id, origins); err != nil {
+		return domain.Office{}, err
+	}
+	if label == "" {
 		label = id
 	}
 	o := domain.NewOffice(id, label)
+	o.GroupID = in.GroupID
+	o.AllowedOrigins = origins
 	o.UpdatedBy = actor
 	if err := s.repo.Save(ctx, o); err != nil {
 		return domain.Office{}, err
 	}
 	s.audit.Record(ctx, domain.AuditEntry{
 		Action: domain.AuditOfficeCreate, TargetType: "office", TargetID: o.ID, TargetLabel: o.Label,
-		Summary: fmt.Sprintf("สร้าง office %q (%s)", o.Label, o.ID),
+		Summary: fmt.Sprintf("สร้าง domain %q (%s)", o.Label, o.ID),
 	})
 	return o, nil
+}
+
+// requireGroup — domain ทุกตัวต้องอยู่ในกลุ่มที่มีอยู่จริง
+func (s *officeService) requireGroup(ctx context.Context, groupID string) error {
+	if strings.TrimSpace(groupID) == "" {
+		return fmt.Errorf("ต้องเลือกกลุ่ม")
+	}
+	if _, err := s.groups.Get(ctx, groupID); err != nil {
+		return fmt.Errorf("ไม่พบกลุ่ม %s", groupID)
+	}
+	return nil
 }
 
 func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOffice, actor string) (domain.Office, error) {
@@ -74,10 +101,19 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		if err != nil {
 			return domain.Office{}, err
 		}
+		if len(clean) > 1 {
+			return domain.Office{}, fmt.Errorf("1 domain ใส่ URL ได้ 1 ตัว — URL อื่นให้เพิ่มเป็น domain ใหม่")
+		}
 		if err := s.ensureOriginsFree(ctx, o.ID, clean); err != nil {
 			return domain.Office{}, err
 		}
 		o.AllowedOrigins = clean
+	}
+	if p.GroupID != nil {
+		if err := s.requireGroup(ctx, *p.GroupID); err != nil {
+			return domain.Office{}, err
+		}
+		o.GroupID = *p.GroupID
 	}
 	if p.HostAPIBase != nil {
 		o.HostAPIBase = ""
@@ -419,4 +455,98 @@ func changedFieldNames(changes []domain.FieldChange) string {
 		names[i] = c.Field
 	}
 	return strings.Join(names, ", ")
+}
+
+// ---- กลุ่มของ domain ----
+
+func (s *officeService) ListGroups(ctx context.Context) ([]domain.OfficeGroup, error) {
+	return s.groups.List(ctx)
+}
+
+func (s *officeService) groupNameTaken(ctx context.Context, name, selfID string) error {
+	list, err := s.groups.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, g := range list {
+		if g.ID != selfID && strings.EqualFold(g.Name, name) {
+			return fmt.Errorf("มีกลุ่มชื่อ %q อยู่แล้ว", name)
+		}
+	}
+	return nil
+}
+
+func (s *officeService) CreateGroup(ctx context.Context, name, actor string) (domain.OfficeGroup, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 60 {
+		return domain.OfficeGroup{}, fmt.Errorf("ชื่อกลุ่มต้องไม่ว่างและยาวไม่เกิน 60 ตัวอักษร")
+	}
+	if err := s.groupNameTaken(ctx, name, ""); err != nil {
+		return domain.OfficeGroup{}, err
+	}
+	now := time.Now()
+	g := domain.OfficeGroup{ID: domain.NewID(), Name: name, CreatedAt: now, UpdatedAt: now, UpdatedBy: actor}
+	if err := s.groups.Save(ctx, g); err != nil {
+		return domain.OfficeGroup{}, err
+	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditGroupCreate, TargetType: "group", TargetID: g.ID, TargetLabel: g.Name,
+		Summary: fmt.Sprintf("สร้างกลุ่ม %q", g.Name),
+	})
+	return g, nil
+}
+
+func (s *officeService) RenameGroup(ctx context.Context, id, name, actor string) (domain.OfficeGroup, error) {
+	g, err := s.groups.Get(ctx, id)
+	if err != nil {
+		return g, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 60 {
+		return g, fmt.Errorf("ชื่อกลุ่มต้องไม่ว่างและยาวไม่เกิน 60 ตัวอักษร")
+	}
+	if err := s.groupNameTaken(ctx, name, id); err != nil {
+		return g, err
+	}
+	before := g.Name
+	g.Name, g.UpdatedAt, g.UpdatedBy = name, time.Now(), actor
+	if err := s.groups.Save(ctx, g); err != nil {
+		return g, err
+	}
+	if before != name {
+		s.audit.Record(ctx, domain.AuditEntry{
+			Action: domain.AuditGroupUpdate, TargetType: "group", TargetID: g.ID, TargetLabel: g.Name,
+			Summary: fmt.Sprintf("เปลี่ยนชื่อกลุ่ม %q เป็น %q", before, name),
+			Changes: []domain.FieldChange{{Field: "name", Before: before, After: name}},
+		})
+	}
+	return g, nil
+}
+
+func (s *officeService) DeleteGroup(ctx context.Context, id, actor string) error {
+	g, err := s.groups.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	list, err := s.repo.List(ctx)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, o := range list {
+		if o.GroupID == id {
+			n++
+		}
+	}
+	if n > 0 {
+		return fmt.Errorf("กลุ่ม %q ยังมี %d domain — ย้ายหรือลบ domain ออกก่อน", g.Name, n)
+	}
+	if err := s.groups.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.audit.Record(ctx, domain.AuditEntry{
+		Action: domain.AuditGroupDelete, TargetType: "group", TargetID: g.ID, TargetLabel: g.Name,
+		Summary: fmt.Sprintf("ลบกลุ่ม %q", g.Name),
+	})
+	return nil
 }

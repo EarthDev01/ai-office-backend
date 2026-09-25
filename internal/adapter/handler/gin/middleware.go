@@ -114,7 +114,7 @@ func ResolveOffice(svc port.OfficeService) gin.HandlerFunc {
 			return
 		case domain.ErrOriginNotAllowed:
 			routes.ResData(c, http.StatusForbidden, "ORIGIN_NOT_REGISTERED",
-				"โดเมนนี้ยังไม่ได้ลงทะเบียนกับ office ไหน — เพิ่มที่ 'โดเมนที่อนุญาต' ในคอนโซล", nil)
+				"URL นี้ยังไม่ได้ลงทะเบียนกับ domain ไหน — เพิ่มที่ 'URL ของ domain' ในคอนโซล", nil)
 			c.Abort()
 			return
 		default:

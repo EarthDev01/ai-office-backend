@@ -25,15 +25,17 @@ type Office struct {
 	AllowedOrigins []string `json:"allowed_origins"    bson:"allowed_origins"`
 	// HostAPIBase — URL API หลังบ้านที่ widget ของ office นี้ยิง · ว่าง = {origin}/api ตาม connector
 	// ใช้กับ office ที่หน้าเว็บกับ API อยู่คนละโดเมน (เช่น หน้า dev ที่ localhost) — ทุกโดเมนของ office นี้ยิงไปที่เดียวกัน
-	HostAPIBase string    `json:"host_api_base" bson:"host_api_base,omitempty"`
-	Enabled     bool      `json:"enabled"            bson:"enabled"`
-	IsHidden    bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
-	Theme       string    `json:"theme"              bson:"theme"`
-	Placement   Placement `json:"placement"          bson:"placement"`
-	Services    []Service `json:"services"           bson:"services"`
-	CreatedAt   time.Time `json:"created_at"         bson:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"         bson:"updated_at"`
-	UpdatedBy   string    `json:"updated_by"         bson:"updated_by"`
+	HostAPIBase string `json:"host_api_base" bson:"host_api_base,omitempty"`
+	// GroupID — กลุ่มที่ domain นี้อยู่ (หัว group ที่ตั้งชื่อเองในคอนโซล) · ว่าง = ยังไม่ได้จัดกลุ่ม
+	GroupID   string    `json:"group_id" bson:"group_id,omitempty"`
+	Enabled   bool      `json:"enabled"            bson:"enabled"`
+	IsHidden  bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
+	Theme     string    `json:"theme"              bson:"theme"`
+	Placement Placement `json:"placement"          bson:"placement"`
+	Services  []Service `json:"services"           bson:"services"`
+	CreatedAt time.Time `json:"created_at"         bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"         bson:"updated_at"`
+	UpdatedBy string    `json:"updated_by"         bson:"updated_by"`
 }
 
 // Service คือแบรนด์/เว็บย่อยใต้ office หนึ่ง
@@ -120,6 +122,25 @@ func NormalizeHostAPIBase(raw string) (string, error) {
 		return "", fmt.Errorf("URL API ห้ามมี query, # หรือ user:pass — เจอ %q", raw)
 	}
 	return scheme + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
+// OfficeGroup คือหัวกลุ่มของ domain (เช่น "office-v10") — มีแค่ชื่อ ไม่มีการตั้งค่าอื่น
+//
+// ลำดับชั้นบนหน้าจอ: กลุ่ม → domain (Office 1 ตัว = 1 URL) → service
+type OfficeGroup struct {
+	ID        string    `json:"id"         bson:"_id"`
+	Name      string    `json:"name"       bson:"name"`
+	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
+	UpdatedBy string    `json:"updated_by" bson:"updated_by"`
+}
+
+// CreateOffice คือข้อมูลตอนเพิ่ม domain ใหม่ในกลุ่ม
+type CreateOffice struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	GroupID string `json:"group_id"`
+	Origin  string `json:"origin"` // URL ของ domain · ว่างได้ (ใส่ทีหลังในหน้าตั้งค่า)
 }
 
 func NewPublicKey() string {

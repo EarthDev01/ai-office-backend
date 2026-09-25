@@ -12,6 +12,15 @@ const (
 	PermOfficeDelete = "office.delete"
 	PermUserManage   = "user.manage"
 	PermAuditView    = "audit.view"
+
+	// แชทของแอดมินเว็บ — อ่านข้ามทุกเว็บได้ ทุกการเปิดอ่านถูกบันทึกลง access_log
+	PermConversationRead  = "conversation.read"
+	PermVerificationWrite = "verification.write"
+
+	PermUsageView      = "usage.view"      // ดูการใช้ token รายเดือน/รายวัน
+	PermDeletionManage = "deletion.manage" // ลบข้อมูลแชทตามคำขอ (PDPA)
+	PermSettingsManage = "settings.manage" // แก้ตั้งค่าระบบ (ดูได้ด้วย office.view)
+	PermAccessLogView  = "accesslog.view"  // ดูบันทึกการเข้าถึงข้อมูลแชท
 )
 
 // roleKeyPattern: role key ต้องขึ้นต้นด้วยตัวอักษร a-z แล้วตามด้วย a-z0-9_- ยาว 2-30 ตัว
@@ -56,12 +65,14 @@ func DefaultRoleConfig() RoleConfig {
 		Matrix: map[string][]string{
 			string(RoleAdmin): {
 				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermUserManage, PermAuditView,
+				PermConversationRead, PermVerificationWrite,
+				PermUsageView, PermDeletionManage, PermSettingsManage, PermAccessLogView,
 			},
 			string(RoleOperator): {
-				PermOfficeView, PermOfficeEdit, PermOfficeDelete,
+				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermConversationRead, PermVerificationWrite, PermUsageView,
 			},
 			string(RoleViewer): {
-				PermOfficeView,
+				PermOfficeView, PermUsageView,
 			},
 		},
 	}
@@ -82,6 +93,12 @@ func PermissionCatalog() []struct {
 		{Key: PermOfficeDelete, Label: "ลบ office/service"},
 		{Key: PermUserManage, Label: "จัดการผู้ใช้ และตั้งสิทธิ์ role"},
 		{Key: PermAuditView, Label: "ดูประวัติการทำงานของผู้ใช้"},
+		{Key: PermConversationRead, Label: "อ่านประวัติแชท (ทุกเว็บ · บันทึกการเปิดอ่านทุกครั้ง)"},
+		{Key: PermVerificationWrite, Label: "ตรวจคำตอบของ AI"},
+		{Key: PermUsageView, Label: "ดูการใช้งาน token"},
+		{Key: PermDeletionManage, Label: "ลบข้อมูลแชทตามคำขอ (PDPA)"},
+		{Key: PermSettingsManage, Label: "แก้ตั้งค่าระบบ"},
+		{Key: PermAccessLogView, Label: "ดูบันทึกการเข้าถึงข้อมูลแชท"},
 	}
 }
 

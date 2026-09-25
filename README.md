@@ -38,18 +38,7 @@ cp .env.example .env
 go run ./_cmd                      # :6767
 ```
 
-อยากดูของจริงให้รัน `Project/office-mock` ที่ :5174 (หลังบ้านจำลองของลูกค้า)
-และ `Project/ai-office-report` ที่ :5173 (คอนโซล)
-
-ครั้งแรก office `demo` ถูก seed มาให้แล้ว (key `pk_demo_local`, origin `http://localhost:5174`,
-service `K11S` + `PG99` ที่ยังปิดอยู่) — เปิดใช้จากคอนโซล หรือสั่งตรง:
-
-```bash
-curl -X PATCH localhost:6767/api/ai/admin/offices/demo/services/K11S \
-  -H "Authorization: Bearer dev-console-token" \
-  -H "Content-Type: application/json" \
-  -d '{"enabled":true,"allowlist":["adm_ploy"]}'
-```
+คอนโซลคือ `Project/ai-office-report` ที่ :5173 — ฐานเริ่มต้นว่าง สร้างกลุ่ม → domain → service จากหน้า "หลังบ้านลูกค้า"
 
 ## test
 
@@ -65,7 +54,6 @@ cd widget && npm test       # 19 test
 | อ่านตัวตนจาก JWT ของ officeลูกค้า | ถอด payload อ่านตรง ๆ **ไม่ได้ตรวจลายเซ็น** (secret ผูก UA+IP) | ให้ office-api ยืนยัน token หรือออก service token แยก — ต้องทำก่อนเปิดแชทที่อ่านข้อมูลจริง |
 | `ConsoleAuth` | static token จาก env | JWT คนละ secret กับแอดมินเว็บ (`02-SPEC §6`) |
 | `filestore` | ไฟล์ JSON | MongoDB — สลับที่ `_cmd/main.go` บรรทัดเดียว |
-| `seedOffices()` | office `demo` hardcode | ไม่ต้องมี — สร้างจากคอนโซล |
 
 ทุกจุดมี comment `██` กำกับไว้ในโค้ด
 

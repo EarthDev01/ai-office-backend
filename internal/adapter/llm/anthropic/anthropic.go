@@ -107,7 +107,10 @@ func (c *Client) Complete(ctx context.Context, req port.LLMRequest) (port.LLMRes
 			res.ToolUses = append(res.ToolUses, port.ToolUse{ID: v.ID, Name: v.Name, Input: in})
 		}
 	}
-	res.Usage = port.LLMUsage{InputTokens: int(msg.Usage.InputTokens), OutputTokens: int(msg.Usage.OutputTokens)}
+	res.Usage = port.LLMUsage{
+		InputTokens: int(msg.Usage.InputTokens), OutputTokens: int(msg.Usage.OutputTokens),
+		CacheRead: int(msg.Usage.CacheReadInputTokens), CacheWrite: int(msg.Usage.CacheCreationInputTokens),
+	}
 	return res, nil
 }
 
@@ -119,6 +122,8 @@ func (c *Client) Stream(ctx context.Context, req port.LLMRequest, onDelta func(s
 		switch ev := stream.Current().AsAny().(type) {
 		case sdk.MessageStartEvent:
 			usage.InputTokens = int(ev.Message.Usage.InputTokens)
+			usage.CacheRead = int(ev.Message.Usage.CacheReadInputTokens)
+			usage.CacheWrite = int(ev.Message.Usage.CacheCreationInputTokens)
 		case sdk.MessageDeltaEvent:
 			usage.OutputTokens = int(ev.Usage.OutputTokens)
 		case sdk.ContentBlockDeltaEvent:

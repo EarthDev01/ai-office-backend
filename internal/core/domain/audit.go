@@ -73,6 +73,10 @@ const (
 	AuditOfficeDelete    = "office.delete"
 	AuditOfficeRotateKey = "office.rotate_key" // เลิกใช้แล้ว — คงไว้ให้ประวัติเก่ายังอ่านออก
 
+	AuditGroupCreate = "group.create"
+	AuditGroupUpdate = "group.update"
+	AuditGroupDelete = "group.delete"
+
 	AuditServiceCreate = "service.create"
 	AuditServiceUpdate = "service.update"
 	AuditServiceDelete = "service.delete"
@@ -89,6 +93,9 @@ const (
 	AuditRolePermissions = "role.permissions_update"
 
 	AuditAccessDenied = "access.denied"
+
+	AuditSettingsUpdate  = "settings.update"
+	AuditDeletionRequest = "deletion.request"
 )
 
 // AuditCategory คือส่วนหน้าของ action ก่อนจุดแรก

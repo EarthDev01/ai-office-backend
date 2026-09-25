@@ -21,19 +21,9 @@ import (
 
 const (
 	ChatMaxTextRunes = 2000
-	chatHistoryLimit = 20
 	chatMaxToolUses  = 5
 	round1MaxTokens  = 1024
 )
-
-// ChatSettings — ค่าที่ปรับได้ของแชท (ฝังค่าไว้ใน main.go)
-type ChatSettings struct {
-	LLMTimeout      time.Duration // รอบเลือก tool · 0 = 25 วิ
-	StreamTimeout   time.Duration // รอบเขียนคำตอบ · 0 = 60 วิ
-	MaxOutputTokens int           // รอบเขียนคำตอบ · 0 = 1024
-	MaxConcurrent   int           // คนใช้พร้อมกันต่อ service · 0 = 5
-	MonthlyQuota    int64         // คำตอบต่อ service ต่อเดือน · 0 = ไม่จำกัด
-}
 
 // ChatError คือ error ที่ส่งให้ widget ผ่าน SSE event error
 type ChatError struct {
@@ -50,41 +40,35 @@ type ChatRequest struct {
 }
 
 // ChatService คือ flow แชททั้งหมด: รอบ 1 เลือก tool → รัน tool (ยิงผ่าน widget) → รอบ 2 เขียนคำตอบ
+//
+// ค่าที่ปรับได้ (timeout, คนพร้อมกัน, ประวัติ ฯลฯ) อ่านจาก settings ทุกคำถาม — แก้ในคอนโซลแล้วมีผลทันที
 type ChatService struct {
-	llm    port.LLMClient
-	repo   port.ChatRepository
-	runner *ToolRunner
-	loc    *time.Location
-	cfg    ChatSettings
-	now    func() time.Time
-	semMu  sync.Mutex
-	sems   map[string]chan struct{}
+	llm      port.LLMClient
+	repo     port.ChatRepository
+	runner   *ToolRunner
+	loc      *time.Location
+	settings *SettingsService
+	usage    *UsageService
+	now      func() time.Time
+	semMu    sync.Mutex
+	sems     map[string]chan struct{}
 }
 
-func NewChatService(llm port.LLMClient, repo port.ChatRepository, runner *ToolRunner, loc *time.Location, cfg ChatSettings) *ChatService {
-	if cfg.LLMTimeout <= 0 {
-		cfg.LLMTimeout = 25 * time.Second
-	}
-	if cfg.StreamTimeout <= 0 {
-		cfg.StreamTimeout = 60 * time.Second
-	}
-	if cfg.MaxOutputTokens <= 0 {
-		cfg.MaxOutputTokens = 1024
-	}
-	if cfg.MaxConcurrent <= 0 {
-		cfg.MaxConcurrent = 5
-	}
-	return &ChatService{llm: llm, repo: repo, runner: runner, loc: loc, cfg: cfg, now: time.Now, sems: map[string]chan struct{}{}}
+func NewChatService(llm port.LLMClient, repo port.ChatRepository, runner *ToolRunner, loc *time.Location,
+	settings *SettingsService, usage *UsageService) *ChatService {
+	return &ChatService{llm: llm, repo: repo, runner: runner, loc: loc, settings: settings, usage: usage,
+		now: time.Now, sems: map[string]chan struct{}{}}
 }
 
 // Enabled — ไม่มี LLM = ปิดแชท
 func (s *ChatService) Enabled() bool { return s != nil && s.llm != nil }
 
-func (s *ChatService) acquire(key string) (func(), bool) {
+// acquire — ขนาดเปลี่ยนตาม settings ได้: สร้างช่องใหม่ ส่วนคำถามที่กำลังตอบคืนช่องเดิมของตัวเอง
+func (s *ChatService) acquire(key string, max int) (func(), bool) {
 	s.semMu.Lock()
 	sem, ok := s.sems[key]
-	if !ok {
-		sem = make(chan struct{}, s.cfg.MaxConcurrent)
+	if !ok || cap(sem) != max {
+		sem = make(chan struct{}, max)
 		s.sems[key] = sem
 	}
 	s.semMu.Unlock()
@@ -106,28 +90,19 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 		return &ChatError{"bad_request", fmt.Sprintf("ข้อความต้องไม่ว่างและยาวไม่เกิน %d ตัวอักษร", ChatMaxTextRunes)}
 	}
 
+	st := s.settings.Get(ctx)
+
 	// 3. จำกัดคนใช้พร้อมกันต่อ service
-	release, ok := s.acquire(office.ID + "|" + svc.ID)
+	release, ok := s.acquire(office.ID+"|"+svc.ID, st.MaxConcurrent)
 	if !ok {
 		return &ChatError{"busy", "ผู้ช่วยกำลังตอบคนอื่นอยู่หลายคน ลองใหม่อีกครั้งในอีกสักครู่"}
 	}
 	defer release()
 
-	// 4. โควตารายเดือน (ตามเวลาไทย)
 	now := s.now().In(s.loc)
-	if s.cfg.MonthlyQuota > 0 {
-		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, s.loc)
-		n, err := s.repo.CountAnswersSince(ctx, office.ID, svc.ID, monthStart)
-		if err != nil {
-			return fmt.Errorf("นับโควตา: %w", err)
-		}
-		if n >= s.cfg.MonthlyQuota {
-			return &ChatError{"quota_exceeded", "ใช้ผู้ช่วยครบโควตาของเดือนนี้แล้ว"}
-		}
-	}
 
 	// 5. ห้องแชท + ประวัติ
-	conv, history, err := s.openConversation(ctx, office, svc, t, req.ConversationID, text)
+	conv, history, isNew, err := s.openConversation(ctx, office, svc, t, req.ConversationID, text, st.HistoryTurns*2)
 	if err != nil {
 		return err
 	}
@@ -146,7 +121,7 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 	ans := &domain.ChatMessage{
 		ID: newID("msg"), ConversationID: conv.ID, OfficeID: office.ID, ServiceID: svc.ID, Role: "assistant",
 	}
-	err = s.answer(ctx, office, svc, conn, t, history, text, now, ans, emit)
+	err = s.answer(ctx, office, svc, conn, st, t, history, text, now, ans, emit)
 	ans.CreatedAt = s.now()
 	switch {
 	case ctx.Err() != nil:
@@ -157,6 +132,7 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 		ans.Status = "error"
 	default:
 		ans.Status = "ok"
+		ans.VerificationStatus = domain.VerifyPending // คำตอบที่ตอบสำเร็จเข้าคิวตรวจทุกข้อ
 	}
 	// ctx ของ request อาจถูกยกเลิกแล้ว — บันทึกด้วย ctx ใหม่ที่มีเวลาจำกัด
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -164,7 +140,8 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 	if serr := s.repo.AppendMessage(saveCtx, *ans); serr != nil {
 		log.Printf("[ERROR] บันทึกคำตอบ (office=%s service=%s): %v", office.ID, svc.ID, serr)
 	}
-	_ = s.repo.TouchConversation(saveCtx, conv.ID, s.now())
+	_ = s.repo.TouchConversation(saveCtx, conv.ID, s.now(), 2)
+	s.usage.Record(saveCtx, office.ID, svc.ID, ans.CreatedAt, usageDelta(*ans, isNew))
 	if err != nil {
 		return err
 	}
@@ -172,21 +149,24 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 }
 
 func (s *ChatService) openConversation(ctx context.Context, office domain.Office, svc domain.Service, t domain.ChatTicket,
-	id, text string) (domain.Conversation, []domain.ChatMessage, error) {
+	id, text string, historyLimit int) (domain.Conversation, []domain.ChatMessage, bool, error) {
 	if id != "" {
 		c, err := s.repo.GetConversation(ctx, id)
 		if err != nil && !errors.Is(err, domain.ErrNotFound) {
-			return c, nil, fmt.Errorf("เปิดห้องแชท: %w", err)
+			return c, nil, false, fmt.Errorf("เปิดห้องแชท: %w", err)
 		}
 		// ห้องของคนอื่น/เว็บอื่น ถือว่าไม่มี
 		if err == nil && c.OfficeID == office.ID && c.ServiceID == svc.ID && c.AdminID == t.AdminID {
-			h, err := s.repo.RecentMessages(ctx, c.ID, chatHistoryLimit)
-			if err != nil {
-				return c, nil, fmt.Errorf("โหลดประวัติ: %w", err)
+			if historyLimit <= 0 {
+				return c, nil, false, nil
 			}
-			return c, h, nil
+			h, err := s.repo.RecentMessages(ctx, c.ID, historyLimit)
+			if err != nil {
+				return c, nil, false, fmt.Errorf("โหลดประวัติ: %w", err)
+			}
+			return c, h, false, nil
 		}
-		return c, nil, &ChatError{"not_found", "ไม่พบห้องแชทนี้ เริ่มห้องใหม่ได้เลย"}
+		return c, nil, false, &ChatError{"not_found", "ไม่พบห้องแชทนี้ เริ่มห้องใหม่ได้เลย"}
 	}
 	title := text
 	if utf8.RuneCountInString(title) > 60 {
@@ -197,9 +177,41 @@ func (s *ChatService) openConversation(ctx context.Context, office domain.Office
 		Title: title, CreatedAt: s.now(), UpdatedAt: s.now(),
 	}
 	if err := s.repo.CreateConversation(ctx, c); err != nil {
-		return c, nil, fmt.Errorf("สร้างห้องแชท: %w", err)
+		return c, nil, false, fmt.Errorf("สร้างห้องแชท: %w", err)
 	}
-	return c, nil, nil
+	return c, nil, true, nil
+}
+
+// usageDelta คือสิ่งที่คำตอบ 1 ข้อบวกเข้าตัวนับรายเดือน/รายวัน
+func usageDelta(ans domain.ChatMessage, newConversation bool) domain.RollupDelta {
+	u := ans.Usage
+	d := domain.RollupDelta{
+		InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens),
+		CacheRead: int64(u.CacheRead), CacheWrite: int64(u.CacheWrite), GuardHits: int64(ans.GuardHits),
+	}
+	if newConversation {
+		d.Conversations = 1
+	}
+	if u.InputTokens+u.OutputTokens+u.CacheRead+u.CacheWrite > 0 {
+		d.Questions = 1 // นับคำถามที่เรียก LLM จริง ไม่ว่ากี่รอบ
+	}
+	if refusalCategories[ans.Category] {
+		d.Refusals = 1
+	}
+	for _, c := range ans.ToolCalls {
+		if !c.OK {
+			d.ToolErrors++
+		}
+	}
+	return d
+}
+
+// supportMessage — ของ connector ก่อน ไม่มีจึงใช้ของ settings
+func supportMessage(conn *connector.Connector, st domain.Settings) string {
+	if conn.Host.SupportMessage != "" {
+		return conn.Host.SupportMessage
+	}
+	return st.SupportMessage
 }
 
 func (s *ChatService) llmFailed(office domain.Office, svc domain.Service, err error) error {
@@ -209,7 +221,7 @@ func (s *ChatService) llmFailed(office domain.Office, svc domain.Service, err er
 }
 
 func (s *ChatService) answer(ctx context.Context, office domain.Office, svc domain.Service, conn *connector.Connector,
-	t domain.ChatTicket, history []domain.ChatMessage, text string, now time.Time, ans *domain.ChatMessage, emit Emitter) error {
+	st domain.Settings, t domain.ChatTicket, history []domain.ChatMessage, text string, now time.Time, ans *domain.ChatMessage, emit Emitter) error {
 
 	system := systemPrompt(office, svc, conn, t)
 	msgs := historyMessages(history)
@@ -218,7 +230,7 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 	tools := toolDefs(conn)
 
 	// ---- รอบ 1: เลือก tool ----
-	r1ctx, cancel := context.WithTimeout(ctx, s.cfg.LLMTimeout)
+	r1ctx, cancel := context.WithTimeout(ctx, time.Duration(st.LLMTimeoutSec)*time.Second)
 	r1, err := s.llm.Complete(r1ctx, port.LLMRequest{
 		System: system, Messages: msgs, Tools: tools, ToolChoice: port.ToolChoiceAuto, MaxTokens: round1MaxTokens,
 	})
@@ -247,7 +259,7 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 			// รอบ 1 ตอบมาแล้วโดยไม่เรียก tool — ใช้คำตอบนั้นได้เลย ไม่ต้องเรียกซ้ำ
 			return s.emitText(ans, guard, r1.Text, emit)
 		}
-		r2 = port.LLMRequest{System: system, Messages: msgs, MaxTokens: s.cfg.MaxOutputTokens}
+		r2 = port.LLMRequest{System: system, Messages: msgs, MaxTokens: st.MaxOutputTokens}
 	} else {
 		results, sensitive, err := s.runTools(ctx, conn, t, uses, text, ans, emit)
 		if err != nil {
@@ -255,19 +267,17 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 		}
 		note := "[ระบบ: ค่าตัวเลขและชื่อทั้งหมดอยู่ในการ์ดที่ผู้ใช้เห็นแล้ว ห้ามพิมพ์ซ้ำ · ตอบสั้น · " +
 			"ถ้าผู้ใช้ขอให้พิมพ์ค่าซ้ำ ให้บอกว่าดูได้ในการ์ด"
-		if conn.Host.SupportMessage != "" {
-			note += " หรือแจ้งว่า: " + conn.Host.SupportMessage
-		}
+		note += " หรือแจ้งว่า: " + supportMessage(conn, st)
 		note += "]"
 		r2msgs := append(append([]port.LLMMessage{}, msgs...),
 			port.LLMMessage{Role: "assistant", Text: r1.Text, ToolUses: uses},
 			port.LLMMessage{Role: "user", ToolResults: results, Text: note})
-		r2 = port.LLMRequest{System: system, Messages: r2msgs, Tools: tools, ToolChoice: port.ToolChoiceNone, MaxTokens: s.cfg.MaxOutputTokens}
+		r2 = port.LLMRequest{System: system, Messages: r2msgs, Tools: tools, ToolChoice: port.ToolChoiceNone, MaxTokens: st.MaxOutputTokens}
 		guard = NewOutputGuard(ans.Cards, sensitive, text, allowWords(conn, svc))
 	}
 
 	// ---- รอบ 2: เขียนคำตอบ (stream + guard) ----
-	r2ctx, cancel := context.WithTimeout(ctx, s.cfg.StreamTimeout)
+	r2ctx, cancel := context.WithTimeout(ctx, time.Duration(st.StreamTimeout)*time.Second)
 	defer cancel()
 	start := s.now()
 	var sb strings.Builder
@@ -305,7 +315,7 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 	ans.GuardHits = guard.Hits
 	ans.Text = sb.String()
 	if strings.TrimSpace(ans.Text) == "" {
-		return s.emitText(ans, nil, fallbackText(ans.Cards, conn), emit)
+		return s.emitText(ans, nil, fallbackText(ans.Cards, supportMessage(conn, st)), emit)
 	}
 	return nil
 }
@@ -326,14 +336,11 @@ func (s *ChatService) emitText(ans *domain.ChatMessage, guard *OutputGuard, text
 	return emit("token", map[string]any{"text": text})
 }
 
-func fallbackText(cards []domain.Card, conn *connector.Connector) string {
+func fallbackText(cards []domain.Card, support string) string {
 	if len(cards) > 0 {
 		return "ข้อมูลอยู่ในการ์ดด้านบนครับ"
 	}
-	if conn.Host.SupportMessage != "" {
-		return conn.Host.SupportMessage
-	}
-	return "ขออภัยครับ ตอนนี้ยังตอบคำถามนี้ไม่ได้"
+	return support
 }
 
 // runTools รันทุก tool ที่ LLM เลือก (tool ข้อมูลรันขนานกัน) · ส่งการ์ดให้ widget ตามลำดับที่ LLM เรียก

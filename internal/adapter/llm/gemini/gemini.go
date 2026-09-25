@@ -85,15 +85,23 @@ type genConfig struct {
 	} `json:"thinkingConfig"`
 }
 
+type usageMeta struct {
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount"`
+}
+
+// toUsage — promptTokenCount รวมส่วนที่มาจาก cache ไว้แล้ว จึงแยกออก
+func (u usageMeta) toUsage() port.LLMUsage {
+	return port.LLMUsage{InputTokens: u.PromptTokenCount - u.CachedContentTokenCount, OutputTokens: u.CandidatesTokenCount, CacheRead: u.CachedContentTokenCount}
+}
+
 type response struct {
 	Candidates []struct {
 		Content content `json:"content"`
 	} `json:"candidates"`
-	UsageMetadata struct {
-		PromptTokenCount     int `json:"promptTokenCount"`
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-	} `json:"usageMetadata"`
-	Error *struct {
+	UsageMetadata usageMeta `json:"usageMetadata"`
+	Error         *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
@@ -184,9 +192,7 @@ func (c *Client) Complete(ctx context.Context, req port.LLMRequest) (port.LLMRes
 	if out.Error != nil {
 		return port.LLMResponse{}, fmt.Errorf("gemini: %s", out.Error.Message)
 	}
-	r := port.LLMResponse{Usage: port.LLMUsage{
-		InputTokens: out.UsageMetadata.PromptTokenCount, OutputTokens: out.UsageMetadata.CandidatesTokenCount,
-	}}
+	r := port.LLMResponse{Usage: out.UsageMetadata.toUsage()}
 	if len(out.Candidates) > 0 { // ใช้ candidate แรกเท่านั้น
 		for i, p := range out.Candidates[0].Content.Parts {
 			switch {
@@ -229,7 +235,7 @@ func (c *Client) Stream(ctx context.Context, req port.LLMRequest, onDelta func(s
 			return u, fmt.Errorf("gemini: %s", ch.Error.Message)
 		}
 		if ch.UsageMetadata.PromptTokenCount > 0 {
-			u = port.LLMUsage{InputTokens: ch.UsageMetadata.PromptTokenCount, OutputTokens: ch.UsageMetadata.CandidatesTokenCount}
+			u = ch.UsageMetadata.toUsage()
 		}
 		for _, cand := range ch.Candidates {
 			for _, p := range cand.Content.Parts {

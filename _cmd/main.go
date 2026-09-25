@@ -12,6 +12,7 @@ import (
 	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/adapter/config"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
+	"ai-office-backend/internal/adapter/handler/gin/routes"
 	anthropicllm "ai-office-backend/internal/adapter/llm/anthropic"
 	"ai-office-backend/internal/adapter/llm/gemini"
 	"ai-office-backend/internal/adapter/llm/openaicompat"
@@ -19,40 +20,9 @@ import (
 	mongodb "ai-office-backend/internal/adapter/storage/mongodb"
 	"ai-office-backend/internal/adapter/storage/mongodb/repository"
 	"ai-office-backend/internal/core/connector"
-	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 	"ai-office-backend/internal/core/service"
 )
-
-// seedOffices ใช้เฉพาะตอนไฟล์ยังว่าง — ของจริง office ถูกสร้างจากคอนโซล
-func seedOffices() []domain.Office {
-	o := domain.NewOffice("demo", "หลังบ้านจำลอง")
-	o.PublicKey = "pk_demo_local"
-	o.AllowedOrigins = []string{"http://localhost:5174"}
-	o.Services = []domain.Service{
-		domain.DefaultService("K11S", "เว็บ K11S"),
-		domain.DefaultService("PG99", "เว็บ PG99"),
-	}
-	return []domain.Office{o}
-}
-
-// seedIfEmpty ใส่ office ตัวอย่างให้เฉพาะตอนฐานยังว่าง — ไม่ทับของที่มีอยู่
-func seedIfEmpty(ctx context.Context, repo port.OfficeRepository) error {
-	list, err := repo.List(ctx)
-	if err != nil {
-		return err
-	}
-	if len(list) > 0 {
-		return nil
-	}
-	for _, o := range seedOffices() {
-		if err := repo.Save(ctx, o); err != nil {
-			return err
-		}
-	}
-	fmt.Println("[INFO] ฐานยังว่าง — ใส่ office 'demo' ให้เริ่มต้น")
-	return nil
-}
 
 func main() {
 	fmt.Println("[INFO] AI Office backend starting...")
@@ -66,10 +36,16 @@ func main() {
 
 	// เลือก storage ด้วย STORE_DRIVER — service/handler ไม่รู้ว่าเบื้องหลังเป็นอะไร
 	var repo port.OfficeRepository
+	var groupRepo port.OfficeGroupRepository
 	var cuRepo port.ConsoleUserRepository
 	var rmRepo port.RoleConfigRepository
 	var auditRepo port.AuditRepository
 	var chatRepo port.ChatRepository
+	var verifRepo port.VerificationRepository
+	var accessRepo port.AccessLogRepository
+	var settingsRepo port.SettingsRepository
+	var usageRepo port.UsageRepository
+	var deletionRepo port.DeletionRepository
 	if cfg.Store.IsMongo() {
 		res, err := mongodb.New(ctx, cfg.Store.URI, cfg.Store.DBName)
 		if err != nil {
@@ -81,9 +57,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] สร้าง index ไม่สำเร็จ: %v", err)
 		}
-		if err := seedIfEmpty(ctx, repo); err != nil {
-			log.Fatalf("[ERROR] seed: %v", err)
-		}
+		groupRepo = repository.NewOfficeGroupRepository(res.DB)
 		fmt.Printf("[INFO] office store: MongoDB · db=%s ✔\n", cfg.Store.DBName)
 
 		cuRepo, err = repository.NewConsoleUserRepository(ctx, res.DB)
@@ -105,15 +79,34 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] chat store: สร้าง index ไม่สำเร็จ: %v", err)
 		}
+		verifRepo, err = repository.NewVerificationRepository(ctx, res.DB)
+		if err != nil {
+			log.Fatalf("[ERROR] verification store: สร้าง index ไม่สำเร็จ: %v", err)
+		}
+		accessRepo, err = repository.NewAccessLogRepository(ctx, res.DB)
+		if err != nil {
+			log.Fatalf("[ERROR] access log store: สร้าง index ไม่สำเร็จ: %v", err)
+		}
+		settingsRepo = repository.NewSettingsRepository(res.DB)
+		usageRepo = repository.NewUsageRepository(res.DB)
+		deletionRepo, err = repository.NewDeletionRepository(ctx, res.DB)
+		if err != nil {
+			log.Fatalf("[ERROR] deletion store: สร้าง index ไม่สำเร็จ: %v", err)
+		}
 	} else {
 		var err error
 		// path ของ file store — ใช้เฉพาะโหมด STORE_DRIVER=file (dev/ทดลอง) ไม่ได้มาจาก env
 		const storePath = "./data/offices.json"
-		repo, err = filestore.NewOfficeRepository(storePath, seedOffices())
+		repo, err = filestore.NewOfficeRepository(storePath, nil)
 		if err != nil {
 			log.Fatalf("[ERROR] open office store: %v", err)
 		}
 		fmt.Printf("[INFO] office store: ไฟล์ %s ✔ (ตั้ง STORE_DRIVER=mongo เพื่อใช้ MongoDB)\n", storePath)
+
+		groupRepo, err = filestore.NewOfficeGroupRepository(filepath.Join(filepath.Dir(storePath), "office_groups.json"))
+		if err != nil {
+			log.Fatalf("[ERROR] open office group store: %v", err)
+		}
 
 		cuPath := filepath.Join(filepath.Dir(storePath), "console_users.json")
 		cuRepo, err = filestore.NewConsoleUserRepository(cuPath)
@@ -139,10 +132,24 @@ func main() {
 		if err != nil {
 			log.Fatalf("[ERROR] open chat store: %v", err)
 		}
+		verifRepo, err = filestore.NewVerificationRepository(filepath.Join(filepath.Dir(storePath), "verifications.jsonl"))
+		if err != nil {
+			log.Fatalf("[ERROR] open verification store: %v", err)
+		}
+		accessRepo = filestore.NewAccessLogRepository(filepath.Join(filepath.Dir(storePath), "access_log.jsonl"))
+		settingsRepo = filestore.NewSettingsRepository(filepath.Join(filepath.Dir(storePath), "settings.json"))
+		usageRepo, err = filestore.NewUsageRepository(filepath.Join(filepath.Dir(storePath), "usage.json"))
+		if err != nil {
+			log.Fatalf("[ERROR] open usage store: %v", err)
+		}
+		deletionRepo, err = filestore.NewDeletionRepository(filepath.Join(filepath.Dir(storePath), "deletion_requests.json"))
+		if err != nil {
+			log.Fatalf("[ERROR] open deletion store: %v", err)
+		}
 	}
 
 	auditSvc := service.NewAuditService(auditRepo, time.Now)
-	officeService := service.NewOfficeService(repo, auditSvc)
+	officeService := service.NewOfficeService(repo, groupRepo, auditSvc)
 
 	// widget หา office จากโดเมน — โดเมนซ้ำข้าม office / รูปแบบเก่าที่ยังไม่ normalize ทำให้หาผิดตัวได้
 	if issues, err := officeService.OriginIssues(ctx); err != nil {
@@ -228,19 +235,20 @@ func main() {
 		}
 		fmt.Println("[WARN] CHAT_TICKET_SECRET ไม่ได้ตั้งค่า — ใช้ dev secret ชั่วคราว ██ ห้ามใช้บน production")
 	}
-	// ตั๋วอายุ 30 นาที — widget ต่ออายุเองก่อนหมด 60 วิ
-	chatTickets := auth.NewChatTicketIssuer(cfg.Console.ChatTicketSecret, 30*time.Minute)
+	settingsSvc := service.NewSettingsService(settingsRepo, auditSvc)
+	usageSvc := service.NewUsageService(usageRepo)
+	deletionSvc := service.NewDeletionService(chatRepo, verifRepo, accessRepo, deletionRepo, officeService, auditSvc)
+	deletionSvc.RecoverStale(ctx)
+
+	// อายุตั๋วตามตั้งค่าระบบ — widget ขอใหม่เองก่อนหมด
+	chatTickets := auth.NewChatTicketIssuer(cfg.Console.ChatTicketSecret, func() time.Duration {
+		return time.Duration(settingsSvc.Current().TicketTTLMin) * time.Minute
+	})
 	relay := service.NewRelay()
 	var chatSvc *service.ChatService
 	if llm != nil {
 		loc, _ := conn.Location()
-		chatSvc = service.NewChatService(llm, chatRepo, service.NewToolRunner(relay), loc, service.ChatSettings{
-			LLMTimeout:      25 * time.Second,
-			StreamTimeout:   60 * time.Second,
-			MaxOutputTokens: 1024,
-			MaxConcurrent:   5,
-			MonthlyQuota:    0, // ██ ยังไม่มีเพดานค่าใช้จ่าย (O7) — ไม่จำกัด
-		})
+		chatSvc = service.NewChatService(llm, chatRepo, service.NewToolRunner(relay, settingsSvc), loc, settingsSvc, usageSvc)
 	}
 
 	r := httpgin.NewRouter(httpgin.Deps{
@@ -257,6 +265,11 @@ func main() {
 		Relay:        relay,
 		Tickets:      chatTickets,
 		Connector:    conn,
+		ChatAdmin:    service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc),
+		Settings:     settingsSvc,
+		Usage:        usageSvc,
+		Deletion:     deletionSvc,
+		LLMInfo:      routes.LLMInfo{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, Enabled: llm != nil},
 	})
 
 	addr := ":" + cfg.HTTP.Port

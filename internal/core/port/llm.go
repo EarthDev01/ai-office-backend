@@ -53,9 +53,12 @@ type LLMRequest struct {
 	MaxTokens  int
 }
 
+// LLMUsage — InputTokens ไม่รวมส่วนที่อ่าน/เขียน prompt cache (แยกไว้ใน CacheRead/CacheWrite)
 type LLMUsage struct {
 	InputTokens  int
 	OutputTokens int
+	CacheRead    int
+	CacheWrite   int
 }
 
 type LLMResponse struct {

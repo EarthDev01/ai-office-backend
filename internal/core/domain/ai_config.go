@@ -14,6 +14,7 @@ type UpdateOffice struct {
 	Label          *string    `json:"label"`
 	AllowedOrigins *[]string  `json:"allowed_origins"`
 	HostAPIBase    *string    `json:"host_api_base"`
+	GroupID        *string    `json:"group_id"`
 	Enabled        *bool      `json:"enabled"`
 	IsHidden       *bool      `json:"is_hidden"`
 	Theme          *string    `json:"theme"`

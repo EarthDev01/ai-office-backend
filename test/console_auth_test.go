@@ -168,7 +168,7 @@ func TestOfficeRoutes_RoleGates(t *testing.T) {
 	w := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"newoffice","label":"New Office"}`,
+		body:    `{"group_id":"g-test","id":"newoffice","label":"New Office"}`,
 		console: operatorTok,
 	})
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
@@ -179,7 +179,7 @@ func TestOfficeRoutes_RoleGates(t *testing.T) {
 	w2 := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"anotheroffice","label":"Another"}`,
+		body:    `{"group_id":"g-test","id":"anotheroffice","label":"Another"}`,
 		console: viewerTok,
 	})
 	if w2.Code != http.StatusForbidden {
@@ -238,7 +238,7 @@ func TestRolePermissions_ConfigurableRBAC(t *testing.T) {
 	w := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"rbac-op","label":"RBAC Op"}`,
+		body:    `{"group_id":"g-test","id":"rbac-op","label":"RBAC Op"}`,
 		console: operatorTok,
 	})
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
@@ -253,7 +253,7 @@ func TestRolePermissions_ConfigurableRBAC(t *testing.T) {
 	wv := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"rbac-viewer-before","label":"Before"}`,
+		body:    `{"group_id":"g-test","id":"rbac-viewer-before","label":"Before"}`,
 		console: viewerTok,
 	})
 	if wv.Code != http.StatusForbidden {
@@ -284,7 +284,7 @@ func TestRolePermissions_ConfigurableRBAC(t *testing.T) {
 	wv2 := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"rbac-viewer-after","label":"After"}`,
+		body:    `{"group_id":"g-test","id":"rbac-viewer-after","label":"After"}`,
 		console: viewerTok,
 	})
 	if wv2.Code != http.StatusCreated && wv2.Code != http.StatusOK {
@@ -308,7 +308,7 @@ func TestBreakGlass_StillWorksForOfficeWrite(t *testing.T) {
 	w := do(t, r, req{
 		method:  http.MethodPost,
 		path:    "/api/ai/admin/offices",
-		body:    `{"id":"bgoffice","label":"BG Office"}`,
+		body:    `{"group_id":"g-test","id":"bgoffice","label":"BG Office"}`,
 		console: consoleToken,
 	})
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
@@ -461,6 +461,34 @@ func TestCORS_PreflightAllowsAllConsoleMethods(t *testing.T) {
 		}
 		if !strings.Contains(w.Header().Get("Access-Control-Allow-Methods"), m) {
 			t.Fatalf("preflight: %s missing from Allow-Methods %q", m, w.Header().Get("Access-Control-Allow-Methods"))
+		}
+	}
+}
+
+// admin ต้องได้ทุกสิทธิ์จาก /auth/me แม้ matrix ที่บันทึกไว้จะขาดสิทธิ์ (เช่นบันทึกก่อนมีสิทธิ์ใหม่)
+// — ไม่งั้นเมนูของ admin หายทั้งที่ API ให้ผ่าน
+func TestConsoleAuth_AdminAlwaysHasAllPermissions(t *testing.T) {
+	r := newRouter(t)
+	vp := registerAndEnroll(t, r, "earth", "secret12")
+
+	body := `{"matrix":{"admin":["office.view","user.manage"],"operator":["office.view"],"viewer":["office.view"]}}`
+	if w := do(t, r, req{method: http.MethodPut, path: "/api/ai/admin/role-permissions", console: vp.Token, body: body}); w.Code != http.StatusOK {
+		t.Fatalf("put matrix: %d %s", w.Code, w.Body.String())
+	}
+	w := do(t, r, req{method: http.MethodGet, path: "/api/ai/admin/auth/me", console: vp.Token})
+	me := payload[struct {
+		Permissions []string `json:"permissions"`
+	}](t, w)
+	got := map[string]bool{}
+	for _, p := range me.Permissions {
+		if got[p] {
+			t.Fatalf("สิทธิ์ซ้ำ: %s", p)
+		}
+		got[p] = true
+	}
+	for _, p := range domain.PermissionCatalog() {
+		if !got[p.Key] {
+			t.Errorf("admin ขาดสิทธิ์ %s", p.Key)
 		}
 	}
 }

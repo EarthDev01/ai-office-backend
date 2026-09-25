@@ -70,8 +70,17 @@ type request struct {
 }
 
 type usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+// toUsage — prompt_tokens ของ API แบบ OpenAI รวมส่วนที่มาจาก cache ไว้แล้ว จึงแยกออก
+func (u usage) toUsage() port.LLMUsage {
+	cached := u.PromptTokensDetails.CachedTokens
+	return port.LLMUsage{InputTokens: u.PromptTokens - cached, OutputTokens: u.CompletionTokens, CacheRead: cached}
 }
 
 type apiError struct {
@@ -167,7 +176,7 @@ func (c *Client) Complete(ctx context.Context, req port.LLMRequest) (port.LLMRes
 	if out.Error != nil {
 		return port.LLMResponse{}, fmt.Errorf("llm: %v %s", out.Error.Code, out.Error.Message)
 	}
-	r := port.LLMResponse{Usage: port.LLMUsage{InputTokens: out.Usage.PromptTokens, OutputTokens: out.Usage.CompletionTokens}}
+	r := port.LLMResponse{Usage: out.Usage.toUsage()}
 	if len(out.Choices) > 0 {
 		m := out.Choices[0].Message
 		r.Text = m.Content
@@ -216,7 +225,7 @@ func (c *Client) Stream(ctx context.Context, req port.LLMRequest, onDelta func(s
 			return u, fmt.Errorf("llm: %v %s", ch.Error.Code, ch.Error.Message)
 		}
 		if ch.Usage != nil {
-			u = port.LLMUsage{InputTokens: ch.Usage.PromptTokens, OutputTokens: ch.Usage.CompletionTokens}
+			u = ch.Usage.toUsage()
 		}
 		for _, choice := range ch.Choices {
 			if choice.Delta.Content == "" {

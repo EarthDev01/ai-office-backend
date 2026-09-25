@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -89,6 +90,8 @@ func newRouter(t *testing.T, seed ...domain.Office) *gin.Engine {
 
 const chatTicketSecret = "test-chat-ticket-secret"
 
+const testGroupID = "g-test"
+
 // newDeps ประกอบ Deps ของ router ทั้งชุด — แชทปิดอยู่ (Chat = nil) ให้ test ที่ต้องใช้ใส่เอง
 func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
 	t.Helper()
@@ -122,12 +125,42 @@ func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
 		auditSvc,
 		time.Now,
 	)
+	dir := t.TempDir()
+	chatRepo, err := filestore.NewChatRepository(filepath.Join(dir, "conversations.jsonl"), filepath.Join(dir, "messages.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifRepo, err := filestore.NewVerificationRepository(filepath.Join(dir, "verifications.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessRepo := filestore.NewAccessLogRepository(filepath.Join(dir, "access_log.jsonl"))
+	usageRepo, err := filestore.NewUsageRepository(filepath.Join(dir, "usage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletionRepo, err := filestore.NewDeletionRepository(filepath.Join(dir, "deletions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupRepo, err := filestore.NewOfficeGroupRepository(filepath.Join(dir, "office_groups.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// กลุ่มตั้งต้นของเทส — สร้าง domain ใหม่ต้องระบุกลุ่มเสมอ
+	if err := groupRepo.Save(context.Background(), domain.OfficeGroup{ID: testGroupID, Name: "กลุ่มทดสอบ"}); err != nil {
+		t.Fatal(err)
+	}
+	officeSvc := service.NewOfficeService(repo, groupRepo, auditSvc)
+	settingsSvc := service.NewSettingsService(filestore.NewSettingsRepository(filepath.Join(dir, "settings.json")), auditSvc)
+	usageSvc := service.NewUsageService(usageRepo)
+
 	conn, err := connector.Load("../connectors/office-v10x")
 	if err != nil {
 		t.Fatalf("load connector: %v", err)
 	}
 	return httpgin.Deps{
-		OfficeService: service.NewOfficeService(repo, auditSvc),
+		OfficeService: officeSvc,
 		Identity:      service.NewIdentityResolver(50 * time.Millisecond),
 		BundlePath:    filepath.Join(t.TempDir(), "missing.js"),
 		Tokens:        auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
@@ -136,8 +169,13 @@ func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
 		Audit:         auditSvc,
 		ConsoleToken:  consoleToken,
 		Relay:         service.NewRelay(),
-		Tickets:       auth.NewChatTicketIssuer(chatTicketSecret, time.Hour),
+		Tickets:       auth.NewChatTicketIssuer(chatTicketSecret, func() time.Duration { return time.Hour }),
 		Connector:     conn,
+		ChatRepo:      chatRepo,
+		ChatAdmin:     service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc),
+		Settings:      settingsSvc,
+		Usage:         usageSvc,
+		Deletion:      service.NewDeletionService(chatRepo, verifRepo, accessRepo, deletionRepo, officeSvc, auditSvc),
 	}
 }
 

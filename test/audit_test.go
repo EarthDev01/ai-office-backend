@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -246,8 +247,11 @@ func TestAudit_RolePermissionsDiff(t *testing.T) {
 	r := newRouter(t)
 	vp := registerAndEnroll(t, r, "earth", "secret12")
 
-	w := do(t, r, req{method: http.MethodPut, path: "/api/ai/admin/role-permissions", console: vp.Token,
-		body: `{"matrix":{"admin":["office.view","office.edit","office.delete","user.manage","audit.view"],"operator":["office.view","office.edit","office.delete"],"viewer":["office.view","audit.view"]}}`})
+	// matrix ค่าเริ่มต้น + ให้ viewer ได้ audit.view เพิ่มอย่างเดียว
+	matrix := domain.DefaultRoleConfig().Matrix
+	matrix["viewer"] = append(append([]string{}, matrix["viewer"]...), domain.PermAuditView)
+	body, _ := json.Marshal(map[string]any{"matrix": matrix})
+	w := do(t, r, req{method: http.MethodPut, path: "/api/ai/admin/role-permissions", console: vp.Token, body: string(body)})
 	if w.Code != http.StatusOK {
 		t.Fatalf("put matrix: %d %s", w.Code, w.Body.String())
 	}

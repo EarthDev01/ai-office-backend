@@ -26,15 +26,15 @@ type chatClaims struct {
 
 type chatTicketIssuer struct {
 	secret []byte
-	ttl    time.Duration
+	ttl    func() time.Duration
 }
 
-// NewChatTicketIssuer — secret ██ ห้าม log
-func NewChatTicketIssuer(secret string, ttl time.Duration) port.ChatTicketIssuer {
+// NewChatTicketIssuer — secret ██ ห้าม log · ttl อ่านทุกครั้งที่ออกตั๋ว (ปรับได้จากตั้งค่าระบบ)
+func NewChatTicketIssuer(secret string, ttl func() time.Duration) port.ChatTicketIssuer {
 	return &chatTicketIssuer{secret: []byte(secret), ttl: ttl}
 }
 
-func (i *chatTicketIssuer) TTL() time.Duration { return i.ttl }
+func (i *chatTicketIssuer) TTL() time.Duration { return i.ttl() }
 
 func (i *chatTicketIssuer) Issue(t domain.ChatTicket) (string, error) {
 	if t.ID == "" {
@@ -43,13 +43,14 @@ func (i *chatTicketIssuer) Issue(t domain.ChatTicket) (string, error) {
 		t.ID = hex.EncodeToString(b)
 	}
 	now := time.Now()
+	ttl := i.ttl()
 	claims := chatClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        t.ID,
 			Subject:   t.AdminID,
 			Audience:  jwt.ClaimStrings{chatAudience},
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 		Office: t.OfficeID, Service: t.ServiceID, Username: t.Username,
 		Level: t.Level, Permissions: t.Permissions,

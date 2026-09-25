@@ -236,7 +236,7 @@ function explain(reason: string, hint?: string) {
 }
 
 const HINTS: Record<string, string> = {
-  ORIGIN_NOT_REGISTERED: `โดเมน ${location.origin} ยังไม่ได้ลงทะเบียน — เพิ่มใน "โดเมนที่อนุญาต" ของ office ที่ officeai`,
+  ORIGIN_NOT_REGISTERED: `โดเมน ${location.origin} ยังไม่ได้ลงทะเบียน — เพิ่มใน "URL ของ domain" ที่ officeai`,
   ORIGIN_REQUIRED: 'เบราว์เซอร์ไม่ได้ส่ง Origin มา — widget ต้องถูกเรียกจากหน้าเว็บของ officeลูกค้า',
   SERVICE_NOT_ALLOWED: 'บัญชีนี้ไม่มี service นี้ใน Role.ListService ของหลังบ้าน',
   SESSION_EXPIRED: 'token หมดอายุ ให้ล็อกอินหลังบ้านใหม่',
