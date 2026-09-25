@@ -12,7 +12,7 @@ import (
 	"ai-office-backend/internal/core/port"
 )
 
-// token ของผู้ช่วยในคอนโซลบันทึกไว้ใต้รหัสนี้ แยกจาก domain ของลูกค้า — หน้าภาพรวม/การใช้งาน token ของคอนโซลตัดออกเอง (ไม่แสดง)
+// token ของผู้ช่วยในคอนโซลนับแยกจาก domain ของลูกค้า (หน้าการใช้งาน token แสดงเป็น "ผู้ช่วยคอนโซล")
 const (
 	AssistantUsageOffice  = "_console"
 	AssistantUsageService = "assistant"
