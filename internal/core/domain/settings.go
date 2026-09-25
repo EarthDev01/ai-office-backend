@@ -21,6 +21,9 @@ type Settings struct {
 	ToolTimeoutMs   int    `json:"tool_timeout_ms"   bson:"tool_timeout_ms"`     // ค่าเริ่มต้นเมื่อ connector ไม่ได้ตั้ง
 
 	LLM LLMSettings `json:"llm" bson:"llm"` // โมเดลที่ใช้ตอบแชท
+
+	// AssistantEnabled เปิดปุ่มผู้ช่วย AI ในคอนโซล · ค่าเริ่มต้นปิด (ใช้ token จริงทุกคำถาม)
+	AssistantEnabled bool `json:"assistant_enabled" bson:"assistant_enabled"`
 	// LLMRecent คือค่าล่าสุดที่เคยบันทึกของแต่ละ provider (key = provider id) — สลับกลับมาแล้วไม่ต้องกรอกใหม่
 	// server ดูแลเอง ไม่รับจาก patch
 	LLMRecent map[string]LLMSettings `json:"llm_recent" bson:"llm_recent,omitempty"`

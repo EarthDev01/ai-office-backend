@@ -99,8 +99,9 @@ type SettingsPatch struct {
 	HistoryTurns    *int    `json:"history_turns"`
 	ToolTimeoutMs   *int    `json:"tool_timeout_ms"`
 	// LLM ส่งมาทั้งชุด (provider/model/effort/base_url) แทนที่ค่าเดิม
-	LLM       *domain.LLMSettings `json:"llm"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	LLM              *domain.LLMSettings `json:"llm"`
+	AssistantEnabled *bool               `json:"assistant_enabled"`
+	UpdatedAt        time.Time           `json:"updated_at"`
 }
 
 // ErrSettingsConflict — มีคนแก้ไปก่อนตั้งแต่ผู้แก้โหลดหน้า
@@ -135,6 +136,9 @@ func (s *SettingsService) Update(ctx context.Context, p SettingsPatch, actor str
 	}
 	if p.LLM != nil {
 		next.LLM = *p.LLM
+	}
+	if p.AssistantEnabled != nil {
+		next.AssistantEnabled = *p.AssistantEnabled
 	}
 	if err := next.Validate(); err != nil {
 		return before, err

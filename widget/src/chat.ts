@@ -86,6 +86,43 @@ export async function runChat(opts: {
   return conversationID
 }
 
+/** ข้อความ 1 ชิ้นในห้องคุยของผู้ช่วยคอนโซล — ห้องอยู่ที่หน้าเว็บ ส่งไปทั้งชุดทุกครั้ง */
+export interface ConsoleTurn {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+/**
+ * ถามผู้ช่วยในคอนโซล AI Office — ใช้ token ของคอนโซล ไม่มี fetch/relay ไปหลังบ้านลูกค้า
+ * (server ดึงข้อมูลในระบบเองตามสิทธิ์ของคนถาม) · event ชุดเดียวกับแชทปกติ
+ */
+export async function runConsoleChat(opts: {
+  apiBase: string
+  token: string
+  messages: ConsoleTurn[]
+  page: string
+  on: ChatHandlers
+}): Promise<void> {
+  const res = await fetch(`${opts.apiBase}/api/ai/admin/assistant`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${opts.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: opts.messages, page: opts.page }),
+  })
+  if (!res.ok || !res.body) {
+    const json = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new ChatError(json?.error || `เซิร์ฟเวอร์ตอบ ${res.status}`)
+  }
+  let failed: ChatError | null = null
+  await readSSE(res.body, (event, data) => {
+    const d = data as Record<string, unknown>
+    if (event === 'status') opts.on.status(String(d.text ?? ''))
+    else if (event === 'card') opts.on.card(d as unknown as Card)
+    else if (event === 'token') opts.on.token(String(d.text ?? ''))
+    else if (event === 'error') failed = new ChatError(String(d.message ?? 'ผู้ช่วยตอบไม่สำเร็จ'))
+  })
+  if (failed) throw failed
+}
+
 /** อ่าน text/event-stream จาก fetch — EventSource ใช้ไม่ได้เพราะต้อง POST + ส่ง Authorization */
 export async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: unknown) => void) {
   const reader = body.getReader()
