@@ -187,7 +187,7 @@ func (s *PermissionService) SetMatrix(ctx context.Context, m map[string][]string
 			names[i] = cfg.Label(c.Field)
 		}
 		s.audit.Record(ctx, domain.AuditEntry{
-			Action: domain.AuditRolePermissions, TargetType: "role_matrix", TargetID: "default", TargetLabel: "สิทธิ์ของ role",
+			Action: domain.AuditRolePermissions, TargetType: "role_matrix", TargetID: "default", TargetLabel: "ตั้งค่า Permissions",
 			Summary: fmt.Sprintf("แก้สิทธิ์ของ role %d ตัว: %s", len(changes), strings.Join(names, ", ")),
 			Changes: changes,
 		})

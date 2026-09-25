@@ -230,3 +230,20 @@ func TestLLMKeys_ImportEnvOnceAndBrokenSecret(t *testing.T) {
 		t.Fatalf("กุญแจผิด = %+v", info)
 	}
 }
+
+// openai ต้องมี base_url — ไม่มีต้องบอกทันที ก่อนยืนยัน 2FA (ไม่นับเป็นครั้งที่ผิด)
+func TestLLMKeys_MissingBaseURLCheckedBefore2FA(t *testing.T) {
+	e := keyServer(t)
+	for i := 0; i < 6; i++ {
+		code, body := e.put(t, "openai", goodKey, "000000", e.token)
+		if code != http.StatusBadRequest || !strings.Contains(body, "base_url") {
+			t.Fatalf("ครั้งที่ %d = %d %s", i+1, code, body)
+		}
+	}
+	// ถ้านับเป็นครั้งที่ผิด บัญชีจะล็อกไปแล้ว — ต้องยังตั้ง key ได้เมื่อส่ง base_url มา
+	w := do(t, e.r, req{method: http.MethodPut, path: "/api/ai/admin/settings/llm/keys/openai", console: e.token,
+		body: `{"key":"` + goodKey + `","code":"` + e.code(t) + `","base_url":"https://api.example.com/v1"}`})
+	if w.Code != 200 {
+		t.Fatalf("ส่ง base_url แล้ว = %d %s", w.Code, w.Body.String())
+	}
+}
