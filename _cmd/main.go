@@ -248,6 +248,10 @@ func main() {
 	llm := llmrouter.New(llmKeys.Key, func() domain.LLMSettings { return settingsSvc.Current().LLM })
 	settingsSvc.SetLLMKeyCheck(llm.HasKey)
 	llmKeys.SetCurrent(func() domain.LLMSettings { return settingsSvc.Current().LLM })
+	llmKeys.SetRecent(func(p string) (domain.LLMSettings, bool) {
+		v, ok := settingsSvc.Current().LLMRecent[p]
+		return v, ok
+	})
 	llmKeys.SetTester(llm.TestWithKey)
 	if cur := settingsSvc.Current().LLM; !llm.Ready() {
 		fmt.Printf("[WARN] โมเดลที่เลือก (%s · %s) ยังไม่มี key — ปิดแชท (/chat ตอบ 503) จนกว่าจะใส่ key หรือเปลี่ยนโมเดลในคอนโซล\n", cur.Provider, cur.Model)

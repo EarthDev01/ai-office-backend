@@ -42,6 +42,7 @@ type LLMKeyService struct {
 	now     func() time.Time
 	tester  LLMKeyTester
 	current func() domain.LLMSettings
+	recent  func(provider string) (domain.LLMSettings, bool) // ค่าล่าสุดที่เคยบันทึกของ provider นั้น
 
 	mu     sync.RWMutex
 	keys   map[string]string // provider → key ที่ถอดแล้ว ██ secret ห้าม log
@@ -63,6 +64,9 @@ func NewLLMKeyService(repo port.LLMCredentialRepository, box port.SecretBox, env
 // SetTester / SetCurrent ต่อทีหลังเพราะ router ของ LLM ต้องอ่าน key จาก service นี้ก่อน
 func (s *LLMKeyService) SetTester(t LLMKeyTester)               { s.tester = t }
 func (s *LLMKeyService) SetCurrent(f func() domain.LLMSettings) { s.current = f }
+func (s *LLMKeyService) SetRecent(f func(provider string) (domain.LLMSettings, bool)) {
+	s.recent = f
+}
 
 // Editable — ตั้ง/ลบ key จากหน้าเว็บได้ไหม
 func (s *LLMKeyService) Editable() bool { return s.box != nil }
@@ -151,7 +155,8 @@ func (s *LLMKeyService) Info(provider string) domain.LLMKeyInfo {
 	}
 }
 
-// SetLLMKey — Model/BaseURL ใช้ทดสอบ key ก่อนบันทึก (ว่าง = โมเดลที่ใช้อยู่ถ้า provider เดียวกัน ไม่งั้นตัวแนะนำตัวแรก)
+// SetLLMKey — Model/BaseURL ใช้ทดสอบ key ก่อนบันทึก
+// (ว่าง = ค่าที่ใช้อยู่ถ้า provider เดียวกัน → ค่าล่าสุดที่เคยบันทึกของ provider นั้น → โมเดลแนะนำตัวแรก)
 type SetLLMKey struct {
 	Provider string
 	Key      string // ██ secret
@@ -179,14 +184,17 @@ func (s *LLMKeyService) Set(ctx context.Context, in SetLLMKey, actor KeyActor) (
 	if err := domain.ValidateAPIKey(key); err != nil {
 		return domain.LLMKeyInfo{}, err
 	}
+	// ตรวจค่าที่ใช้ทดสอบก่อนยืนยัน 2FA — ค่าไม่ครบไม่ควรเผารหัสหรือนับเป็นครั้งที่ผิด
+	cfg := s.testConfig(in)
+	if s.tester != nil {
+		if err := cfg.Validate(); err != nil {
+			return domain.LLMKeyInfo{}, fmt.Errorf("ทดสอบ key ไม่ได้: %w", err)
+		}
+	}
 	if err := s.confirm(ctx, actor, in.Code); err != nil {
 		return domain.LLMKeyInfo{}, err
 	}
 	if s.tester != nil {
-		cfg := s.testConfig(in)
-		if err := cfg.Validate(); err != nil {
-			return domain.LLMKeyInfo{}, fmt.Errorf("ทดสอบ key ไม่ได้: %w", err)
-		}
 		if _, err := s.tester(ctx, cfg, key); err != nil {
 			return domain.LLMKeyInfo{}, fmt.Errorf("key ใช้ไม่ได้ — ยังไม่บันทึก: %s", redactWith(err.Error(), key))
 		}
@@ -268,15 +276,25 @@ func (s *LLMKeyService) confirm(ctx context.Context, actor KeyActor, code string
 
 func (s *LLMKeyService) testConfig(in SetLLMKey) domain.LLMSettings {
 	cfg := domain.LLMSettings{Provider: in.Provider, Model: in.Model, BaseURL: in.BaseURL}
+	fill := func(from domain.LLMSettings) {
+		if cfg.Model == "" {
+			cfg.Model = from.Model
+		}
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = from.BaseURL
+		}
+		if cfg.Effort == "" {
+			cfg.Effort = from.Effort
+		}
+	}
 	if s.current != nil {
 		if cur := s.current(); cur.Provider == in.Provider {
-			if cfg.Model == "" {
-				cfg.Model = cur.Model
-			}
-			if cfg.BaseURL == "" {
-				cfg.BaseURL = cur.BaseURL
-			}
-			cfg.Effort = cur.Effort
+			fill(cur)
+		}
+	}
+	if s.recent != nil {
+		if prev, ok := s.recent(in.Provider); ok {
+			fill(prev)
 		}
 	}
 	if cfg.Model == "" {
