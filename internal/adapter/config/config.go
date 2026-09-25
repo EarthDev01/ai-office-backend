@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 
+	"ai-office-backend/internal/core/domain"
+
 	"github.com/joho/godotenv"
 )
 
 // Container เก็บเฉพาะค่าที่มาจาก env จริง: APP_MODE, HTTP_PORT, STORE_DRIVER,
-// DB_URI, DB_NAME, CONSOLE_JWT_SECRET, CHAT_TICKET_SECRET, LLM_* · ค่าคงที่อื่น ๆ (CORS origin, TTL, timeout,
+// DB_URI, DB_NAME, CONSOLE_JWT_SECRET, CHAT_TICKET_SECRET, key ของ LLM (+ LLM_* ค่าตั้งต้นครั้งแรก) · ค่าคงที่อื่น ๆ (CORS origin, TTL, timeout,
 // path ของ file store) ไม่ได้อยู่ตรงนี้ — ฝังไว้ที่จุดใช้ใน _cmd/main.go แทน
 type Container struct {
 	App     *App
@@ -18,38 +20,61 @@ type Container struct {
 	LLM     *LLM
 }
 
-// LLM เลือกตัวที่ใช้ตอบแชท · key ว่าง = ปิดแชท (endpoint ตอบ 503) · key ██ secret ห้าม log
+// LLM — โมเดลและ API key ตั้งที่คอนโซล (ตั้งค่าระบบ) · .env เหลือ LLM_KEY_SECRET
 //
-//	anthropic  Claude — ตัวที่ใช้บน production
-//	gemini     ทดสอบเท่านั้น
-//	openai     API แบบ Chat Completions (เช่น GLM ของ z.ai) ทดสอบเท่านั้น · ต้องตั้ง LLM_BASE_URL
+// Keys ██ secret ห้าม log · ชื่อตัวแปรมาจาก domain.LLMProviderCatalog (ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY)
+// ถูกย้ายเข้า DB (เข้ารหัส) ครั้งแรกที่เปิด server แล้วไม่อ่านอีก · LLM_API_KEY เดิม = key ของ LLM_PROVIDER
+// Provider/Model/Effort/BaseURL ใช้เป็นค่าตั้งต้นครั้งแรกเท่านั้น (ก่อนบันทึกจากคอนโซล)
 type LLM struct {
+	Keys map[string]string
+
+	// KeySecret ██ secret — กุญแจหลักเข้ารหัส API key ที่ตั้งจากคอนโซล (base64 32 byte)
+	// ว่าง = ตั้ง key จากหน้าเว็บไม่ได้ ใช้ Keys จาก .env แทน (production ไม่ยอมเปิด)
+	KeySecret string
+
 	Provider string
-	APIKey   string
 	Model    string
-	BaseURL  string // openai เท่านั้น — key ของ GLM Coding Plan ใช้ได้เฉพาะ /api/coding/paas/v4
-	Effort   string // anthropic เท่านั้น
+	Effort   string
+	BaseURL  string
 }
 
-// LLMProviders คือค่า LLM_PROVIDER ที่โค้ดรู้จัก — ค่าอื่นต้องไม่ถูกปล่อยผ่านเงียบ ๆ
-var LLMProviders = map[string]bool{"anthropic": true, "gemini": true, "openai": true}
-
-// Validate ตรวจตอนเปิด server ทุก mode — provider ที่พิมพ์ผิดเคยทำให้ตกไปใช้ตัวอื่นด้วย key ผิด
-// แล้วแชทตอบ "ไม่ตอบกลับในเวลาที่กำหนด" ทุกข้อความโดยไม่มีใครรู้สาเหตุ
+// Validate — provider ที่พิมพ์ผิดเคยทำให้ key ไปผิดตัวแล้วแชทตอบ timeout ทุกข้อความโดยไม่มีใครรู้สาเหตุ
 func (l *LLM) Validate() error {
-	if !LLMProviders[l.Provider] {
+	if _, ok := domain.LLMProviderByID(l.Provider); !ok {
 		return fmt.Errorf("LLM_PROVIDER=%q ไม่รู้จัก — ใช้ได้: anthropic | gemini | openai", l.Provider)
 	}
-	if l.APIKey == "" {
-		return nil // ปิดแชท แต่ระบบส่วนอื่นยังทำงาน
-	}
-	if l.Model == "" {
-		return fmt.Errorf("LLM_MODEL ว่าง (provider=%s)", l.Provider)
-	}
-	if l.Provider == "openai" && l.BaseURL == "" {
-		return fmt.Errorf("LLM_PROVIDER=openai ต้องตั้ง LLM_BASE_URL")
-	}
 	return nil
+}
+
+// Seed คือโมเดลตั้งต้นจาก .env · ไม่ได้ตั้ง LLM_MODEL = ใช้ตัวแรกที่แนะนำของ provider นั้น
+func (l *LLM) Seed() domain.LLMSettings {
+	s := domain.LLMSettings{Provider: l.Provider, Model: l.Model, Effort: l.Effort, BaseURL: l.BaseURL}
+	if s.Model == "" {
+		if p, ok := domain.LLMProviderByID(l.Provider); ok && len(p.Models) > 0 {
+			s.Model = p.Models[0]
+		}
+	}
+	return s
+}
+
+func loadLLM() *LLM {
+	l := &LLM{
+		Keys:      map[string]string{},
+		KeySecret: os.Getenv("LLM_KEY_SECRET"),
+		Provider:  env("LLM_PROVIDER", domain.LLMAnthropic),
+		Model:     os.Getenv("LLM_MODEL"),
+		Effort:    env("LLM_EFFORT", "low"),
+		BaseURL:   os.Getenv("LLM_BASE_URL"),
+	}
+	for _, p := range domain.LLMProviderCatalog {
+		if v := os.Getenv(p.EnvKey); v != "" {
+			l.Keys[p.ID] = v
+		}
+	}
+	if legacy := os.Getenv("LLM_API_KEY"); legacy != "" && l.Keys[l.Provider] == "" {
+		l.Keys[l.Provider] = legacy
+	}
+	return l
 }
 
 type App struct {
@@ -95,13 +120,7 @@ func New() (*Container, error) {
 			JWTSecret:        env("CONSOLE_JWT_SECRET", "dev-console-jwt-secret"),
 			ChatTicketSecret: env("CHAT_TICKET_SECRET", "dev-chat-ticket-secret"),
 		},
-		LLM: &LLM{
-			Provider: env("LLM_PROVIDER", "anthropic"),
-			APIKey:   os.Getenv("LLM_API_KEY"),
-			Model:    os.Getenv("LLM_MODEL"),
-			BaseURL:  os.Getenv("LLM_BASE_URL"),
-			Effort:   env("LLM_EFFORT", "low"),
-		},
+		LLM: loadLLM(),
 	}, nil
 }
 

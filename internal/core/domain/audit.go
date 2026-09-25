@@ -95,6 +95,9 @@ const (
 	AuditAccessDenied = "access.denied"
 
 	AuditSettingsUpdate  = "settings.update"
+	AuditLLMKeySet       = "llm_key.set"
+	AuditLLMKeyDelete    = "llm_key.delete"
+	AuditAuthStepUpFail  = "auth.stepup_failed"
 	AuditDeletionRequest = "deletion.request"
 )
 

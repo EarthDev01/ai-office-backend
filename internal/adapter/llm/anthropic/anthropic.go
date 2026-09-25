@@ -1,4 +1,4 @@
-// Package anthropic เรียก Claude ผ่าน Messages API (SDK ทางการ) — ตัวที่ใช้บน production
+// Package anthropic เรียก Claude ผ่าน Messages API (SDK ทางการ)
 package anthropic
 
 import (

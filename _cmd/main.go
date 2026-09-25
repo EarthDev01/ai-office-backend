@@ -6,20 +6,18 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/adapter/config"
+	cryptobox "ai-office-backend/internal/adapter/crypto"
 	httpgin "ai-office-backend/internal/adapter/handler/gin"
-	"ai-office-backend/internal/adapter/handler/gin/routes"
-	anthropicllm "ai-office-backend/internal/adapter/llm/anthropic"
-	"ai-office-backend/internal/adapter/llm/gemini"
-	"ai-office-backend/internal/adapter/llm/openaicompat"
+	llmrouter "ai-office-backend/internal/adapter/llm/router"
 	"ai-office-backend/internal/adapter/storage/filestore"
 	mongodb "ai-office-backend/internal/adapter/storage/mongodb"
 	"ai-office-backend/internal/adapter/storage/mongodb/repository"
 	"ai-office-backend/internal/core/connector"
+	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 	"ai-office-backend/internal/core/service"
 )
@@ -44,6 +42,7 @@ func main() {
 	var verifRepo port.VerificationRepository
 	var accessRepo port.AccessLogRepository
 	var settingsRepo port.SettingsRepository
+	var credRepo port.LLMCredentialRepository
 	var usageRepo port.UsageRepository
 	var deletionRepo port.DeletionRepository
 	if cfg.Store.IsMongo() {
@@ -88,6 +87,7 @@ func main() {
 			log.Fatalf("[ERROR] access log store: สร้าง index ไม่สำเร็จ: %v", err)
 		}
 		settingsRepo = repository.NewSettingsRepository(res.DB)
+		credRepo = repository.NewLLMCredentialRepository(res.DB)
 		usageRepo = repository.NewUsageRepository(res.DB)
 		deletionRepo, err = repository.NewDeletionRepository(ctx, res.DB)
 		if err != nil {
@@ -138,6 +138,7 @@ func main() {
 		}
 		accessRepo = filestore.NewAccessLogRepository(filepath.Join(filepath.Dir(storePath), "access_log.jsonl"))
 		settingsRepo = filestore.NewSettingsRepository(filepath.Join(filepath.Dir(storePath), "settings.json"))
+		credRepo = filestore.NewLLMCredentialRepository(filepath.Join(filepath.Dir(storePath), "llm_credentials.json"))
 		usageRepo, err = filestore.NewUsageRepository(filepath.Join(filepath.Dir(storePath), "usage.json"))
 		if err != nil {
 			log.Fatalf("[ERROR] open usage store: %v", err)
@@ -185,31 +186,38 @@ func main() {
 
 	// ---- แชท ----
 	//
-	// provider ผิด = ไม่ยอมเปิด server ทุก mode · ไม่มี key = ปิดแชท แต่ระบบส่วนอื่นยังทำงานปกติ
+	// provider ใน .env ผิด = ไม่ยอมเปิด server · โมเดลและ API key ตั้งที่คอนโซล (ตั้งค่าระบบ)
 	if err := cfg.LLM.Validate(); err != nil {
 		log.Fatalf("[ERROR] %v", err)
 	}
-	var llm port.LLMClient
-	switch {
-	case cfg.LLM.APIKey == "":
-		fmt.Printf("[WARN] LLM_API_KEY ว่าง (provider=%s) — ปิดแชท (/chat ตอบ 503)\n", cfg.LLM.Provider)
-	case cfg.LLM.Provider == "anthropic":
-		llm = anthropicllm.New(cfg.LLM.APIKey, cfg.LLM.Model, cfg.LLM.Effort)
-	case cfg.LLM.Provider == "gemini":
-		llm = gemini.New(cfg.LLM.APIKey, cfg.LLM.Model)
-	case cfg.LLM.Provider == "openai":
-		// GLM ปิดการคิดได้ผ่าน field thinking — ปิดแล้วตอบไวกว่าราว 2 เท่า · provider อื่นไม่รู้จัก field นี้
-		var thinking map[string]string
-		if strings.Contains(cfg.LLM.BaseURL, "z.ai") || strings.Contains(cfg.LLM.BaseURL, "bigmodel") {
-			thinking = map[string]string{"type": "disabled"}
+	// API key เก็บใน DB แบบเข้ารหัสด้วย LLM_KEY_SECRET · ไม่มี secret = production ไม่เปิด (กันลืมแล้ว key ไม่ถูกเข้ารหัส)
+	var keyBox port.SecretBox
+	if cfg.LLM.KeySecret != "" {
+		b, err := cryptobox.NewAESGCM(cfg.LLM.KeySecret, 1)
+		if err != nil {
+			log.Fatalf("[ERROR] %v", err)
 		}
-		llm = openaicompat.New(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model, thinking)
+		keyBox = b
+	} else if !cfg.App.IsDev() {
+		log.Fatalf("[ERROR] production ต้องตั้ง LLM_KEY_SECRET (สร้างด้วย: openssl rand -base64 32)")
+	} else {
+		fmt.Println("[WARN] ยังไม่ตั้ง LLM_KEY_SECRET — ตั้ง API key จากคอนโซลไม่ได้ ใช้ key จาก .env แทน")
 	}
-	if llm != nil {
-		fmt.Printf("[INFO] chat LLM: %s · model=%s ✔\n", cfg.LLM.Provider, cfg.LLM.Model)
-		if cfg.LLM.Provider != "anthropic" && !cfg.App.IsDev() {
-			fmt.Printf("[WARN] production ควรใช้ LLM_PROVIDER=anthropic — %s ใช้ทดสอบเท่านั้น\n", cfg.LLM.Provider)
+	llmKeys := service.NewLLMKeyService(credRepo, keyBox, cfg.LLM.Keys, authSvc, auditSvc)
+	if err := llmKeys.Load(ctx); err != nil {
+		log.Fatalf("[ERROR] อ่าน API key จาก DB ไม่ได้: %v", err)
+	}
+	llmKeys.ImportEnv(ctx)
+	for _, p := range domain.LLMProviderCatalog {
+		k := llmKeys.Info(p.ID)
+		state := "✘ ไม่มี key"
+		switch {
+		case k.Broken:
+			state = "✘ ถอดรหัสไม่ได้ — ตั้งใหม่ในคอนโซล"
+		case k.HasKey:
+			state = "✔ " + k.Source
 		}
+		fmt.Printf("[INFO] LLM key %s: %s\n", p.ID, state)
 	}
 
 	// connector — ผิดแม้ไฟล์เดียวก็ไม่เปิด server · office ทุกเจ้าตอนนี้เป็น office-v10x
@@ -236,6 +244,16 @@ func main() {
 		fmt.Println("[WARN] CHAT_TICKET_SECRET ไม่ได้ตั้งค่า — ใช้ dev secret ชั่วคราว ██ ห้ามใช้บน production")
 	}
 	settingsSvc := service.NewSettingsService(settingsRepo, auditSvc)
+	settingsSvc.SetLLMSeed(cfg.LLM.Seed())
+	llm := llmrouter.New(llmKeys.Key, func() domain.LLMSettings { return settingsSvc.Current().LLM })
+	settingsSvc.SetLLMKeyCheck(llm.HasKey)
+	llmKeys.SetCurrent(func() domain.LLMSettings { return settingsSvc.Current().LLM })
+	llmKeys.SetTester(llm.TestWithKey)
+	if cur := settingsSvc.Current().LLM; !llm.Ready() {
+		fmt.Printf("[WARN] โมเดลที่เลือก (%s · %s) ยังไม่มี key — ปิดแชท (/chat ตอบ 503) จนกว่าจะใส่ key หรือเปลี่ยนโมเดลในคอนโซล\n", cur.Provider, cur.Model)
+	} else {
+		fmt.Printf("[INFO] chat LLM: %s · model=%s ✔\n", cur.Provider, cur.Model)
+	}
 	usageSvc := service.NewUsageService(usageRepo)
 	deletionSvc := service.NewDeletionService(chatRepo, verifRepo, accessRepo, deletionRepo, officeService, auditSvc)
 	deletionSvc.RecoverStale(ctx)
@@ -245,11 +263,8 @@ func main() {
 		return time.Duration(settingsSvc.Current().TicketTTLMin) * time.Minute
 	})
 	relay := service.NewRelay()
-	var chatSvc *service.ChatService
-	if llm != nil {
-		loc, _ := conn.Location()
-		chatSvc = service.NewChatService(llm, chatRepo, service.NewToolRunner(relay, settingsSvc), loc, settingsSvc, usageSvc)
-	}
+	loc, _ := conn.Location()
+	chatSvc := service.NewChatService(llm, chatRepo, service.NewToolRunner(relay, settingsSvc), loc, settingsSvc, usageSvc)
 
 	r := httpgin.NewRouter(httpgin.Deps{
 		OfficeService: officeService,
@@ -269,7 +284,8 @@ func main() {
 		Settings:     settingsSvc,
 		Usage:        usageSvc,
 		Deletion:     deletionSvc,
-		LLMInfo:      routes.LLMInfo{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, Enabled: llm != nil},
+		LLM:          llm,
+		LLMKeys:      llmKeys,
 	})
 
 	addr := ":" + cfg.HTTP.Port

@@ -60,8 +60,16 @@ func NewChatService(llm port.LLMClient, repo port.ChatRepository, runner *ToolRu
 		now: time.Now, sems: map[string]chan struct{}{}}
 }
 
-// Enabled — ไม่มี LLM = ปิดแชท
-func (s *ChatService) Enabled() bool { return s != nil && s.llm != nil }
+// Enabled — ไม่มี LLM หรือ provider ที่เลือกไม่มี key = ปิดแชท
+func (s *ChatService) Enabled() bool {
+	if s == nil || s.llm == nil {
+		return false
+	}
+	if r, ok := s.llm.(interface{ Ready() bool }); ok {
+		return r.Ready()
+	}
+	return true
+}
 
 // acquire — ขนาดเปลี่ยนตาม settings ได้: สร้างช่องใหม่ ส่วนคำถามที่กำลังตอบคืนช่องเดิมของตัวเอง
 func (s *ChatService) acquire(key string, max int) (func(), bool) {

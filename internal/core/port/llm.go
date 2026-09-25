@@ -1,6 +1,10 @@
 package port
 
-import "context"
+import (
+	"context"
+
+	"ai-office-backend/internal/core/domain"
+)
 
 // LLMMessage คือข้อความ 1 ชิ้นในบทสนทนาที่ส่งให้ LLM
 //
@@ -55,10 +59,10 @@ type LLMRequest struct {
 
 // LLMUsage — InputTokens ไม่รวมส่วนที่อ่าน/เขียน prompt cache (แยกไว้ใน CacheRead/CacheWrite)
 type LLMUsage struct {
-	InputTokens  int
-	OutputTokens int
-	CacheRead    int
-	CacheWrite   int
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	CacheRead    int `json:"cache_read"`
+	CacheWrite   int `json:"cache_write"`
 }
 
 type LLMResponse struct {
@@ -74,4 +78,21 @@ type LLMResponse struct {
 type LLMClient interface {
 	Complete(ctx context.Context, req LLMRequest) (LLMResponse, error)
 	Stream(ctx context.Context, req LLMRequest, onDelta func(text string) error) (LLMUsage, error)
+}
+
+// LLMTestResult คือผลของการทดสอบเชื่อมต่อจากหน้าตั้งค่า
+type LLMTestResult struct {
+	LatencyMs int64    `json:"latency_ms"`
+	Reply     string   `json:"reply"`
+	Usage     LLMUsage `json:"usage"`
+}
+
+// LLMRouter คือ LLMClient ที่เลือกตัวจริงตาม settings ณ ตอนเรียก — แก้โมเดลในคอนโซลแล้วไม่ต้อง restart
+//
+// Ready = provider ที่เลือกอยู่มี key ใน .env · HasKey ไม่เปิดเผยตัว key
+type LLMRouter interface {
+	LLMClient
+	Ready() bool
+	HasKey(provider string) bool
+	Test(ctx context.Context, cfg domain.LLMSettings) (LLMTestResult, error)
 }

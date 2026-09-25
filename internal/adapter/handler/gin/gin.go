@@ -36,7 +36,8 @@ type Deps struct {
 	Settings *service.SettingsService
 	Usage    *service.UsageService
 	Deletion *service.DeletionService
-	LLMInfo  routes.LLMInfo
+	LLM      port.LLMRouter         // nil = ไม่มีตัวเลือกโมเดล/ทดสอบ (เทส)
+	LLMKeys  *service.LLMKeyService // nil = จัดการ key จากหน้าเว็บไม่ได้ (เทส)
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -197,11 +198,16 @@ func NewRouter(d Deps) *gin.Engine {
 		}
 
 		if d.Settings != nil && d.Usage != nil && d.Deletion != nil {
-			ops := routes.NewOpsHandler(d.Settings, d.Usage, d.Deletion, d.LLMInfo)
+			ops := routes.NewOpsHandler(d.Settings, d.Usage, d.Deletion, d.LLM, d.LLMKeys)
 			usageView := RequirePermission(domain.PermUsageView, d.Permissions, audit)
 			deletion := RequirePermission(domain.PermDeletionManage, d.Permissions, audit)
 			admin.GET("/settings", officeView, ops.GetSettings)
 			admin.PATCH("/settings", RequirePermission(domain.PermSettingsManage, d.Permissions, audit), ops.PatchSettings)
+			admin.POST("/settings/llm/test", RequirePermission(domain.PermSettingsManage, d.Permissions, audit), ops.TestLLM)
+			// API key — แยกสิทธิ์ + ยืนยัน 2FA ทุกครั้ง · ไม่มี endpoint ไหนคืนตัว key
+			keyManage := RequirePermission(domain.PermLLMKeyManage, d.Permissions, audit)
+			admin.PUT("/settings/llm/keys/:provider", keyManage, ops.SetLLMKey)
+			admin.DELETE("/settings/llm/keys/:provider", keyManage, ops.DeleteLLMKey)
 			admin.GET("/usage", usageView, ops.Usage)
 			admin.GET("/rollups", usageView, ops.Rollups)
 			admin.POST("/deletion-requests", deletion, ops.CreateDeletion)

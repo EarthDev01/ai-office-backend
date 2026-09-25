@@ -22,6 +22,31 @@ type SettingsService struct {
 
 	mu  sync.Mutex
 	cur *domain.Settings
+
+	llmSeed domain.LLMSettings         // ค่าตั้งต้นจาก .env ใช้จนกว่าจะบันทึกจากคอนโซลครั้งแรก
+	hasKey  func(provider string) bool // nil = ไม่ตรวจ key (เทส)
+}
+
+// SetLLMSeed ใช้ค่าจาก .env เป็นโมเดลตั้งต้น เมื่อ DB ยังไม่มีค่า llm
+func (s *SettingsService) SetLLMSeed(l domain.LLMSettings) {
+	l.Normalize()
+	if l.Validate() != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.llmSeed = l
+	s.cur = nil
+}
+
+// SetLLMKeyCheck ให้การเปลี่ยน provider ตรวจว่ามี key ใน .env แล้ว
+func (s *SettingsService) SetLLMKeyCheck(f func(provider string) bool) { s.hasKey = f }
+
+func (s *SettingsService) withSeed(v domain.Settings) domain.Settings {
+	if v.LLM.Provider == "" && s.llmSeed.Provider != "" {
+		v.LLM = s.llmSeed
+	}
+	return v
 }
 
 func NewSettingsService(repo port.SettingsRepository, audit port.AuditRecorder) *SettingsService {
@@ -42,10 +67,18 @@ func (s *SettingsService) Get(ctx context.Context) domain.Settings {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		v = domain.DefaultSettings()
+		v.LLM = domain.LLMSettings{}
+		v = s.withSeed(v)
+		v.FillDefaults()
 	case err != nil:
 		log.Printf("[WARN] อ่าน settings ไม่ได้ — ใช้ค่าเริ่มต้นชั่วคราว: %v", err)
-		return domain.DefaultSettings() // ไม่ cache — ครั้งหน้าลองอ่านใหม่
+		d := domain.DefaultSettings()
+		d.LLM = domain.LLMSettings{}
+		d = s.withSeed(d)
+		d.FillDefaults()
+		return d // ไม่ cache — ครั้งหน้าลองอ่านใหม่
 	default:
+		v = s.withSeed(v)
 		v.FillDefaults()
 	}
 	s.cur = &v
@@ -57,15 +90,17 @@ func (s *SettingsService) Current() domain.Settings { return s.Get(context.Backg
 
 // SettingsPatch — field ที่ไม่ส่ง (nil) คงค่าเดิม · UpdatedAt = ค่าที่ผู้แก้เห็นล่าสุด (กันทับกัน)
 type SettingsPatch struct {
-	MaxConcurrent   *int      `json:"max_concurrent"`
-	TicketTTLMin    *int      `json:"ticket_ttl_min"`
-	SupportMessage  *string   `json:"support_message"`
-	LLMTimeoutSec   *int      `json:"llm_timeout_sec"`
-	StreamTimeout   *int      `json:"stream_timeout_sec"`
-	MaxOutputTokens *int      `json:"max_output_tokens"`
-	HistoryTurns    *int      `json:"history_turns"`
-	ToolTimeoutMs   *int      `json:"tool_timeout_ms"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	MaxConcurrent   *int    `json:"max_concurrent"`
+	TicketTTLMin    *int    `json:"ticket_ttl_min"`
+	SupportMessage  *string `json:"support_message"`
+	LLMTimeoutSec   *int    `json:"llm_timeout_sec"`
+	StreamTimeout   *int    `json:"stream_timeout_sec"`
+	MaxOutputTokens *int    `json:"max_output_tokens"`
+	HistoryTurns    *int    `json:"history_turns"`
+	ToolTimeoutMs   *int    `json:"tool_timeout_ms"`
+	// LLM ส่งมาทั้งชุด (provider/model/effort/base_url) แทนที่ค่าเดิม
+	LLM       *domain.LLMSettings `json:"llm"`
+	UpdatedAt time.Time           `json:"updated_at"`
 }
 
 // ErrSettingsConflict — มีคนแก้ไปก่อนตั้งแต่ผู้แก้โหลดหน้า
@@ -81,6 +116,7 @@ func (s *SettingsService) Update(ctx context.Context, p SettingsPatch, actor str
 		return before, ErrSettingsConflict
 	}
 	next := before
+	next.RememberLLM() // ค่าเดิม (เช่นที่มาจาก .env) ต้องไม่หายเมื่อเปลี่ยนไป provider อื่น
 	for _, f := range []struct {
 		src *int
 		dst *int
@@ -97,9 +133,18 @@ func (s *SettingsService) Update(ctx context.Context, p SettingsPatch, actor str
 	if p.SupportMessage != nil {
 		next.SupportMessage = *p.SupportMessage
 	}
+	if p.LLM != nil {
+		next.LLM = *p.LLM
+	}
 	if err := next.Validate(); err != nil {
 		return before, err
 	}
+	// ตรวจ key เฉพาะตอนเปลี่ยนโมเดล — เครื่องที่ยังไม่มี key ต้องแก้ค่าอื่นได้ตามปกติ
+	if next.LLM != before.LLM && s.hasKey != nil && !s.hasKey(next.LLM.Provider) {
+		info, _ := domain.LLMProviderByID(next.LLM.Provider)
+		return before, fmt.Errorf("ยังไม่มี API key ของ %s — ตั้ง key ในการ์ดผู้ให้บริการก่อน (หรือ %s ใน .env ถ้ายังไม่ได้ตั้ง LLM_KEY_SECRET)", info.Label, info.EnvKey)
+	}
+	next.RememberLLM()
 	next.UpdatedAt = s.now().Truncate(time.Millisecond) // Mongo เก็บละเอียดแค่ ms
 	next.UpdatedBy = actor
 	if err := s.repo.Save(ctx, next); err != nil {
@@ -109,7 +154,12 @@ func (s *SettingsService) Update(ctx context.Context, p SettingsPatch, actor str
 	s.cur = &next
 	s.mu.Unlock()
 
-	if changes := domain.DiffFields(before, next, "updated_at", "updated_by"); len(changes) > 0 {
+	changes := domain.DiffFields(before, next, "updated_at", "updated_by", "llm", "llm_recent")
+	for _, c := range domain.DiffFields(before.LLM, next.LLM) {
+		c.Field = "llm." + c.Field
+		changes = append(changes, c)
+	}
+	if len(changes) > 0 {
 		s.audit.Record(ctx, domain.AuditEntry{
 			Action: domain.AuditSettingsUpdate, TargetType: "settings", TargetID: "global", TargetLabel: "ตั้งค่าระบบ",
 			Summary: fmt.Sprintf("แก้ตั้งค่าระบบ %d รายการ: %s", len(changes), changedFieldNames(changes)),

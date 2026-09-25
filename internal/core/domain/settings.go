@@ -2,13 +2,14 @@ package domain
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
 
 // Settings คือค่าระดับระบบที่แก้ได้จากคอนโซล (Mongo settings doc เดียว _id "global")
 //
-// ไม่ใช่ settings: โมเดล/effort (อยู่ใน .env) · กฎความปลอดภัย รายการ tool สิทธิ์ (อยู่ใน connector/โค้ด)
+// ไม่ใช่ settings: API key ของ LLM (อยู่ใน .env) · กฎความปลอดภัย รายการ tool สิทธิ์ (อยู่ใน connector/โค้ด)
 type Settings struct {
 	MaxConcurrent   int    `json:"max_concurrent"    bson:"max_concurrent"`      // คนถามพร้อมกันต่อ office+service · เกิน = busy
 	TicketTTLMin    int    `json:"ticket_ttl_min"    bson:"ticket_ttl_min"`      // อายุตั๋วแชทของ widget (นาที)
@@ -18,6 +19,11 @@ type Settings struct {
 	MaxOutputTokens int    `json:"max_output_tokens" bson:"max_output_tokens"`   // รอบเขียนคำตอบ
 	HistoryTurns    int    `json:"history_turns"     bson:"history_turns"`       // จำนวนรอบถาม-ตอบที่ส่งให้ LLM · 0 = ไม่ส่งประวัติ
 	ToolTimeoutMs   int    `json:"tool_timeout_ms"   bson:"tool_timeout_ms"`     // ค่าเริ่มต้นเมื่อ connector ไม่ได้ตั้ง
+
+	LLM LLMSettings `json:"llm" bson:"llm"` // โมเดลที่ใช้ตอบแชท
+	// LLMRecent คือค่าล่าสุดที่เคยบันทึกของแต่ละ provider (key = provider id) — สลับกลับมาแล้วไม่ต้องกรอกใหม่
+	// server ดูแลเอง ไม่รับจาก patch
+	LLMRecent map[string]LLMSettings `json:"llm_recent" bson:"llm_recent,omitempty"`
 
 	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
 	UpdatedBy string    `json:"updated_by" bson:"updated_by"`
@@ -33,6 +39,7 @@ func DefaultSettings() Settings {
 		MaxOutputTokens: 1024,
 		HistoryTurns:    10,
 		ToolTimeoutMs:   20000,
+		LLM:             DefaultLLMSettings(),
 	}
 }
 
@@ -72,6 +79,10 @@ func (s *Settings) Validate() error {
 	if s.SupportMessage == "" {
 		bad = append(bad, "support_message ห้ามว่าง")
 	}
+	s.LLM.Normalize()
+	if err := s.LLM.Validate(); err != nil {
+		bad = append(bad, err.Error())
+	}
 	if len(bad) > 0 {
 		return fmt.Errorf("ค่าไม่ถูกต้อง: %s", strings.Join(bad, " · "))
 	}
@@ -89,4 +100,20 @@ func (s *Settings) FillDefaults() {
 	if strings.TrimSpace(s.SupportMessage) == "" {
 		s.SupportMessage = d.SupportMessage
 	}
+	if s.LLM.Provider == "" {
+		s.LLM = d.LLM
+	}
+}
+
+// RememberLLM จำค่า llm ปัจจุบันไว้ใน LLMRecent ของ provider นั้น — clone map ก่อนแก้ (ค่าเดิมอาจถูกแชร์อยู่)
+func (s *Settings) RememberLLM() {
+	if s.LLM.Provider == "" {
+		return
+	}
+	m := maps.Clone(s.LLMRecent)
+	if m == nil {
+		m = map[string]LLMSettings{}
+	}
+	m[s.LLM.Provider] = s.LLM
+	s.LLMRecent = m
 }

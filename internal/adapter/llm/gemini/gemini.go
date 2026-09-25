@@ -1,6 +1,6 @@
 // Package gemini เรียก Gemini API (generativelanguage.googleapis.com)
 //
-// ใช้ทดสอบเท่านั้น — production ใช้ Claude · key ส่งทาง header ไม่ใส่ใน URL กันหลุดลง log
+// key ส่งทาง header ไม่ใส่ใน URL กันหลุดลง log
 package gemini
 
 import (

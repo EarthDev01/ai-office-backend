@@ -1,6 +1,4 @@
 // Package openaicompat เรียก LLM ที่ใช้ Chat Completions แบบ OpenAI (เช่น GLM ของ z.ai)
-//
-// ใช้ทดสอบเท่านั้น — production ใช้ Claude
 package openaicompat
 
 import (

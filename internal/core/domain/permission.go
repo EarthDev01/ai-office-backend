@@ -21,6 +21,7 @@ const (
 	PermDeletionManage = "deletion.manage" // ลบข้อมูลแชทตามคำขอ (PDPA)
 	PermSettingsManage = "settings.manage" // แก้ตั้งค่าระบบ (ดูได้ด้วย office.view)
 	PermAccessLogView  = "accesslog.view"  // ดูบันทึกการเข้าถึงข้อมูลแชท
+	PermLLMKeyManage   = "llm.key.manage"  // ตั้ง/เปลี่ยน/ลบ API key ของ LLM (ต้องยืนยัน 2FA ทุกครั้ง)
 )
 
 // roleKeyPattern: role key ต้องขึ้นต้นด้วยตัวอักษร a-z แล้วตามด้วย a-z0-9_- ยาว 2-30 ตัว
@@ -66,7 +67,7 @@ func DefaultRoleConfig() RoleConfig {
 			string(RoleAdmin): {
 				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermUserManage, PermAuditView,
 				PermConversationRead, PermVerificationWrite,
-				PermUsageView, PermDeletionManage, PermSettingsManage, PermAccessLogView,
+				PermUsageView, PermDeletionManage, PermSettingsManage, PermAccessLogView, PermLLMKeyManage,
 			},
 			string(RoleOperator): {
 				PermOfficeView, PermOfficeEdit, PermOfficeDelete, PermConversationRead, PermVerificationWrite, PermUsageView,
@@ -99,6 +100,7 @@ func PermissionCatalog() []struct {
 		{Key: PermDeletionManage, Label: "ลบข้อมูลแชทตามคำขอ (PDPA)"},
 		{Key: PermSettingsManage, Label: "แก้ตั้งค่าระบบ"},
 		{Key: PermAccessLogView, Label: "ดูบันทึกการเข้าถึงข้อมูลแชท"},
+		{Key: PermLLMKeyManage, Label: "ตั้ง/เปลี่ยน/ลบ API key ของโมเดล AI (ยืนยัน 2FA ทุกครั้ง)"},
 	}
 }
 

@@ -279,6 +279,60 @@ func (a *ConsoleAuth) VerifyTOTP(ctx context.Context, ticket, code string) (Logi
 	}
 }
 
+// ConfirmTOTP ยืนยันตัวตนซ้ำก่อนทำเรื่องอ่อนไหว (เช่นเปลี่ยน API key) — ใช้รหัส 2FA จากแอปเท่านั้น ไม่รับ recovery code
+//
+// ผิดนับรวมกับตัวนับของ login: ครบ 5 ครั้ง = ล็อกบัญชี 15 นาที (login ไม่ได้ด้วย)
+func (a *ConsoleAuth) ConfirmTOTP(ctx context.Context, userID, code string) error {
+	user, err := a.repo.ByID(ctx, userID)
+	if err != nil {
+		return ErrInvalid2FA
+	}
+	now := a.now()
+	if user.Locked(now) {
+		return ErrAccountLocked
+	}
+	if user.Status == domain.StatusDisabled {
+		return ErrAccountDisabled
+	}
+	if user.TOTPEnrolled && a.totp.Validate(user.TOTPSecret, code) {
+		if user.FailedAttempts > 0 {
+			user.FailedAttempts = 0
+			user.UpdatedAt = now
+			if err := a.repo.Update(ctx, user); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	user.FailedAttempts++
+	attempt := user.FailedAttempts
+	locked := false
+	if user.FailedAttempts >= 5 {
+		user.LockedUntil = now.Add(15 * time.Minute)
+		user.FailedAttempts = 0
+		locked = true
+	}
+	user.UpdatedAt = now
+	if err := a.repo.Update(ctx, user); err != nil {
+		return err
+	}
+	a.recordAs(ctx, user, domain.AuditEntry{
+		Action: domain.AuditAuthStepUpFail, Status: domain.AuditFailure, Reason: "INVALID_2FA",
+		TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+		Summary: fmt.Sprintf("%s ยืนยัน 2FA ก่อนทำรายการสำคัญไม่ผ่าน ครั้งที่ %d/5", userLabel(user), attempt),
+	})
+	if locked {
+		a.recordAs(ctx, user, domain.AuditEntry{
+			Action: domain.AuditAuthLocked, Status: domain.AuditFailure, Reason: "TOO_MANY_ATTEMPTS",
+			TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
+			Summary: fmt.Sprintf("บัญชี %s ถูกล็อก 15 นาที เพราะใส่รหัส 2FA ผิด 5 ครั้งติด", userLabel(user)),
+			Meta:    map[string]string{"locked_until": user.LockedUntil.Format(time.RFC3339)},
+		})
+		return ErrAccountLocked
+	}
+	return ErrInvalid2FA
+}
+
 func (a *ConsoleAuth) recordLogin(ctx context.Context, user domain.ConsoleUser, method string) {
 	a.recordAs(ctx, user, domain.AuditEntry{
 		Action: domain.AuditAuthLogin, TargetType: "user", TargetID: user.ID, TargetLabel: user.Username,
