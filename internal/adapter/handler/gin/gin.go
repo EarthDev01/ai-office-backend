@@ -38,6 +38,9 @@ type Deps struct {
 	Deletion *service.DeletionService
 	LLM      port.LLMRouter         // nil = ไม่มีตัวเลือกโมเดล/ทดสอบ (เทส)
 	LLMKeys  *service.LLMKeyService // nil = จัดการ key จากหน้าเว็บไม่ได้ (เทส)
+	// ผู้ช่วยในคอนโซล — nil = ปิด · Guide = คู่มือ (Markdown) ใช้ทั้งหน้า /guide และผู้ช่วย
+	Assistant *service.AssistantService
+	Guide     string
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -134,6 +137,12 @@ func NewRouter(d Deps) *gin.Engine {
 		admin.GET("/auth/me", authHandler.Me)
 		admin.POST("/auth/change-password", authHandler.ChangePassword)
 		admin.POST("/auth/logout", authHandler.Logout)
+
+		// คู่มือ + ผู้ช่วยในคอนโซล — ทุกคนที่ล็อกอิน (ผู้ช่วยกรองข้อมูลตามสิทธิ์ของคนถามเอง)
+		assistant := routes.NewAssistantHandler(d.Assistant, d.Guide)
+		admin.GET("/guide", assistant.Guide)
+		admin.GET("/assistant/status", assistant.Status)
+		admin.POST("/assistant", assistant.Ask)
 
 		officeView := RequirePermission(domain.PermOfficeView, d.Permissions, audit)
 		officeEdit := RequirePermission(domain.PermOfficeEdit, d.Permissions, audit)

@@ -2,7 +2,7 @@ import { createShadow, injectFonts } from './shadow'
 import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, el, renderCard, scroll, type UI } from './ui'
 import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
 import { ChatSession } from './session'
-import { runChat, ChatError } from './chat'
+import { runChat, runConsoleChat, ChatError, type ConsoleTurn } from './chat'
 
 // data-* ที่ห้ามมาจากหน้าเว็บ — service ที่เปิดอยู่เราอ่านจาก localStorage ของ office เอง
 // (data-public-key ไม่อยู่ในนี้ เพราะมันระบุแค่ว่าหน้านี้เป็นของ office ไหน)
@@ -57,7 +57,22 @@ export interface MountOptions {
   /** ดักทุกครั้งที่จะยิง API — ใช้ใน test */
   onFetch?: (info: { url: string; body?: unknown }) => void
   apiBase?: string
+  /** โหมดคอนโซล AI Office — ถามผู้ช่วยของคอนโซลด้วย token ของคอนโซล (ไม่ผูกกับหลังบ้านลูกค้า) */
+  console?: ConsoleOptions
 }
+
+export interface ConsoleOptions {
+  /** token ของคอนโซลที่ใช้อยู่ — อ่านสดทุกครั้งที่ส่ง (ต่ออายุได้ระหว่างเปิดหน้า) */
+  getToken: () => string
+  /** path ของหน้าคอนโซลที่เปิดอยู่ ให้ผู้ช่วยตอบตรงบริบท */
+  getPage?: () => string
+  displayName?: string
+  greeting?: string
+  label?: string
+}
+
+// ห้องคุยของโหมดคอนโซลเก็บในหน้าเว็บเท่านั้น — จำกัดจำนวนที่ส่งกลับไป
+const CONSOLE_HISTORY = 20
 
 interface State {
   ui: UI
@@ -68,6 +83,8 @@ interface State {
   session: ChatSession
   conversationID: string // ห้องแชทฝั่ง server — ว่าง = ข้อความถัดไปเปิดห้องใหม่
   busy: boolean
+  console: ConsoleOptions | null
+  history: ConsoleTurn[]
 }
 
 let state: State | null = null
@@ -102,7 +119,15 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   const apiBase = opts.apiBase ?? ds.apiBase ?? ''
 
   let cfg: Bootstrap
-  if (preview) {
+  if (opts.console) {
+    cfg = {
+      ...DEFAULT_BOOTSTRAP,
+      display_name: opts.console.displayName ?? 'ผู้ช่วย AI Office',
+      greeting: opts.console.greeting ?? 'สวัสดีครับ ถามวิธีใช้คอนโซล หรือข้อมูลในระบบได้เลย (ผมเป็นระบบอัตโนมัติ อ่านข้อมูลได้อย่างเดียว)',
+      service_label: opts.console.label ?? 'คอนโซล',
+      placement: { position: 'bottom-right', offset_x: 20, offset_y: 20 },
+    }
+  } else if (preview) {
     // โหมด preview ไม่ยิง API เลย — รอ config จากหน้า settings
     cfg = { ...DEFAULT_BOOTSTRAP, ...(opts.bootstrap ?? {}) }
   } else if (opts.bootstrap) {
@@ -128,7 +153,7 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
 
   const ui = buildUI(root)
   const session = new ChatSession(apiBase, readOfficeToken)
-  state = { ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false }
+  state = { ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false, console: opts.console ?? null, history: [] }
 
   render(cfg)
 
@@ -150,7 +175,8 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
     window.addEventListener('message', onPreviewMessage)
   }
 
-  installGlobal()
+  // โหมดคอนโซลมี global ของตัวเอง (__aiOfficeConsole) — ไม่ทับ __aiOffice ของ preview ในหน้าเดียวกัน
+  if (!opts.console) installGlobal()
 }
 
 function render(cfg: Bootstrap) {
@@ -276,6 +302,10 @@ async function send(opts: MountOptions) {
     addBubble(s.ui.log, 'ai', MESSAGES.preview)
     return
   }
+  if (s.console) {
+    await sendConsole(s, s.console, text)
+    return
+  }
 
   const service = readOfficeService()
   opts.onFetch?.({ url: `${s.apiBase}/api/ai/widget/service/${encodeURIComponent(service)}/chat`, body: { text } })
@@ -327,6 +357,57 @@ async function send(opts: MountOptions) {
   }
 }
 
+/** โหมดคอนโซล: ส่งทั้งห้องคุยไปที่ผู้ช่วยของคอนโซล — UI ชุดเดียวกับแชทปกติ */
+async function sendConsole(s: State, c: ConsoleOptions, text: string) {
+  s.history.push({ role: 'user', text })
+  s.busy = true
+  s.ui.send.disabled = true
+  const loader = addLoader(s.ui.log, 'กำลังส่งคำถาม…')
+  let txt: HTMLElement | null = null
+  let cards: HTMLElement | null = null
+  let answer = ''
+  const ensure = () => {
+    if (txt) return
+    const bubble = addBubble(s.ui.log, 'ai', '')
+    txt = bubble.querySelector('.txt')
+    cards = el('div', 'cards')
+    bubble.appendChild(cards)
+  }
+  try {
+    await runConsoleChat({
+      apiBase: s.apiBase,
+      token: c.getToken(),
+      messages: s.history.slice(-CONSOLE_HISTORY),
+      page: c.getPage?.() ?? '',
+      on: {
+        status: (t) => loader.set(t || 'กำลังทำงาน…'),
+        card: (card) => {
+          ensure()
+          cards!.appendChild(renderCard(card))
+          scroll(s.ui.log)
+        },
+        token: (t) => {
+          loader.remove()
+          ensure()
+          answer += t
+          txt!.textContent = answer
+          scroll(s.ui.log)
+        },
+      },
+    })
+    if (answer) s.history.push({ role: 'assistant', text: answer })
+    else addBubble(s.ui.log, 'ai', MESSAGES.empty)
+  } catch (e) {
+    s.history.pop() // คำถามที่ตอบไม่สำเร็จ ไม่ส่งซ้ำในรอบหน้า
+    const msg = e instanceof ChatError ? e.message : MESSAGES.unavailable
+    addBubble(s.ui.log, 'ai', msg, 'err')
+  } finally {
+    loader.remove()
+    s.busy = false
+    s.ui.send.disabled = false
+  }
+}
+
 function resolveTheme(mode: string): 'light' | 'dark' {
   if (mode === 'light' || mode === 'dark') return mode
   return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light'
@@ -334,6 +415,24 @@ function resolveTheme(mode: string): 'light' | 'dark' {
 
 function kebab(s: string) {
   return s.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
+}
+
+/** โหมดคอนโซล: หน้าคอนโซลเรียก __aiOfficeConsole.mount({...}) เองหลังโหลด script (ส่ง token ผ่าน callback ไม่ใส่ใน DOM) */
+export function installConsoleGlobal(apiBase: string) {
+  const api = {
+    mount: (o: ConsoleOptions) => mount({ apiBase, console: o }),
+    unmount,
+    open: () => toggle(true),
+    close: () => toggle(false),
+    // ---- test hook ----
+    __logText: () => state?.ui.log.textContent ?? '',
+    __send: async (text: string) => {
+      if (!state) return
+      state.ui.input.value = text
+      await send({})
+    },
+  }
+  Object.defineProperty(window, '__aiOfficeConsole', { value: Object.freeze(api), configurable: true })
 }
 
 function installGlobal() {
@@ -385,6 +484,11 @@ if (self) {
     }
   }
   const boot = () => {
+    // โหมดคอนโซล — รอหน้าคอนโซลสั่ง mount พร้อม token (ไม่เฝ้า session ของหลังบ้านลูกค้า)
+    if (ds.consoleMode !== undefined) {
+      installConsoleGlobal(ds.apiBase ?? '')
+      return
+    }
     // โหมด preview (หน้า console) ไม่มี session ของ office — mount ครั้งเดียวเลย
     // ไม่ต้องเฝ้า session (ตัวเฝ้าไว้สำหรับ widget จริงที่ฝังในหน้า office-v10x เท่านั้น)
     if (ds.previewMount) {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"ai-office-backend/docs"
 	"ai-office-backend/internal/adapter/auth"
 	"ai-office-backend/internal/adapter/config"
 	cryptobox "ai-office-backend/internal/adapter/crypto"
@@ -270,6 +271,11 @@ func main() {
 	loc, _ := conn.Location()
 	chatSvc := service.NewChatService(llm, chatRepo, service.NewToolRunner(relay, settingsSvc), loc, settingsSvc, usageSvc)
 
+	chatAdmin := service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc)
+	// ผู้ช่วยในคอนโซล — ใช้โมเดลเดียวกับแชท · เครื่องมืออ่านอย่างเดียวตามสิทธิ์คนถาม · เปิด/ปิดที่ตั้งค่าระบบ
+	assistantSvc := service.NewAssistantService(llm, settingsSvc, permSvc, usageSvc,
+		service.NewAssistantTools(officeService, usageSvc, chatAdmin, settingsSvc, llmKeys, auditSvc), docs.Guide)
+
 	r := httpgin.NewRouter(httpgin.Deps{
 		OfficeService: officeService,
 		Identity:      identity,
@@ -284,12 +290,14 @@ func main() {
 		Relay:        relay,
 		Tickets:      chatTickets,
 		Connector:    conn,
-		ChatAdmin:    service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc),
+		ChatAdmin:    chatAdmin,
 		Settings:     settingsSvc,
 		Usage:        usageSvc,
 		Deletion:     deletionSvc,
 		LLM:          llm,
 		LLMKeys:      llmKeys,
+		Assistant:    assistantSvc,
+		Guide:        docs.Guide,
 	})
 
 	addr := ":" + cfg.HTTP.Port
