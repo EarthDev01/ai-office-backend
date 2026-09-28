@@ -15,6 +15,8 @@ export function buildUI(root: ShadowRoot): UI {
   const launcher = el('button', 'launcher') as HTMLButtonElement
   launcher.type = 'button'
   launcher.setAttribute('aria-label', 'เปิดผู้ช่วยหลังบ้าน')
+  launcher.setAttribute('aria-expanded', 'false')
+  launcher.dataset.open = 'false'
 
   const panel = el('div', 'panel') as HTMLDivElement
   panel.dataset.open = 'false'
@@ -52,9 +54,49 @@ export function buildUI(root: ShadowRoot): UI {
   panel.append(head, log, foot)
   root.append(launcher, panel)
 
-  close.addEventListener('click', () => (panel.dataset.open = 'false'))
+  const ui = { launcher, panel, head: { avatar, name, site }, log, input, send }
+  close.addEventListener('click', () => setOpen(ui, false))
+  return ui
+}
 
-  return { launcher, panel, head: { avatar, name, site }, log, input, send }
+/** เปิด/ปิดแผงแชท — ปุ่มลอยเปลี่ยนเป็น × ตามไปด้วย */
+export function setOpen(ui: UI, open: boolean) {
+  ui.panel.dataset.open = String(open)
+  ui.launcher.dataset.open = String(open)
+  ui.launcher.setAttribute('aria-expanded', String(open))
+  ui.launcher.setAttribute('aria-label', open ? 'ปิดผู้ช่วยหลังบ้าน' : 'เปิดผู้ช่วยหลังบ้าน')
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** ไอคอนเส้น (stroke = currentColor → ใช้สีตัวอักษรบนสีหลักอัตโนมัติ) · path คงที่ของเราเอง */
+function icon(cls: string, paths: { d: string; fill?: boolean }[]): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('class', cls)
+  for (const p of paths) {
+    const path = document.createElementNS(SVG_NS, 'path')
+    path.setAttribute('d', p.d)
+    if (p.fill) path.setAttribute('class', 'fill')
+    svg.appendChild(path)
+  }
+  return svg
+}
+
+// ฟองแชท + ประกาย (ผู้ช่วยอัตโนมัติ)
+const CHAT_SPARK = [
+  { d: 'M3.5 6.25A3.25 3.25 0 0 1 6.75 3h10.5a3.25 3.25 0 0 1 3.25 3.25v7.5A3.25 3.25 0 0 1 17.25 17H11.5l-4.1 3.4c-.7.58-1.9.1-1.9-.83V17A3.25 3.25 0 0 1 3.5 13.75z' },
+  { d: 'M12 5.6l1.05 2.6 2.6 1.05-2.6 1.05L12 12.9l-1.05-2.6-2.6-1.05 2.6-1.05z', fill: true },
+]
+const CLOSE = [{ d: 'M7 7l10 10M17 7L7 17' }]
+
+function launcherFace(ui: UI, avatarURL: string) {
+  ui.launcher.textContent = ''
+  const face = el('span', 'face')
+  if (avatarURL) face.appendChild(img(avatarURL))
+  else face.appendChild(icon('ico', CHAT_SPARK))
+  ui.launcher.append(face, icon('ico close', CLOSE))
 }
 
 /** ข้อความทุกชิ้นลงด้วย textContent — ไม่มี innerHTML กับข้อความที่ไม่ได้มาจากเรา */
@@ -218,14 +260,35 @@ export function applyAppearance(ui: UI, b: Bootstrap) {
   ui.head.site.textContent = b.service_label || b.service_id || ''
 
   ui.head.avatar.textContent = ''
-  ui.launcher.textContent = ''
-  if (b.avatar_url) {
-    ui.head.avatar.appendChild(img(b.avatar_url))
-    ui.launcher.appendChild(img(b.avatar_url))
-  } else {
-    ui.head.avatar.textContent = 'AI'
-    ui.launcher.textContent = 'AI'
+  if (b.avatar_url) ui.head.avatar.appendChild(img(b.avatar_url))
+  else ui.head.avatar.appendChild(icon('ico', CHAT_SPARK))
+  launcherFace(ui, b.avatar_url)
+}
+
+const HEX = /^#[0-9a-f]{6}$/i
+
+/**
+ * สีหลักจากคอนโซล — ทับ --accent ของธีมทั้งสว่าง/มืด · สีพื้นอ่อนและสีตัวอักษรบนสีหลักคำนวณให้เอง
+ * (สีไม่ถูกรูปแบบ = ใช้สีตั้งต้น — ค่านี้เข้า style จึงรับเฉพาะ #rrggbb)
+ */
+export function applyAccent(host: HTMLElement, color: string | undefined, theme: 'light' | 'dark') {
+  const props = ['--accent', '--accent-soft', '--on-accent']
+  if (!color || !HEX.test(color)) {
+    for (const p of props) host.style.removeProperty(p)
+    return
   }
+  const rgb = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+  // พื้นอ่อน = ผสมสีหลักกับพื้นของธีม (สว่าง: ขาว · มืด: สีพื้นแชท)
+  const base = theme === 'dark' ? [0x15, 0x21, 0x23] : [0xff, 0xff, 0xff]
+  const mix = (w: number) => '#' + rgb.map((c, i) => Math.round(c * w + base[i] * (1 - w)).toString(16).padStart(2, '0')).join('')
+  // ความสว่างตาม WCAG — สีหลักสว่างใช้ตัวอักษรเข้ม ไม่งั้นใช้ขาว
+  const lum = rgb
+    .map((c) => c / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0)
+  host.style.setProperty('--accent', color)
+  host.style.setProperty('--accent-soft', mix(theme === 'dark' ? 0.25 : 0.16))
+  host.style.setProperty('--on-accent', lum > 0.45 ? '#13282B' : '#ffffff')
 }
 
 export function scroll(log: HTMLElement) {

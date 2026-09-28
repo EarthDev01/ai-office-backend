@@ -46,7 +46,22 @@ type Caller struct {
 	RoleName    string
 	Level       int32
 	Permissions []string // permission code จาก Role.Permission
-	Services    []string // service id จาก Role.ListService ที่ Permission == true
+	Services    []string // service ที่เข้าได้ตามรายชื่อใน token (ใช้เมื่อ AllServices = false)
+	// AllServices = เข้าได้ทุก service ของ office (connector ไม่จำกัด หรือบัญชีเข้าเงื่อนไข all_services_when)
+	AllServices bool
+	// ServicesStrict = รายชื่อว่างแปลว่าเข้าไม่ได้สักเว็บ (services_empty: none) · false = ว่างแปลว่าไม่จำกัด
+	ServicesStrict bool
+}
+
+// ServiceAllowed — ตัดสินว่าแอดมินคนนี้เปิด service นี้ได้ไหม (ตามกติกาของหลังบ้านชนิดนั้น)
+func (c Caller) ServiceAllowed(serviceID string) bool {
+	if c.AllServices {
+		return true
+	}
+	if len(c.Services) == 0 {
+		return !c.ServicesStrict
+	}
+	return c.CanAccessService(serviceID)
 }
 
 // CanAccessService — แหล่งความจริงว่าแอดมินคนนี้เข้า service ไหนได้ (มาจาก Role.ListService)

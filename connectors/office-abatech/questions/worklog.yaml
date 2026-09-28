@@ -1,0 +1,59 @@
+# GET /api/GetWorkingLog?date=&service= (log/router.go:16 · AuthRequiredDB "") → {code, msg, payload:[WorkingLogV2] | null}
+#   ⚠️ ต้องส่ง service เสมอ (ว่าง = OFFICE log_working ของทุก service) · 1 วันต่อ call ไม่มี limit/filter อื่น → กรองใน values
+#   frontend: pages/Logs/Working.vue:335-341 (OfficeCallAPI path "/GetWorkingLog?date=…&service=<plain>")
+#   ip = IP ภายในของ server ไม่ใช่ของพนักงาน → ไม่แสดง · detail/change/data_new/data_old มียอดและข้อมูลสมาชิก → ไม่แสดง
+#   ไม่ใช้ GetLogLogin (ต้องรู้ id พนักงาน) · GetWorkingLogByUser (อ่านข้ามทุก service)
+questions: [BQ-35, BQ-50]
+tools:
+  - name: worklog_search
+    description: >-
+      ประวัติการทำงานของพนักงานในเว็บนี้ในวันที่ถาม (ไม่ระบุ = วันนี้) กรองตามยูสเซอร์ของสมาชิก หรือชื่อพนักงานได้
+      · ใช้ตอบว่าใครทำอะไรกับยูสนี้เมื่อไหร่ · ไม่แสดง IP
+    questions: [BQ-35, BQ-50]
+    permission: worklog
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ YYYY-MM-DD (ไม่ระบุ = วันนี้)}
+      username: {type: string, pattern: "^[A-Za-z0-9_.@-]{2,40}$", description: ยูสเซอร์ของสมาชิกที่ถูกทำรายการ}
+      operator: {type: string, pattern: "^[\\p{Thai}A-Za-z0-9 _.@()-]{2,60}$", description: ชื่อพนักงานที่ทำรายการ (ตรงตามที่แสดงในหลังบ้าน)}
+    calls:
+      - id: l
+        method: GET
+        path: /GetWorkingLog
+        query: {date: "{date:input.date|date:today}", service: "{service}"}
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [datetime, action]
+            properties:
+              datetime: {type: string}
+              operator_name: {type: string}
+              action: {type: string}
+              username: {type: string}
+              service: {type: string}
+    values:
+      - name: matched
+        from: l
+        filter: "(empty(input.username) || lower(item.username) == lower(input.username)) && (empty(input.operator) || lower(item.operator_name) == lower(input.operator))"
+      - {name: found, expr: "count(matched)"}
+      - {name: rows, from: l, filter: "(empty(input.username) || lower(item.username) == lower(input.username)) && (empty(input.operator) || lower(item.operator_name) == lower(input.operator))", sort_by: datetime, order: desc, limit: 20}
+    not_found: {when: "found == 0", message: ไม่พบประวัติการทำงานตามที่ถามในวันนั้น (ค้นได้ทีละวัน)}
+    card:
+      title: ประวัติการทำงานของพนักงาน
+      fields:
+        - {label: พบรายการ, value: found, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: พนักงาน, field: operator_name}
+          - {label: การทำงาน, field: action}
+          - {label: ยูสเซอร์, field: username}
+      note: แสดงล่าสุดยี่สิบรายการ · ไม่แสดง IP และรายละเอียดยอดเงิน ดูเต็มได้ที่หน้ารายงานการทำงานของพนักงาน
+      link: {label: เปิดรายงานการทำงานของพนักงาน, path: /Logs/Working}
+    model_context:
+      - {name: note, type: text, text: รายการแสดงในการ์ดแล้ว ไม่มีข้อมูล IP ของพนักงาน}

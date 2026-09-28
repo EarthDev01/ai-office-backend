@@ -1,0 +1,258 @@
+# ที่มา: office-abatech plugins/menulist.js (เมนูต่อเว็บ · group จาก plugins/menugrouplist.js) · plugins/menumain.js (เมนูระดับ office "ตั้งค่าอื่น ๆ")
+#        แท็บจาก buttonMenu ของ pages/Deposit · Withdraw · Credit · Statement (text + code) · บิล/เครดิตบนแถบบน จาก SideBar.vue / TopNavbar.vue
+# ⚠️ path จริงต้องต่อ ?service=<base64>&web=<ชื่อเว็บ> (SideBar.vue:54-59) — ลิงก์บนการ์ดใส่ ?service={service_b64} ให้แล้ว
+# ⚠️ เมนูที่ deployment ปิดไว้ (GET /GetConfigByKey?key=submenu) ไม่ได้ mirror ที่นี่ — lookup_menu อาจแนะนำเมนูที่เว็บนั้นปิดอยู่
+menus:
+  - id: dashboardonce
+    name: รายงานภาพรวม
+    path: /DashboardOnce
+    group: รายงาน
+    permission: dashboard
+    keywords: [ภาพรวม, dashboard, แดชบอร์ด, ยอดวันนี้, ยอดฝากวันนี้, ยอดถอนวันนี้, กำไร]
+    description: ยอดฝาก ยอดถอน โบนัส จำนวนสมาชิกที่ฝาก/ถอน แยกรายวันตามช่วงที่เลือก
+  - id: deposit
+    name: รายการฝาก
+    path: /Deposit
+    group: รายการ ฝาก - ถอน
+    permission: menu_p003
+    keywords: [ฝาก, รายการฝาก, ตกค้าง, สรุปยอดฝาก, บัญชีฝาก, รอคิว]
+    description: สรุปยอดเงินในบัญชีฝาก รายการตกค้างรอยืนยัน และรายการฝากทั้งหมดของเว็บ
+    tabs:
+      - {name: สรุปยอดเงินในบัญชีฝาก, permission: deposit_summary}
+      - {name: รายการตกค้าง, permission: deposit_remain}
+      - {name: รายการโยกเงินออกจากบัญชีฝาก, permission: deposit_move}
+      - {name: แสดงรายการฝาก, permission: deposit_list}
+      - {name: แสดงรายการโยกเงิน, permission: deposit_list}
+      - {name: รายการเคลือนไหว, permission: deposit_movement}
+      - {name: รายการสร้างฝากทศนิยม, permission: deposit_float}
+      - {name: รายการฝากกระเป๋า, permission: deposit_bag}
+      - {name: รายการฝาก QRCODE, permission: deposit_qr}
+      - {name: รายการฝาก PEER2PAY, permission: deposit_qr}
+  - id: withdraw
+    name: รายการถอน
+    path: /Withdraw
+    group: รายการ ฝาก - ถอน
+    permission: menu_p004
+    keywords: [ถอน, รายการถอน, ถอนค้าง, รอโอน, บัญชีถอน]
+    description: สรุปยอดเงินในบัญชีถอน และรายการถอนทั้งหมดของเว็บ เปลี่ยนสถานะรายการได้ตามสิทธิ์
+    tabs:
+      - {name: สรุปยอดเงินในบัญชีถอน, permission: withdraw_bank}
+      - {name: รายการเพิ่มทุนบัญชีถอน, permission: withdraw_capital}
+      - {name: แสดงรายการถอน, permission: withdraw_list}
+      - {name: แสดงรายการโยกเงิน, permission: withdraw_transfer}
+      - {name: KPI รายการถอน, permission: withdraw_kpi}
+  - id: member
+    name: รายการสมาชิก
+    path: /Member
+    group: ระบบสมาชิก
+    permission: member
+    keywords: [สมาชิก, ยูส, สมาชิกใหม่, สมาชิกทั้งหมด, ค้นหาสมาชิก]
+    description: จำนวนสมาชิกทั้งหมด สมาชิกใหม่วันนี้ และค้นหาข้อมูลสมาชิก
+  - id: member_bankpending
+    name: รายการสมาชิกที่รอตรวจสอบ
+    path: /Member/BankPending
+    group: ระบบสมาชิก
+    permission: member_bank_pending
+    keywords: [บัญชีรอตรวจ, รออนุมัติบัญชี, บัญชีสมาชิกรอตรวจสอบ, บัญชีซ้ำ]
+    description: บัญชีธนาคารของสมาชิกที่ยังรอตรวจสอบ แยกตามผลการตรวจ
+  - id: credit
+    name: ระบบจัดการเครดิตสมาชิก
+    path: /Credit
+    group: ระบบสมาชิก
+    permission: menu_p008
+    keywords: [เครดิต, เช็คเครดิต, คืนเครดิต, ลบเครดิต, โบนัสฟรี, เทิร์น, แต้ม, ตั๋ว, แนะนำเพื่อน]
+    description: เช็คเครดิต คืนหรือลบเครดิต แจกโบนัสฟรี แก้ไขเทิร์น แจกแต้ม แจกตั๋ว และแจกยอดแนะนำเพื่อน
+    tabs:
+      - {name: เช็คเครดิต, permission: credit_check}
+      - {name: เช็คเครดิต กระเป๋าเงินสด, permission: credit_check_wallet}
+      - {name: คืนเครดิต, permission: credit_return}
+      - {name: คืนเครดิตกระเป๋าเงินสด, permission: credit_return}
+      - {name: ลบเครดิต, permission: credit_delete}
+      - {name: ลบเครดิตกระเป๋าเงินสด, permission: credit_delete}
+      - {name: แจกโบนัสฟรี, permission: credit_free_bonus}
+      - {name: แก้ไขเทิร์น, permission: credit_turnover}
+      - {name: แจกแต้ม, permission: credit_point}
+      - {name: แจกตั๋ว, permission: credit_ticket}
+      - {name: แจกยอดแนะนำเพื่อน, permission: credit_aff}
+  - id: statement
+    name: จัดการบัญชีธนาคาร
+    path: /Statement
+    group: บัญชีธนาคาร
+    permission: bank_manage
+    keywords: [บัญชีธนาคาร, บัญชีฝาก, บัญชีถอน, สเตทเม้น, เปิดบัญชี, ปิดบัญชี, สลับบัญชี]
+    description: ข้อมูลบัญชีฝาก/บัญชีถอนของเว็บ สเตทเม้นธนาคาร และการสลับบัญชีฝาก
+    tabs:
+      - {name: จัดการบัญชี, permission: bank_manage}
+      - {name: สเตทเม้นธนาคาร บัญชีฝาก, permission: statement_bank}
+      - {name: สเตทเม้นธนาคาร บัญชีถอน, permission: statement_bank}
+      - {name: สเตทเม้นธนาคาร บัญชีฝาก SMS, permission: statement_sms}
+      - {name: บัญชีโยกเงิน AUTO, permission: statement_auto_move}
+      - {name: ระบบ สลับบัญชีฝาก, permission: statement_switch}
+      - {name: ระบบจัดกลุ่มบัญชีลูกค้า, permission: bank_manage}
+      - {name: ไลน์บอท, permission: statement_linebot}
+  - id: bonus
+    name: จัดการโปรโมชั่น
+    path: /Bonus
+    group: ตั้งค่าโปรโมชั่น
+    permission: bonus
+    keywords: [โปรโมชั่น, โปร, โบนัส, โปรฝาก, คูปอง, เช็คอิน]
+    description: ตั้งค่าโปรโบนัสระบบฝาก กิจกรรมคูปอง และกิจกรรมเช็คอิน
+    tabs:
+      - {name: ตั้งค่าโปรโบนัสระบบฝาก, permission: bonus}
+      - {name: ตั้งค่ากิจกรรม คูปอง, permission: bonus}
+      - {name: ตั้งค่ากิจกรรม เช็คอิน, permission: bonus}
+  - id: logs_working
+    name: รายงานการทำงานของพนักงาน
+    path: /Logs/Working
+    group: ตั้งค่าอื่น ๆ
+    permission: worklog
+    keywords: [ประวัติการทำงาน, ใครแก้, ใครทำ, log, พนักงานทำอะไร, worklog]
+    description: บันทึกการทำงานของพนักงานรายวัน แยกตามเว็บ
+  - id: billpayment
+    name: บิลค่าใช้จ่ายระบบ
+    path: /BillPayment
+    group: ตั้งค่าอื่น ๆ
+    permission: bill
+    keywords: [บิล, ค่าใช้จ่าย, ค้างชำระ, จ่ายบิล, ใบแจ้งหนี้]
+    description: บิลค่าใช้จ่ายระบบ สถานะบิล และกำหนดชำระ
+  - id: topbar_credit
+    name: แถบด้านบน Agent Credit / SMS Credit
+    path: /DashboardOnce
+    group: แถบด้านบน
+    permission: credit_system
+    keywords: [เครดิตเอเจ้น, agent credit, sms credit, เครดิต sms, รีเฟรชเครดิต]
+    description: ยอด Agent Credit และ SMS Credit ของเว็บที่เลือกอยู่ แสดงที่แถบด้านบนทุกหน้า มีไอคอนรีเฟรชข้างยอด Agent Credit
+  - id: emergency
+    name: ปุ่ม Disabled / SOS
+    path: /DashboardOnce
+    group: แถบด้านบน
+    permission: logged_in
+    keywords: [ฉุกเฉิน, sos, disabled, ปิดเว็บ, ปิดระบบ]
+    description: ปุ่ม Disabled และ SOS ที่แถบด้านบนของหลังบ้าน
+  - {id: report, name: "รายงานกำไรขาดทุน", path: /report, group: "รายงาน", permission: menu_p019}
+  - {id: wheel_report, name: "รายงานกงล้อ", path: /wheel/report, group: "รายงาน", permission: menu_p017}
+  - {id: marketing, name: "รายงานโบนัส", path: /Marketing, group: "รายงาน", permission: menu_p002}
+  - {id: slipreview, name: "สลิปรอตรวจสอบ", path: /SlipReview, group: "รายการ ฝาก - ถอน", permission: menu_p003}
+  - {id: withdrawchangeaccount, name: "รายการโยกเงินอัตโนมัติ", path: /WithdrawChangeAccount, group: "รายการ ฝาก - ถอน", permission: menu_p037}
+  - {id: eventstatement, name: "รายการกิจกรรมต่าง ๆ", path: /eventstatement, group: "รายการ ฝาก - ถอน", permission: menu_p005}
+  - {id: withdrawlog, name: "ระบบตรวจสอบความถูกต้อง", path: /WithdrawLog, group: "รายการ ฝาก - ถอน", permission: menu_p007}
+  - {id: payment, name: "Payment", path: /payment, group: "รายการ ฝาก - ถอน", permission: menu_p048}
+  - {id: member_blocklist, name: "รายการสมาชิกที่โดนบล็อค", path: /Member/blocklist, group: "ระบบสมาชิก", permission: menu_p039}
+  - {id: insertstatement, name: "เพิ่มรายการฝาก", path: /Insertstatement, group: "บัญชีธนาคาร", permission: menu_p009}
+  - {id: configsystem, name: "ตั้งค่าพื้นฐานระบบ", path: /ConfigSystem, group: "ตั้งค่าโปรโมชั่น", permission: menu_p011}
+  - {id: themeweb, name: "ตั้งค่ารูปแบบเว็บไซต์", path: /themeweb, group: "ตั้งค่าต่าง ๆ", permission: menu_p026}
+  - {id: popup, name: "ตั้งค่าระบบแจ้งเตือน", path: /Popup, group: "ตั้งค่าต่าง ๆ", permission: menu_p012}
+  - {id: article, name: "ตั้งค่าบทความ", path: /article, group: "ตั้งค่าต่าง ๆ", permission: menu_p040}
+  - {id: game, name: "ตั้งค่ารูปแบบเกมส์", path: /game, group: "ตั้งค่าต่าง ๆ", permission: menu_p023}
+  - {id: line, name: "ตั้งค่าไลน์บอทสำหรับลูกค้า", path: /Line, group: "ตั้งค่าต่าง ๆ", permission: menu_p014}
+  - {id: linenotify, name: "ตั้งค่าแจ้งเตือนระบบผ่านไลน์", path: /LineNotify, group: "ตั้งค่าต่าง ๆ", permission: menu_p020}
+  - {id: minievent, name: "กิจกรรมแจกแต้ม", path: /minievent, group: "บริการเสริม", permission: menu_p015}
+  - {id: couponevent, name: "คูปอง", path: /couponevent, group: "บริการเสริม", permission: menu_p016}
+  - {id: memberwisdom, name: "รายการสมาชิก WISDOM", path: /MemberWisdom, group: "ระบบสมาชิก", permission: menu_p021}
+  - {id: staking, name: "ฝากกินดอกเบี้ย", path: /Staking, group: "บริการเสริม", permission: menu_p024}
+  - {id: multipledeposit_report, name: "รายงานกิจกรรมตัวคูณ", path: /Multipledeposit/report, group: "รายงาน", permission: menu_p041}
+  - {id: sms, name: "ส่งข้อความ", path: /sms, group: "บริการเสริม", permission: menu_p018}
+  - {id: report_afflotto, name: "รายงานหวยแนะนำเพื่อน", path: /report/afflotto, group: "รายงาน", permission: menu_p030}
+  - {id: wheel, name: "กงล้อ", path: /wheel, group: "บริการเสริม", permission: menu_p025}
+  - {id: smsauto, name: "ระบบส่งข้อความอัตโนมัติ", path: /smsauto, group: "บริการเสริม", permission: menu_p027}
+  - {id: checkin, name: "กิจกรรมเช็คอิน", path: /checkin, group: "บริการเสริม", permission: menu_p028}
+  - {id: ranking, name: "Ranking", path: /Ranking, group: "บริการเสริม", permission: menu_p029}
+  - {id: afflevel, name: "ระบบแนะนำเพื่อน", path: /AffLevel, group: "บริการเสริม", permission: menu_p031}
+  - {id: report_aff, name: "รายงานแนะนำเพื่อน", path: /report/Aff, group: "รายงาน", permission: menu_p032}
+  - {id: report_lottowinloss, name: "รายงานหวยผลแพ้ชนะ", path: /report/lottowinloss, group: "รายงาน", permission: menu_p038}
+  - {id: report_mission, name: "รายงานภารกิจ", path: /report/mission, group: "รายงาน", permission: menu_p062}
+  - {id: qypayment, name: "Qr Payment", path: /qypayment, group: "รายการ ฝาก - ถอน", permission: menu_p033}
+  - {id: ticket, name: "กล่องสุ่ม", path: /ticket, group: "บริการเสริม", permission: menu_p034}
+  - {id: multipledeposit, name: "กิจกรรมตัวคูณยอดฝาก", path: /Multipledeposit, group: "บริการเสริม", permission: menu_p035}
+  - {id: membervip, name: "รายการสมาชิก VIP 30 ลำดับ", path: /membervip, group: "ระบบสมาชิก", permission: menu_p043}
+  - {id: shop, name: "ร้านค้า", path: /shop, group: "บริการเสริม", permission: menu_p044}
+  - {id: fixeddeposit, name: "ฝากประจำ", path: /fixeddeposit, group: "บริการเสริม", permission: menu_p045}
+  - {id: tournament, name: "ทัวร์นาเมนต์", path: /Tournament, group: "บริการเสริม", permission: menu_p046}
+  - {id: covid, name: "โควิด", path: /covid, group: "บริการเสริม", permission: menu_p049}
+  - {id: voucher, name: "บัตรกำนัล", path: /voucher, group: "บริการเสริม", permission: menu_p050}
+  - {id: mission, name: "ภารกิจ", path: /mission, group: "บริการเสริม", permission: menu_p052}
+  - {id: telesale, name: "Telesale", path: /telesale, group: "ระบบติดตามลูกค้า", permission: menu_crm01}
+  - {id: member_eventconfig, name: "รายการสมาชิกที่ปิดกิจกรรม", path: /Member/EventConfig, group: "ระบบสมาชิก", permission: menu_p060}
+  - {id: settingrole, name: "ตั้งค่าสิทธิ์การใช้งาน", path: /settingrole, group: "ตั้งค่าอื่น ๆ", permission: menu_m004}
+  - {id: employee, name: "จัดการพนักงาน", path: /Employee, group: "ตั้งค่าอื่น ๆ", permission: menu_m003}
+  - {id: settingip, name: "จัดการ IP การเข้าใช้งาน", path: /SettingIP, group: "ตั้งค่าอื่น ๆ", permission: menu_m010}
+  - {id: qrcodestatement, name: "รายการฝาก QRCODE รวม", path: /QRCodeStatement, group: "ตั้งค่าอื่น ๆ", permission: menu_m009}
+  - {id: workingstat, name: "รวมการทำงานพนักงาน", path: /Workingstat, group: "ตั้งค่าอื่น ๆ", permission: menu_m006}
+  - {id: logs_statement, name: "รายงานตรวจ ถอน/ฝาก/คืน", path: /Logs/Statement, group: "ตั้งค่าอื่น ๆ", permission: menu_m007}
+  - {id: memberfollow, name: "ระบบติดตามลูกค้า", path: /Memberfollow, group: "ตั้งค่าอื่น ๆ", permission: menu_m008}
+  - {id: checkbank, name: "ตรวจสอบบัญชีธนาคาร", path: /Checkbank, group: "ตั้งค่าอื่น ๆ", permission: menu_m002}
+  - {id: monitordeposit, name: "มอนิเตอร์บัญชีฝาก", path: /MonitorDeposit, group: "ตั้งค่าอื่น ๆ", permission: menu_m011}
+guides:
+  - id: check_member_credit
+    title: เช็คเครดิตของสมาชิก
+    menu: credit
+    tab: เช็คเครดิต
+    steps: [เปิดเมนู ระบบจัดการเครดิตสมาชิก, เลือกแท็บ เช็คเครดิต, กรอกยูสเซอร์เนมของสมาชิกแล้วกดค้นหา]
+    note: การเช็คเครดิตถูกบันทึกเป็นประวัติการทำงานในชื่อพนักงานที่กด ผู้ช่วยจึงไม่เช็คเครดิตแทน
+    questions: [BQ-47]
+    keywords: [เช็คเครดิต, เครดิตสมาชิก, เครดิตคงเหลือ, ยอดเครดิตยูส]
+  - id: return_credit
+    title: คืนเครดิตให้สมาชิก
+    menu: credit
+    tab: คืนเครดิต
+    steps: [เปิดเมนู ระบบจัดการเครดิตสมาชิก, เลือกแท็บ คืนเครดิต, กรอกยูสเซอร์เนมและยอดที่จะคืน แล้วตรวจก่อนยืนยัน]
+    note: ผู้ช่วยทำรายการแทนไม่ได้ ต้องมีสิทธิ์แท็บคืนเครดิต
+    questions: [BQ-48, BQ-51]
+    keywords: [คืนเครดิต, เพิ่มเครดิต, เติมเครดิตมือ]
+  - id: free_bonus
+    title: แจกโบนัสฟรี
+    menu: credit
+    tab: แจกโบนัสฟรี
+    steps: [เปิดเมนู ระบบจัดการเครดิตสมาชิก, เลือกแท็บ แจกโบนัสฟรี, กรอกยูสเซอร์เนม ยอดโบนัส ยอดเทิร์น ยอดถอนสูงสุด และสาเหตุ แล้วยืนยัน]
+    note: ช่องยอดโบนัสกรอกได้เฉพาะบัญชีที่ระดับถึงเกณฑ์ ผู้ช่วยทำรายการแทนไม่ได้
+    questions: [BQ-48]
+    keywords: [โบนัสฟรี, แจกโบนัส, ชดเชย]
+  - id: edit_turnover
+    title: แก้ไขยอดเทิร์นของสมาชิก
+    menu: credit
+    tab: แก้ไขเทิร์น
+    steps: [เปิดเมนู ระบบจัดการเครดิตสมาชิก, เลือกแท็บ แก้ไขเทิร์น, ค้นหายูสเซอร์เนมแล้วแก้ยอดเทิร์น]
+    questions: [BQ-49]
+    keywords: [เทิร์น, ยอดเทิร์น, แก้เทิร์น, ติดเทิร์น]
+  - id: deposit_remain_confirm
+    title: จัดการรายการฝากตกค้าง
+    menu: deposit
+    tab: รายการตกค้าง
+    steps: [เปิดเมนู รายการฝาก, เลือกแท็บ รายการตกค้าง, เลือกวันที่และบัญชีรับ, ดูสาเหตุในช่องหมายเหตุแล้วจัดการรายการที่ต้องการ]
+    note: รายการตกค้างคือเงินเข้าบัญชีฝากที่ระบบยังเติมเครดิตไม่ได้ เช่น หาสมาชิกไม่พบ
+    questions: [BQ-02, BQ-29]
+    keywords: [ตกค้าง, ฝากไม่เข้า, เงินเข้าแต่เครดิตไม่เข้า]
+  - id: withdraw_change_status
+    title: เปลี่ยนสถานะรายการถอน
+    menu: withdraw
+    tab: แสดงรายการถอน
+    steps: [เปิดเมนู รายการถอน, เลือกแท็บ แสดงรายการถอน, เลือกวันที่และสถานะ, กดป้ายสถานะของแถวนั้นเพื่อจัดการ]
+    note: สถานะตรวจสอบยอดธนาคารต้องตรวจสเตทเม้นธนาคารก่อนยืนยันทุกครั้ง
+    questions: [BQ-03, BQ-29]
+    keywords: [เปลี่ยนสถานะถอน, ทำรายการอีกครั้ง, ยืนยันถอน, ยกเลิกถอน]
+  - id: bank_open_close
+    title: เปิดหรือปิดบัญชีฝาก
+    menu: statement
+    tab: จัดการบัญชี
+    steps: [เปิดเมนู จัดการบัญชีธนาคาร, เลือกแท็บ จัดการบัญชี, เลือกบัญชีฝากแล้วเปลี่ยนสถานะหรือการแสดงผลบนหน้าเว็บ]
+    questions: [BQ-10, BQ-13]
+    keywords: [เปิดบัญชี, ปิดบัญชี, บัญชีไม่โชว์, บัญชีฝากไม่แสดง]
+  - id: member_bank_review
+    title: ตรวจบัญชีธนาคารของสมาชิกที่รอตรวจสอบ
+    menu: member_bankpending
+    steps: [เปิดเมนู รายการสมาชิกที่รอตรวจสอบ, เลือกสถานะที่ต้องการ, ตรวจชื่อบัญชีแล้วอนุมัติหรือปฏิเสธ]
+    questions: [BQ-09]
+    keywords: [อนุมัติบัญชี, บัญชีรอตรวจ, บัญชีซ้ำ]
+  - id: pay_bill
+    title: ดูและชำระบิลค่าใช้จ่ายระบบ
+    menu: billpayment
+    steps: [เปิดเมนู บิลค่าใช้จ่ายระบบ ในส่วนตั้งค่าอื่น ๆ, เปิดบิลที่สถานะรอจ่ายหรือค้างชำระ, ชำระตามช่องทางในบิลแล้วรอการยืนยัน]
+    note: ถ้าจ่ายแล้วแต่บิลยังไม่เปลี่ยนสถานะ ให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    questions: [BQ-44, BQ-46]
+    keywords: [จ่ายบิล, ชำระบิล, บิลค้าง]
+  - id: find_worklog
+    title: ตรวจว่าใครทำรายการ
+    menu: logs_working
+    steps: [เปิดเมนู รายงานการทำงานของพนักงาน, เลือกวันที่และเว็บ, พิมพ์ชื่อพนักงานหรือยูสเซอร์เนมในช่องค้นหา]
+    questions: [BQ-35, BQ-50]
+    keywords: [ใครทำ, ใครแก้, ประวัติพนักงาน]

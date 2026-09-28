@@ -30,18 +30,33 @@ type ChatHandler struct {
 	chat    *service.ChatService // Enabled() = false → ปิดแชท
 	relay   *service.Relay
 	tickets port.ChatTicketIssuer
-	conn    *connector.Connector
+	conns   connector.Set
 }
 
 func NewChatHandler(offices port.OfficeService, chat *service.ChatService, relay *service.Relay,
-	tickets port.ChatTicketIssuer, conn *connector.Connector) *ChatHandler {
-	return &ChatHandler{offices: offices, chat: chat, relay: relay, tickets: tickets, conn: conn}
+	tickets port.ChatTicketIssuer, conns connector.Set) *ChatHandler {
+	return &ChatHandler{offices: offices, chat: chat, relay: relay, tickets: tickets, conns: conns}
 }
 
+// connFor = connector ของหลังบ้านชนิดที่ office นี้ตั้งไว้ · ไม่พบ = ตอบ 503 ให้แล้ว
+func (h *ChatHandler) connFor(c *gin.Context, office domain.Office) (*connector.Connector, bool) {
+	conn, ok := h.conns.For(office.Kind)
+	if !ok {
+		log.Printf("[ERROR] office %s ตั้ง kind %q ที่ไม่มี connector", office.ID, office.Kind)
+		ResData(c, http.StatusServiceUnavailable, "KIND_NOT_SUPPORTED", "ยังไม่รองรับหลังบ้านชนิดนี้", nil)
+		return nil, false
+	}
+	return conn, true
+}
+
+// pageConfig = วิธีอ่าน "ใครล็อกอิน + เปิดเว็บไหน" จากหน้าหลังบ้านชนิดนี้ (ชื่อช่อง storage ไม่ใช่ความลับ)
 type pageConfig struct {
 	Kind        string                  `json:"kind"`
 	Mode        string                  `json:"mode"`
 	HostAPIBase string                  `json:"host_api_base"`
+	Token       connector.TokenSource   `json:"token"`
+	Service     connector.ServiceSource `json:"service"`
+	AuthScheme  string                  `json:"auth_scheme"`
 	Identity    *connector.IdentitySpec `json:"identity,omitempty"`
 }
 
@@ -49,16 +64,28 @@ type pageConfig struct {
 //
 // ที่อยู่ API หลังบ้าน: ค่าที่ตั้งไว้ให้ office นี้ในคอนโซลก่อน ไม่มีจึงใช้ template ของ connector ({origin}/api)
 func (h *ChatHandler) PageConfig(c *gin.Context, office domain.Office) {
+	conn, ok := h.connFor(c, office)
+	if !ok {
+		return
+	}
+	pa := conn.Host.PageAuth
 	origin, _ := domain.NormalizeOrigin(c.GetHeader("Origin"))
 	base := office.HostAPIBase
 	if base == "" {
-		base = strings.ReplaceAll(h.conn.Host.PageAuth.HostAPIBase, "{origin}", origin)
+		base = strings.ReplaceAll(pa.HostAPIBase, "{origin}", origin)
+	}
+	scheme := pa.AuthScheme
+	if scheme == "" {
+		scheme = "Bearer"
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", pageConfig{
-		Kind:        h.conn.Kind,
-		Mode:        h.conn.Host.Mode,
+		Kind:        conn.Kind,
+		Mode:        conn.Host.Mode,
 		HostAPIBase: base,
-		Identity:    h.conn.Host.PageAuth.Identity,
+		Token:       pa.Token,
+		Service:     pa.Service,
+		AuthScheme:  scheme,
+		Identity:    pa.Identity,
 	})
 }
 
@@ -150,6 +177,11 @@ func (h *ChatHandler) Chat(c *gin.Context, office domain.Office, t domain.ChatTi
 		return
 	}
 
+	conn, ok := h.connFor(c, office)
+	if !ok {
+		return
+	}
+
 	w := c.Writer
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -172,7 +204,7 @@ func (h *ChatHandler) Chat(c *gin.Context, office domain.Office, t domain.ChatTi
 		return nil
 	}
 
-	err := h.chat.Handle(c.Request.Context(), office, svc, h.conn, t,
+	err := h.chat.Handle(c.Request.Context(), office, svc, conn, t,
 		service.ChatRequest{ConversationID: req.ConversationID, Text: req.Text}, emit)
 	if err == nil || c.Request.Context().Err() != nil {
 		return
@@ -203,4 +235,24 @@ func (h *ChatHandler) Relay(c *gin.Context, office domain.Office, t domain.ChatT
 		return
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", nil)
+}
+
+type kindInfo struct {
+	Kind    string `json:"kind"`
+	Label   string `json:"label"`
+	Default bool   `json:"default"`
+}
+
+// ListKinds — GET /api/ai/admin/kinds · ชนิดหลังบ้านที่มี connector (ให้คอนโซลเลือกตอนตั้งค่า domain)
+func ListKinds(c *gin.Context, conns connector.Set) {
+	out := []kindInfo{}
+	for _, k := range conns.Kinds() {
+		conn, _ := conns.Get(k)
+		label := conn.Host.Label
+		if label == "" {
+			label = k
+		}
+		out = append(out, kindInfo{Kind: k, Label: label, Default: k == conns.Default})
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", out)
 }

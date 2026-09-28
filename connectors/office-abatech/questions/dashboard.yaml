@@ -1,0 +1,124 @@
+# POST /api/GetDashboardSummaryByDayQuery/:service (report/route.go:28 · HandleGetDashboardSummaryByDayQuery · repo report/repository.go:646)
+#   frontend: components/Dashboard-head/DashboardOneV2Head.vue:270-277 ส่ง {start_date, end_date} รูปแบบ "YYYY-MM-DD HH:mm"
+#   backend: GetFilterDateTimeBetween (end + 59 วินาที · $lte) → ส่ง end "23:59" = ถึง 23:59:59 · แยกเป็นวันไทย (offset 17h) · Redis 5 นาที
+#   response: {code:0, msg, payload: []DashboardSum | null} · มีแถวเฉพาะวันที่มีเงินเข้าบัญชีฝาก (bank_statement deposit > 0)
+#   อ่านอย่างเดียว (aggregate) — ไม่ใช้ GetDashboardSummary (ไม่มีหน้าจอเรียกแล้ว · last_* ≠ เมื่อวาน KI-1)
+#   ไม่ใช้ GetReportProfitLossQuery / GetDashboardSummaryALLQuery (เขียนตาราง report — F-10)
+questions: [BQ-01, BQ-12]
+tools:
+  - name: dashboard_today
+    description: >-
+      สรุปยอดของวันนี้ของเว็บที่เปิดอยู่ (ยอดฝาก ยอดถอน โบนัส จำนวนรายการ จำนวนสมาชิกที่ฝาก/ถอน) เทียบยอดฝากกับเมื่อวาน
+      · ใช้กับคำถาม "ยอดวันนี้" "ยอดฝากวันนี้" "เทียบเมื่อวาน"
+    questions: [BQ-01]
+    permission: dashboard
+    freshness: live
+    calls:
+      - id: t
+        method: POST
+        path: /GetDashboardSummaryByDayQuery/{service}
+        body: {start_date: "{date:today} 00:00", end_date: "{date:today} 23:59"}
+        cache_ttl: 0
+        timeout_ms: 20000
+        schema: &daysum
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [datestring]
+            properties:
+              datestring: {type: string}
+              deposit: {type: number}
+              withdraw: {type: number}
+              bonus: {type: number}
+              count_deposit: {type: number}
+              count_withdraw: {type: number}
+              countmember_deposit: {type: number}
+              countmember_withdraw: {type: number}
+      - id: y
+        method: POST
+        path: /GetDashboardSummaryByDayQuery/{service}
+        body: {start_date: "{date:yesterday} 00:00", end_date: "{date:yesterday} 23:59"}
+        cache_ttl: 0
+        timeout_ms: 20000
+        schema: *daysum
+    values:
+      - {name: today_rows, from: t, agg: count}
+      - {name: today_deposit, from: t, agg: sum, field: deposit}
+      - {name: today_withdraw, from: t, agg: sum, field: withdraw}
+      - {name: today_bonus, from: t, agg: sum, field: bonus}
+      - {name: today_count_deposit, from: t, agg: sum, field: count_deposit}
+      - {name: today_count_withdraw, from: t, agg: sum, field: count_withdraw}
+      - {name: today_members_deposit, from: t, agg: sum, field: countmember_deposit}
+      - {name: today_net, expr: "today_deposit - today_withdraw"}
+      - {name: y_rows, from: y, agg: count}
+      - {name: y_deposit, from: y, agg: sum, field: deposit}
+      - {name: deposit_diff, expr: "today_deposit - y_deposit"}
+    not_found: {when: "today_rows == 0", message: วันนี้ยังไม่มีเงินเข้าบัญชีฝาก ระบบจึงยังไม่มีสรุปของวันนี้}
+    card:
+      title: สรุปยอดวันนี้
+      fields:
+        - {label: ยอดฝาก, value: today_deposit, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการฝาก, value: today_count_deposit, format: int, suffix: " รายการ"}
+        - {label: สมาชิกที่ฝาก, value: today_members_deposit, format: int, suffix: " คน"}
+        - {label: ยอดถอน, value: today_withdraw, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการถอน, value: today_count_withdraw, format: int, suffix: " รายการ"}
+        - {label: โบนัส, value: today_bonus, format: money, suffix: " บาท"}
+        - {label: ฝากลบถอน, value: today_net, format: money, suffix: " บาท"}
+        - {label: ยอดฝากเมื่อวาน, value: y_deposit, format: money, suffix: " บาท", when: "y_rows > 0"}
+        - {label: ยอดฝากต่างจากเมื่อวาน, value: deposit_diff, format: money, suffix: " บาท", when: "y_rows > 0"}
+      note: ฝากลบถอนยังไม่หักโบนัสและส่วนแบ่ง · เทียบเมื่อวานคำนวณจากยอดจริงของเมื่อวานทั้งวัน
+      link: {label: เปิดรายงานภาพรวม, path: "/DashboardOnce?service={service_b64}"}
+    model_context:
+      - {name: deposit_up_from_yesterday, type: bool, expr: "y_rows > 0 && today_deposit > y_deposit"}
+      - {name: has_yesterday, type: bool, expr: "y_rows > 0"}
+      - {name: net_positive, type: bool, expr: "today_net > 0"}
+      - {name: note, type: text, text: ตัวเลขทั้งหมดแสดงในการ์ดแล้ว ฝากลบถอนยังไม่หักโบนัส}
+
+  - name: dashboard_range
+    description: >-
+      สรุปยอดฝาก ยอดถอน และโบนัสตามช่วงวันที่ถาม แยกรายวัน · ใช้เมื่อถามยอดของวันอื่นหรือหลายวัน
+      · ไม่ใช่รายงานกำไรขาดทุน (หน้ารายงานกำไรขาดทุนผู้ช่วยดึงให้ไม่ได้)
+    questions: [BQ-01, BQ-12]
+    permission: dashboard
+    freshness: summary
+    input:
+      date_from: {type: date, required: true, description: วันแรกของช่วง YYYY-MM-DD}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: r
+        method: POST
+        path: /GetDashboardSummaryByDayQuery/{service}
+        body: {start_date: "{date:input.date_from} 00:00", end_date: "{date:input.date_to|date:input.date_from} 23:59"}
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: *daysum
+    values:
+      - {name: days, from: r, agg: count}
+      - {name: rows, from: r, sort_by: datestring, order: asc}
+      - {name: sum_deposit, from: r, agg: sum, field: deposit}
+      - {name: sum_withdraw, from: r, agg: sum, field: withdraw}
+      - {name: sum_bonus, from: r, agg: sum, field: bonus}
+      - {name: sum_net, expr: "sum_deposit - sum_withdraw"}
+    not_found: {when: "days == 0", message: ไม่มีเงินเข้าบัญชีฝากในช่วงวันที่ถาม ระบบจึงไม่มีสรุปของช่วงนี้}
+    card:
+      title: สรุปยอดตามช่วงวัน
+      fields:
+        - {label: จำนวนวันที่มีรายการ, value: days, format: int, suffix: " วัน"}
+        - {label: ยอดฝากรวม, value: sum_deposit, format: money, suffix: " บาท"}
+        - {label: ยอดถอนรวม, value: sum_withdraw, format: money, suffix: " บาท"}
+        - {label: โบนัสรวม, value: sum_bonus, format: money, suffix: " บาท"}
+        - {label: ฝากลบถอน, value: sum_net, format: money, suffix: " บาท"}
+      table:
+        rows: rows
+        max_rows: 31
+        columns:
+          - {label: วันที่, field: datestring}
+          - {label: ยอดฝาก, field: deposit, format: money}
+          - {label: ยอดถอน, field: withdraw, format: money}
+          - {label: โบนัส, field: bonus, format: money}
+      note: แสดงเฉพาะวันที่มีเงินเข้าบัญชีฝาก · ฝากลบถอนยังไม่หักโบนัสและส่วนแบ่ง ไม่ใช่รายงานกำไรขาดทุน
+      link: {label: เปิดรายงานภาพรวม, path: "/DashboardOnce?service={service_b64}"}
+    model_context:
+      - {name: net_positive, type: bool, expr: "sum_net > 0"}
+      - {name: note, type: text, text: ตัวเลขแสดงในการ์ดแล้ว ไม่ใช่รายงานกำไรขาดทุน}

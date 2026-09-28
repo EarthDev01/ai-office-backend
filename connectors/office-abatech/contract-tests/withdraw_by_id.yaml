@@ -1,0 +1,46 @@
+# WithdrawByID → {code:0, msg:"", payload:WithdrawModelByID} · ไม่พบ {code:1, msg:"ไม่พบข้อมูล"}
+tool: withdraw_by_id
+cases:
+  - name: พบรายการพร้อมประวัติ
+    input: {id: 66f2c3d4e5f60718293a4b5c}
+    responses:
+      d:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            id: 66f2c3d4e5f60718293a4b5c
+            datetime: "2026-09-24T04:01:00Z"
+            update_time: "2026-09-24T04:20:00Z"
+            username: abc123
+            amount: 1000
+            status: 1
+            operator_name: admin01
+            comment: โอนแล้ว
+            bank_number: "1112223334"
+            count_deposit: 14
+            comment_time_lime:
+              - {operator_name: admin01, status: 1, comment: โอนแล้ว, datetime: "2026-09-24T04:20:00Z", action: ยืนยันถอน, channel: MANUAL}
+              - {operator_name: system, status: 2, comment: "", datetime: "2026-09-24T04:01:00Z", action: สร้างรายการ, channel: AUTO}
+    expect:
+      status: ok
+      calls:
+        d: {path: /WithdrawByID/DEMO-SVC, query: {id: 66f2c3d4e5f60718293a4b5c}}
+      fields:
+        ยูสเซอร์: abc123
+        ยอด: "1,000.00 บาท"
+        สถานะ: สำเร็จ
+        สร้างเมื่อ: "24/09/2026 11:01"
+        เปลี่ยนสถานะล่าสุด: "24/09/2026 11:20"
+        ผู้แก้ล่าสุด: admin01
+        หมายเหตุ: โอนแล้ว
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 11:01", สร้างรายการ, รอโอน, system]
+      model_context: {is_final: true, needs_bank_check: false, timeline_statuses: [รอโอน, สำเร็จ]}
+      link: "/Withdraw?service=REVNTy1TVkM="
+  - name: ไม่พบรายการ
+    input: {id: "000000000000000000000000"}
+    responses:
+      d: {body: {code: 1, msg: ไม่พบข้อมูล}}
+    expect: {status: not_found}

@@ -47,9 +47,18 @@ page_auth:
     level: level
     dept: deptcode
     permissions: {path: role.permission, pluck: code, where_field: isactive, where_value: 1}
+    # สิทธิ์อยู่ใน JWT อีกใบของหน้า (ไม่ใช่ใบที่แนบ Authorization) → widget decode เอง · ใช้แทน permissions_request
+    permissions_token: {source: localStorage, key: token, format: raw}
+    # backend ตัดสินเว็บที่เข้าได้จาก JWT ที่แนบ Authorization (ไม่ส่งลงหน้าเว็บ)
+    services: {path: service, pluck: service}   # ไม่ตั้ง = ไม่จำกัด
+    services_empty: none                        # all (ค่าเริ่มต้น) = รายชื่อว่างแปลว่าไม่จำกัด · none = เข้าไม่ได้
+    all_services_when: "level >= 10 || dept == 'D002'"   # ตัวแปร level, dept
 host_api:
   envelope: {code_field: code, ok_codes: [0], data_field: data}
 ```
+
+office เลือก connector ด้วย field `kind` (ตั้งในคอนโซล "ชนิดหลังบ้าน" · ว่าง = `office-v10x` ตามที่ `_cmd/main.go` กำหนด) —
+page-config / ตัวตน / tool ของ office นั้นใช้ connector ชนิดนั้นทั้งหมด
 
 ตัวอย่างครบ: `internal/core/connector/testdata/sample-browser/`
 

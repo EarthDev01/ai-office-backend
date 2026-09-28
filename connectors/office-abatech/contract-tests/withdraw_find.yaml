@@ -1,0 +1,30 @@
+tool: withdraw_find
+cases:
+  - name: พบรายการของยูส
+    input: {username: abc123}
+    responses:
+      w:
+        body:
+          code: 0
+          msg: Success
+          count: 2
+          payload:
+            - {id: 66f2c3d4e5f60718293a4b5c, datetime: "2026-09-24T04:01:00Z", username: abc123, phone_number: "0812345678", amount: 1000, status: 1, operator_name: admin01}
+            - {id: 66f2c3d4e5f60718293a4b5d, datetime: "2026-09-24T03:00:00Z", username: abc1239, amount: 50, status: 2, operator_name: ""}
+    expect:
+      status: ok
+      calls:
+        w: {path: /GetWithdrawStatementListByFilter/DEMO-SVC, query: {date: "2026-09-24", search: abc123, status: "0"}}
+      fields: {พบรายการถอน: "1 รายการ"}
+      table_rows: 1
+      table_cells:
+        - ["24/09/2026 11:01", "1,000.00", สำเร็จ, admin01, 66f2c3d4e5f60718293a4b5c]
+      model_context: {statuses: [สำเร็จ]}
+  - name: ไม่พบ
+    input: {username: nobody, date: "2026-09-20"}
+    responses:
+      w: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect:
+      status: not_found
+      calls:
+        w: {query: {date: "2026-09-20"}}

@@ -1,0 +1,47 @@
+# response ตาม report/route.go HandleGetDashboardSummaryByDayQuery → {code:0, msg:"SUCCESS", payload:[DashboardSum]} (report/model.go:36-51)
+tool: dashboard_today
+cases:
+  - name: มีทั้งวันนี้และเมื่อวาน
+    service: DEMOSLOT
+    responses:
+      t: {body: {code: 0, msg: SUCCESS, payload: [{datestring: "2026-09-24", deposit: 98000, withdraw: 42500.5, bonus: 1200, count_deposit: 57, count_withdraw: 21, countmember_deposit: 40, countmember_withdraw: 18}]}}
+      y: {body: {code: 0, msg: SUCCESS, payload: [{datestring: "2026-09-23", deposit: 90000, withdraw: 30000, bonus: 800, count_deposit: 50, count_withdraw: 19, countmember_deposit: 35, countmember_withdraw: 16}]}}
+    expect:
+      status: ok
+      calls:
+        t: {path: /GetDashboardSummaryByDayQuery/DEMOSLOT, body: {start_date: "2026-09-24 00:00", end_date: "2026-09-24 23:59"}}
+        y: {body: {start_date: "2026-09-23 00:00", end_date: "2026-09-23 23:59"}}
+      fields:
+        ยอดฝาก: "98,000.00 บาท"
+        จำนวนรายการฝาก: "57 รายการ"
+        สมาชิกที่ฝาก: "40 คน"
+        ยอดถอน: "42,500.50 บาท"
+        โบนัส: "1,200.00 บาท"
+        ฝากลบถอน: "55,499.50 บาท"
+        ยอดฝากเมื่อวาน: "90,000.00 บาท"
+        ยอดฝากต่างจากเมื่อวาน: "8,000.00 บาท"
+      model_context: {deposit_up_from_yesterday: true, has_yesterday: true, net_positive: true}
+      link: "/DashboardOnce?service=REVNT1NMT1Q="
+  - name: เมื่อวานไม่มีรายการ — ไม่โชว์ช่องเทียบ
+    responses:
+      t: {body: {code: 0, msg: SUCCESS, payload: [{datestring: "2026-09-24", deposit: 500, withdraw: 0, bonus: 0, count_deposit: 1, count_withdraw: 0, countmember_deposit: 1, countmember_withdraw: 0}]}}
+      y: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect:
+      status: ok
+      fields: {ยอดฝาก: "500.00 บาท"}
+      no_fields: [ยอดฝากเมื่อวาน, ยอดฝากต่างจากเมื่อวาน]
+      model_context: {has_yesterday: false, deposit_up_from_yesterday: false}
+  - name: ข้ามเที่ยงคืน — วันใหม่ตามเวลาไทย
+    now: "2026-09-24T17:05:00Z"
+    responses:
+      t: {body: {code: 0, msg: SUCCESS, payload: null}}
+      y: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect:
+      status: not_found
+      calls:
+        t: {body: {start_date: "2026-09-25 00:00", end_date: "2026-09-25 23:59"}}
+  - name: token หมดอายุ (HTTP 200 code 401)
+    responses:
+      t: {body: {code: 401, msg: "AuthenHeader Fail !!"}}
+      y: {body: {code: 401, msg: "AuthenHeader Fail !!"}}
+    expect: {status: error, error_code: host_error}

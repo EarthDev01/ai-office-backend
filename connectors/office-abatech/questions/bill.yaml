@@ -1,0 +1,98 @@
+# GET /api/GetBillPayment (global/route.go:37 · ไม่มี :service · ไม่มี auth) → proxy สดไป console-blpmv3.me (hardcode · 60 วินาที)
+#   response ของ upstream ตรง ๆ: {status:{code:200}, data:[bill]} (pages/BillPayment/index.vue:159-160) → envelope raw
+#   error = {code:1, msg, payload:null} → ไม่มี status → schema_mismatch
+#   ได้บิลของทุก service ใน deployment (service_list จาก database_config) → scope: office
+#   status บิล (components/billpayment/statuscard.vue): 1 ร่าง · 2 ยกเลิก · 3 รอจ่าย · 4 จ่ายแล้วรอคอนเฟิร์ม · 5 ค้างชำระ · 6 สำเร็จ
+#   ไม่ใช้ GetBillPaymentByID (IDOR + มีเลขบัญชีรับเงิน)
+questions: [BQ-44, BQ-46]
+tools:
+  - name: bills_unpaid
+    description: บิลค่าใช้จ่ายระบบที่ยังไม่ได้ชำระ (รอจ่าย และค้างชำระ) พร้อมยอดและกำหนดชำระ
+    questions: [BQ-44]
+    permission: bill
+    freshness: live
+    calls:
+      - &billcall
+        id: b
+        method: GET
+        path: /GetBillPayment
+        scope: office
+        envelope: raw
+        cache_ttl: 0
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [status, data]
+          properties:
+            status: {type: object, required: [code], properties: {code: {type: integer}}}
+            data:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [status]
+                properties:
+                  billpayment_id: {type: string}
+                  billpayment_name: {type: string}
+                  title: {type: string}
+                  to_name: {type: string}
+                  total: {type: number}
+                  end_date: {type: string}
+                  status: {type: integer}
+    values:
+      - {name: ok, from: b, path: status.code}
+      - {name: rows, from: b, path: data, filter: "in(item.status, 3, 5)", sort_by: end_date, order: asc}
+      - {name: unpaid_count, from: b, path: data, filter: "in(item.status, 3, 5)", agg: count}
+      - {name: unpaid_total, from: b, path: data, filter: "in(item.status, 3, 5)", agg: sum, field: total}
+      - {name: overdue_count, from: b, path: data, filter: "item.status == 5", agg: count}
+    not_found: {when: "ok == 200 && unpaid_count == 0", message: ไม่มีบิลค่าใช้จ่ายที่ค้างชำระ}
+    card:
+      title: บิลที่ยังไม่ได้ชำระ
+      fields:
+        - {label: บิลที่ยังไม่ชำระ, value: unpaid_count, format: int, suffix: " ใบ"}
+        - {label: ยอดรวม, value: unpaid_total, format: money, suffix: " บาท"}
+        - {label: เลยกำหนดแล้ว, value: overdue_count, format: int, suffix: " ใบ", when: "overdue_count > 0"}
+      table:
+        rows: rows
+        columns:
+          - {label: เลขที่, field: billpayment_id}
+          - {label: เรื่อง, field: billpayment_name}
+          - {label: เรียน, field: to_name}
+          - {label: ยอด, field: total, format: money}
+          - {label: กำหนดชำระ, field: end_date, format: date}
+          - {label: สถานะ, field: status, format: "status:bill"}
+      note: แสดงบิลของหลังบ้านชุดนี้ทุกเว็บ
+      link: {label: เปิดบิลค่าใช้จ่ายระบบ, path: /BillPayment}
+    model_context:
+      - {name: has_unpaid, type: bool, expr: "unpaid_count > 0"}
+      - {name: has_overdue, type: bool, expr: "overdue_count > 0"}
+
+  - name: bills_pending_confirm
+    description: บิลที่ชำระแล้วแต่ยังรอคอนเฟิร์มจากผู้ให้บริการ
+    questions: [BQ-46]
+    permission: bill
+    freshness: live
+    calls:
+      - *billcall
+    values:
+      - {name: ok, from: b, path: status.code}
+      - {name: rows, from: b, path: data, filter: "item.status == 4"}
+      - {name: pending_count, from: b, path: data, filter: "item.status == 4", agg: count}
+      - {name: pending_total, from: b, path: data, filter: "item.status == 4", agg: sum, field: total}
+    not_found: {when: "ok == 200 && pending_count == 0", message: ไม่มีบิลที่จ่ายแล้วรอคอนเฟิร์ม}
+    card:
+      title: บิลที่จ่ายแล้วรอคอนเฟิร์ม
+      fields:
+        - {label: บิลรอคอนเฟิร์ม, value: pending_count, format: int, suffix: " ใบ"}
+        - {label: ยอดรวม, value: pending_total, format: money, suffix: " บาท"}
+      table:
+        rows: rows
+        columns:
+          - {label: เลขที่, field: billpayment_id}
+          - {label: เรื่อง, field: billpayment_name}
+          - {label: ยอด, field: total, format: money}
+          - {label: สถานะ, field: status, format: "status:bill"}
+      note: ถ้ารอนานผิดปกติให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+      link: {label: เปิดบิลค่าใช้จ่ายระบบ, path: /BillPayment}
+    model_context:
+      - {name: has_pending_confirm, type: bool, expr: "pending_count > 0"}

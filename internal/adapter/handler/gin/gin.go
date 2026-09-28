@@ -23,11 +23,12 @@ type Deps struct {
 	ConsoleToken  string
 
 	// แชท — Chat.Enabled() = false (ไม่มี LLM) → /chat ตอบ 503 แต่ออกตั๋วได้ตามปกติ
-	Chat      *service.ChatService
-	Relay     *service.Relay
-	Tickets   port.ChatTicketIssuer
-	Connector *connector.Connector
-	ChatAdmin *service.ChatAdminService // nil = ไม่เปิดหน้าประวัติแชท/ตรวจคำตอบ
+	Chat    *service.ChatService
+	Relay   *service.Relay
+	Tickets port.ChatTicketIssuer
+	// Connectors — ปลั๊กทุกชนิดหลังบ้านที่โหลดไว้ · office เลือกด้วย kind (ว่าง = Connectors.Default)
+	Connectors connector.Set
+	ChatAdmin  *service.ChatAdminService // nil = ไม่เปิดหน้าประวัติแชท/ตรวจคำตอบ
 
 	// ChatRepo — ไม่ได้ใช้ใน router · เปิดไว้ให้ test ประกอบ service อื่นบนที่เก็บเดียวกัน
 	ChatRepo port.ChatRepository
@@ -80,7 +81,7 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 	bootstrap := func(c *gin.Context) { boot.Bootstrap(c, OfficeFrom(c), CallerFrom(c)) }
 
-	chatHandler := routes.NewChatHandler(d.OfficeService, d.Chat, d.Relay, d.Tickets, d.Connector)
+	chatHandler := routes.NewChatHandler(d.OfficeService, d.Chat, d.Relay, d.Tickets, d.Connectors)
 
 	// page-config ยังไม่ต้องมีตัวตน — มีแค่ที่อยู่ API หลังบ้าน ไม่มีข้อมูลของใคร
 	r.GET("/api/ai/widget/page-config", RejectTenantFields(), ResolveOffice(d.OfficeService),
@@ -155,6 +156,8 @@ func NewRouter(d Deps) *gin.Engine {
 		admin.PATCH("/groups/:gid", officeEdit, office.RenameGroup)
 		admin.DELETE("/groups/:gid", officeDelete, office.DeleteGroup)
 
+		// ชนิดหลังบ้านที่เลือกได้ในหน้าตั้งค่า domain (= connector ที่โหลดอยู่)
+		admin.GET("/kinds", officeView, func(c *gin.Context) { routes.ListKinds(c, d.Connectors) })
 		admin.GET("/offices", officeView, office.List)
 		admin.GET("/offices/:id", officeView, office.Get)
 

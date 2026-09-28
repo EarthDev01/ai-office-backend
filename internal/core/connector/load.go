@@ -201,23 +201,10 @@ func (c *Connector) validateHost(file string, add addFn) {
 		add(file, 0, "kind %q ต้องตรงกับชื่อโฟลเดอร์ %q", h.Kind, c.Kind)
 	}
 	pa := h.PageAuth
-	switch pa.Token.Source {
-	case "localStorage", "sessionStorage":
-	default:
-		add(file, 0, "page_auth.token.source ต้องเป็น localStorage|sessionStorage")
-	}
-	if pa.Token.Key == "" {
-		add(file, 0, "page_auth.token.key ว่าง")
-	}
-	switch pa.Token.Format {
-	case "raw":
-	case "json-expiration":
-		if pa.Token.ValueField == "" {
-			add(file, 0, "page_auth.token.value_field ต้องมีเมื่อ format=json-expiration")
-		}
-	default:
+	if pa.Token.Format == "" {
 		add(file, 0, "page_auth.token.format ต้องเป็น raw|json-expiration")
 	}
+	validateTokenSource(file, "page_auth.token", pa.Token, add)
 	switch pa.Service.Source {
 	case "localStorage", "sessionStorage", "query":
 	default:
@@ -645,5 +632,49 @@ func (c *Connector) validateIdentity(file string, id *IdentitySpec, add addFn) {
 		if id.Permissions == nil {
 			add(file, 0, "page_auth.identity.permissions_request ต้องมี permissions (path/pluck) คู่กัน")
 		}
+	}
+	if pt := id.PermissionsToken; pt != nil {
+		if id.PermissionsRequest != "" {
+			add(file, 0, "page_auth.identity ตั้ง permissions_token กับ permissions_request พร้อมกันไม่ได้")
+		}
+		if id.Permissions == nil {
+			add(file, 0, "page_auth.identity.permissions_token ต้องมี permissions (path/pluck) คู่กัน")
+		}
+		validateTokenSource(file, "page_auth.identity.permissions_token", *pt, add)
+	}
+	if id.Services != nil && id.Services.Path == "" {
+		add(file, 0, "page_auth.identity.services.path ว่าง")
+	}
+	switch id.ServicesEmpty {
+	case "", "all", "none":
+	default:
+		add(file, 0, "page_auth.identity.services_empty ต้องเป็น all|none")
+	}
+	if src := id.AllServicesWhen; src != "" {
+		e, err := ParseExpr(src)
+		if err != nil {
+			add(file, 0, "page_auth.identity.all_services_when: %v", err)
+		}
+		id.allServicesExpr = e
+	}
+}
+
+func validateTokenSource(file, field string, t TokenSource, add addFn) {
+	switch t.Source {
+	case "localStorage", "sessionStorage":
+	default:
+		add(file, 0, "%s.source ต้องเป็น localStorage|sessionStorage", field)
+	}
+	if t.Key == "" {
+		add(file, 0, "%s.key ว่าง", field)
+	}
+	switch t.Format {
+	case "", "raw":
+	case "json-expiration":
+		if t.ValueField == "" {
+			add(file, 0, "%s.value_field ต้องมีเมื่อ format=json-expiration", field)
+		}
+	default:
+		add(file, 0, "%s.format ต้องเป็น raw|json-expiration", field)
 	}
 }

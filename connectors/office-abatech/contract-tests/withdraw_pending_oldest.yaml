@@ -1,0 +1,34 @@
+tool: withdraw_pending_oldest
+cases:
+  - name: เรียงจากเก่าสุด
+    responses:
+      w:
+        body:
+          code: 0
+          msg: Success
+          count: 3
+          payload:
+            - {datetime: "2026-09-24T05:00:00Z", username: u3, amount: 300, status: 12}
+            - {datetime: "2026-09-24T01:00:00Z", username: u1, amount: 100, status: 2}
+            - {datetime: "2026-09-24T00:30:00Z", username: u0, amount: 50, status: 1}
+    expect:
+      status: ok
+      calls:
+        w: {path: /GetWithdrawStatementListByFilter/DEMO-SVC, query: {date: "2026-09-24", sort: datetime, order: "1"}}
+      fields:
+        รายการค้างทั้งหมด: "2 รายการ"
+        เก่าสุดสร้างเมื่อ: "24/09/2026 08:00"
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 08:00", u1, "100.00", รอโอน]
+        - ["24/09/2026 12:00", u3, "300.00", เกิดข้อผิดพลาด]
+      model_context: {statuses: [รอโอน, เกิดข้อผิดพลาด]}
+      link: "/Withdraw?service=REVNTy1TVkM="
+  - name: ไม่มีค้าง
+    responses:
+      w: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found}
+  - name: token ใช้ไม่ได้ (HTTP 401)
+    responses:
+      w: {status: 401, body: {code: 401}}
+    expect: {status: error, error_code: unauthorized}

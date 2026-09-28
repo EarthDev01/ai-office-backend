@@ -15,13 +15,34 @@ type officeService struct {
 	repo   port.OfficeRepository
 	groups port.OfficeGroupRepository
 	audit  port.AuditRecorder
+	kinds  func(kind string) bool // kind ที่มี connector โหลดอยู่ · nil = ไม่ตรวจ
+}
+
+// OfficeOption ตั้งค่าเพิ่มของ office service
+type OfficeOption func(*officeService)
+
+// WithKinds = ตรวจ kind ที่ตั้งจากคอนโซลว่ามี connector จริง (ค่าว่างผ่านเสมอ = kind ตั้งต้นของระบบ)
+func WithKinds(valid func(kind string) bool) OfficeOption {
+	return func(s *officeService) { s.kinds = valid }
 }
 
 // audit เป็น nil ได้ (ไม่บันทึกประวัติ)
 //
 // บนหน้าจอเรียก Office ว่า "domain" (1 ตัว = 1 URL) และจัดเป็นกลุ่มด้วย groups
-func NewOfficeService(repo port.OfficeRepository, groups port.OfficeGroupRepository, audit port.AuditRecorder) port.OfficeService {
-	return &officeService{repo: repo, groups: groups, audit: auditOr(audit)}
+func NewOfficeService(repo port.OfficeRepository, groups port.OfficeGroupRepository, audit port.AuditRecorder, opts ...OfficeOption) port.OfficeService {
+	s := &officeService{repo: repo, groups: groups, audit: auditOr(audit)}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+func (s *officeService) checkKind(kind string) (string, error) {
+	kind = strings.TrimSpace(kind)
+	if kind != "" && s.kinds != nil && !s.kinds(kind) {
+		return "", fmt.Errorf("ไม่รู้จักชนิดหลังบ้าน %q", kind)
+	}
+	return kind, nil
 }
 
 // field ที่ไม่นับเป็น "การแก้ไข" ในประวัติ — services มีเหตุการณ์ของตัวเองแยก
@@ -31,6 +52,7 @@ var (
 	idPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$`)
 	allowedThemes    = map[string]bool{"auto": true, "light": true, "dark": true}
 	allowedPositions = map[string]bool{"bottom-right": true, "bottom-left": true}
+	hexColorPattern  = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 )
 
 func (s *officeService) List(ctx context.Context) ([]domain.Office, error) { return s.repo.List(ctx) }
@@ -57,10 +79,15 @@ func (s *officeService) Create(ctx context.Context, in domain.CreateOffice, acto
 	if err := s.ensureOriginsFree(ctx, id, origins); err != nil {
 		return domain.Office{}, err
 	}
+	kind, err := s.checkKind(in.Kind)
+	if err != nil {
+		return domain.Office{}, err
+	}
 	if label == "" {
 		label = id
 	}
 	o := domain.NewOffice(id, label)
+	o.Kind = kind
 	o.GroupID = in.GroupID
 	o.AllowedOrigins = origins
 	o.UpdatedBy = actor
@@ -125,6 +152,13 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 			o.HostAPIBase = v
 		}
 	}
+	if p.Kind != nil {
+		kind, err := s.checkKind(*p.Kind)
+		if err != nil {
+			return domain.Office{}, err
+		}
+		o.Kind = kind
+	}
 	if p.Enabled != nil {
 		o.Enabled = *p.Enabled
 	}
@@ -136,6 +170,13 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 			return domain.Office{}, fmt.Errorf("theme ต้องเป็น auto, light หรือ dark เท่านั้น")
 		}
 		o.Theme = *p.Theme
+	}
+	if p.AccentColor != nil {
+		c := strings.ToLower(strings.TrimSpace(*p.AccentColor))
+		if c != "" && !hexColorPattern.MatchString(c) {
+			return domain.Office{}, fmt.Errorf("สีต้องเป็นรหัส #rrggbb เช่น #0f6e63")
+		}
+		o.Accent = c
 	}
 	if p.Placement != nil {
 		if !allowedPositions[p.Placement.Position] {
@@ -389,7 +430,7 @@ func (s *officeService) Bootstrap(ctx context.Context, o domain.Office, serviceI
 	// ██ ข้อมูลจริงของ demo-staging_office: list_service ว่างทั้ง 9 employee และทั้ง 4 role
 	// ██ เพราะ office ที่มี service เดียวไม่มีอะไรให้จำกัด → ว่าง = ไม่จำกัด
 	// ██ แต่ถ้ามีค่า (office ที่มีหลาย service) ต้องบังคับตามนั้น
-	if len(caller.Services) > 0 && !caller.CanAccessService(serviceID) {
+	if !caller.ServiceAllowed(serviceID) {
 		return domain.Bootstrap{}, domain.ErrServiceNotAllowed
 	}
 
@@ -415,6 +456,7 @@ func (s *officeService) Bootstrap(ctx context.Context, o domain.Office, serviceI
 		DisplayName:  svc.DisplayName,
 		Greeting:     svc.Greeting,
 		Theme:        o.Theme,
+		AccentColor:  o.Accent,
 		Placement:    o.Placement,
 	}, nil
 }

@@ -1,0 +1,38 @@
+# GetDepositStatementListByFilter?search= → regex หลายคอลัมน์ · กรองยูสตรงตัวซ้ำใน values
+tool: deposit_find
+cases:
+  - name: พบสองรายการ (ตัดยูสที่ขึ้นต้นคล้ายกันออก)
+    input: {username: abc123}
+    responses:
+      l:
+        body:
+          code: 0
+          msg: Success
+          count: 3
+          payload:
+            - {id: 66f2b0000000000000000001, datetime: "2026-09-24T02:10:11Z", username: abc123, amount: 500, bonus: 50, bonus_name: ฝากแรก, status: 1, channel: AUTO, operator_name: "", bank_number: "9876543210"}
+            - {id: 66f2b0000000000000000002, datetime: "2026-09-24T01:00:00Z", username: abc1234, amount: 900, bonus: 0, status: 1, channel: AUTO, operator_name: ""}
+            - {id: 66f2b0000000000000000003, datetime: "2026-09-24T00:30:00Z", username: ABC123, amount: 200, bonus: 0, status: 2, channel: INSERT_STATEMENT, operator_name: admin01}
+    expect:
+      status: ok
+      calls:
+        l: {path: /GetDepositStatementListByFilter/DEMO-SVC, query: {date: "2026-09-24", status: "0", search: abc123, limit: "100"}}
+      fields: {พบรายการฝาก: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 09:10", "500.00", "50.00", สำเร็จ, AUTO, ""]
+        - ["24/09/2026 07:30", "200.00", "0.00", รอคิว, INSERT_STATEMENT, admin01]
+      model_context: {statuses: [สำเร็จ, รอคิว]}
+  - name: ไม่พบ
+    input: {username: nobody, date: "2026-09-01"}
+    responses:
+      l: {body: {code: 0, msg: Success, payload: [], count: 0}}
+    expect:
+      status: not_found
+      calls:
+        l: {query: {date: "2026-09-01", search: nobody}}
+  - name: หลังบ้านตอบ error
+    input: {username: abc123}
+    responses:
+      l: {body: {code: 1, msg: "error", payload: null}}
+    expect: {status: error, error_code: schema_mismatch}

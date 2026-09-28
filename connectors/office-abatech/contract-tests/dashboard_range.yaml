@@ -1,0 +1,40 @@
+tool: dashboard_range
+cases:
+  - name: ช่วงสามวัน
+    input: {date_from: "2026-09-20", date_to: "2026-09-22"}
+    responses:
+      r:
+        body:
+          code: 0
+          msg: SUCCESS
+          payload:
+            - {datestring: "2026-09-22", deposit: 3000, withdraw: 1000, bonus: 100}
+            - {datestring: "2026-09-20", deposit: 1000, withdraw: 500, bonus: 50}
+    expect:
+      status: ok
+      calls:
+        r: {path: /GetDashboardSummaryByDayQuery/DEMO-SVC, body: {start_date: "2026-09-20 00:00", end_date: "2026-09-22 23:59"}}
+      fields:
+        จำนวนวันที่มีรายการ: "2 วัน"
+        ยอดฝากรวม: "4,000.00 บาท"
+        ยอดถอนรวม: "1,500.00 บาท"
+        โบนัสรวม: "150.00 บาท"
+        ฝากลบถอน: "2,500.00 บาท"
+      table_rows: 2
+      table_cells:
+        - ["2026-09-20", "1,000.00", "500.00", "50.00"]
+      model_context: {net_positive: true}
+      link: "/DashboardOnce?service=REVNTy1TVkM="
+  - name: วันเดียว (ไม่ส่ง date_to)
+    input: {date_from: "2026-09-01"}
+    responses:
+      r: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect:
+      status: not_found
+      calls:
+        r: {body: {start_date: "2026-09-01 00:00", end_date: "2026-09-01 23:59"}}
+  - name: รูปร่าง response ผิด
+    input: {date_from: "2026-09-01"}
+    responses:
+      r: {body: {code: 0, msg: SUCCESS, payload: {deposit: 1}}}
+    expect: {status: error, error_code: schema_mismatch}

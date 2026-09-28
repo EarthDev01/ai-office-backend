@@ -1,0 +1,55 @@
+# GET /api/DepositBankSummaryV2/:service?deposit_type=all (deposit/route.go:34) — all = bank_config.status < 2 (รวมบัญชีที่ปิด)
+#   ใช้แทน GetBankAll เพราะ GetBankAll คืน citizen_id / birthdate / refresh_token / token_proxy_bank / api_auth / phone_number ของบัญชีบริษัทโดยไม่ล้าง
+#   ⚠️ ได้เฉพาะบัญชีฝาก (บัญชีถอนต้องใช้ GetBankAll?type=withdraw ซึ่งไม่ใช้) · number = เลขบัญชีบริษัท ไม่ขึ้นการ์ด
+questions: [BQ-10]
+tools:
+  - name: bank_accounts_deposit
+    description: บัญชีฝากของเว็บทั้งหมด (เปิดและปิด) พร้อมสถานะ ยอดคงเหลือล่าสุด และยอดฝากวันนี้ต่อบัญชี · ไม่รวมบัญชีถอน
+    questions: [BQ-10]
+    permission: deposit_summary
+    freshness: summary
+    calls:
+      - id: s
+        method: GET
+        path: /DepositBankSummaryV2/{service}
+        query: {start_date: "{date:today} 00:00:00", end_date: "{date:today} 23:59:00", deposit_type: all}
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [code, status]
+            properties:
+              code: {type: string}
+              full_name: {type: string}
+              status: {type: integer}
+              balance: {type: number}
+              today_deposit: {type: number}
+              max_deposit: {type: number}
+    values:
+      - {name: total, from: s, agg: count}
+      - {name: open_count, from: s, filter: "item.status == 1", agg: count}
+      - {name: closed_count, expr: "total - open_count"}
+      - {name: rows, from: s, sort_by: status, order: desc}
+    not_found: {when: "total == 0", message: ไม่พบบัญชีฝากของเว็บนี้}
+    card:
+      title: บัญชีฝากของเว็บ
+      fields:
+        - {label: บัญชีฝากทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: เปิดใช้งาน, value: open_count, format: int, suffix: " บัญชี"}
+        - {label: ปิดใช้งาน, value: closed_count, format: int, suffix: " บัญชี"}
+      table:
+        rows: rows
+        columns:
+          - {label: ธนาคาร, field: code}
+          - {label: ชื่อบัญชี, field: full_name}
+          - {label: สถานะ, field: status, format: "status:bank_account"}
+          - {label: ยอดคงเหลือล่าสุด, field: balance, format: money}
+          - {label: ยอดฝากวันนี้, field: today_deposit, format: money}
+      note: สถานะคือการเปิดใช้งานในระบบ ส่วนการแสดงบนหน้าเว็บผู้เล่นดูได้ที่เมนูจัดการบัญชีธนาคาร · ไม่รวมบัญชีถอน
+      link: {label: เปิดจัดการบัญชีธนาคาร, path: "/Statement?service={service_b64}"}
+    model_context:
+      - {name: has_open, type: bool, expr: "open_count > 0"}
+      - {name: has_closed, type: bool, expr: "open_count < total"}

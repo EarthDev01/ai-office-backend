@@ -10,6 +10,26 @@ func (r Registry) Get(kind string) (*Connector, bool) {
 	return c, ok
 }
 
+// Set = connector ที่โหลดไว้ทุก kind + kind ที่ใช้กับ office ที่ยังไม่ได้ระบุ kind (record รุ่นก่อนมี field นี้)
+type Set struct {
+	Registry
+	Default string
+}
+
+// For หา connector ของ office ตาม kind · ว่าง = Default
+func (s Set) For(kind string) (*Connector, bool) {
+	if kind == "" {
+		kind = s.Default
+	}
+	return s.Get(kind)
+}
+
+// Has = kind นี้มี connector โหลดอยู่ (ใช้ตรวจค่าที่ตั้งจากคอนโซล)
+func (s Set) Has(kind string) bool {
+	_, ok := s.Registry[kind]
+	return ok
+}
+
 func (r Registry) Kinds() []string {
 	out := make([]string, 0, len(r))
 	for k := range r {

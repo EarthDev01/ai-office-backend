@@ -1,0 +1,26 @@
+# Bonuslist → {code:0, msg:"", is_deposit, payload:[BonustModel]}
+tool: promotions_open
+cases:
+  - name: เปิดหนึ่งปิดหนึ่ง
+    responses:
+      b:
+        body:
+          code: 0
+          msg: ""
+          is_deposit: 1
+          payload:
+            - {bonus_id: 901, bonus_name: ฝากแรกรับเพิ่ม, status: 1, type_system: DEPOSIT, start_date: "2026-08-31T17:00:00Z", end_date: "2026-09-29T17:00:00Z", bonus_start_time: "00:00:00", bonus_end_time: "23:59:59", withdraw_fix: 5}
+            - {bonus_id: 902, bonus_name: โปรเก่า, status: 0, type_system: DEPOSIT}
+    expect:
+      status: ok
+      calls: {b: {path: /Bonuslist/DEMO-SVC}}
+      fields: {โปรที่เปิดอยู่: "1 รายการ", โปรทั้งหมดในระบบ: "2 รายการ"}
+      table_rows: 1
+      table_cells:
+        - [ฝากแรกรับเพิ่ม, DEPOSIT, "01/09/2026", "30/09/2026", "00:00:00", "23:59:59"]
+      model_context: {has_open: true}
+      link: "/Bonus?service=REVNTy1TVkM="
+  - name: ไม่มีโปรเปิด
+    responses:
+      b: {body: {code: 0, msg: "", payload: [{bonus_name: x, status: 0}]}}
+    expect: {status: not_found}

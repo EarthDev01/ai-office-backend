@@ -49,7 +49,7 @@ export function buildHostURL(base: string, path: string, query?: Record<string, 
   return url.toString()
 }
 
-export async function hostFetch(base: string, cmd: FetchCommand, token: string): Promise<HostResult> {
+export async function hostFetch(base: string, cmd: FetchCommand, token: string, scheme = 'Bearer'): Promise<HostResult> {
   if (!token) return { status: 401, body: '' }
   const method = String(cmd.method || '').toUpperCase()
   if (method !== 'GET' && method !== 'POST') return { status: 0, body: '' }
@@ -63,7 +63,7 @@ export async function hostFetch(base: string, cmd: FetchCommand, token: string):
       method,
       credentials: 'omit',
       signal: ctrl.signal,
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } as Record<string, string>,
+      headers: { Authorization: `${scheme} ${token}`, Accept: 'application/json' } as Record<string, string>,
     }
     if (method === 'POST' && cmd.body !== undefined && cmd.body !== null) {
       ;(init.headers as Record<string, string>)['Content-Type'] = 'application/json'
