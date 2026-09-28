@@ -151,17 +151,19 @@ func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
 	if err := groupRepo.Save(context.Background(), domain.OfficeGroup{ID: testGroupID, Name: "กลุ่มทดสอบ"}); err != nil {
 		t.Fatal(err)
 	}
-	officeSvc := service.NewOfficeService(repo, groupRepo, auditSvc)
+	// connector ทุกชนิดใน repo — office ที่ไม่ได้ตั้ง kind = office-v10x (เหมือน _cmd/main.go)
+	loaded, err := connector.LoadDir("../connectors")
+	if err != nil {
+		t.Fatalf("load connectors: %v", err)
+	}
+	conns := connector.Set{Registry: loaded, Default: "office-v10x"}
+	officeSvc := service.NewOfficeService(repo, groupRepo, auditSvc, service.WithKinds(conns.Has))
 	settingsSvc := service.NewSettingsService(filestore.NewSettingsRepository(filepath.Join(dir, "settings.json")), auditSvc)
 	usageSvc := service.NewUsageService(usageRepo)
 
-	conn, err := connector.Load("../connectors/office-v10x")
-	if err != nil {
-		t.Fatalf("load connector: %v", err)
-	}
 	return httpgin.Deps{
 		OfficeService: officeSvc,
-		Identity:      service.NewIdentityResolver(50 * time.Millisecond),
+		Identity:      service.NewIdentityResolver(50*time.Millisecond, conns),
 		BundlePath:    filepath.Join(t.TempDir(), "missing.js"),
 		Tokens:        auth.NewJWTIssuer(consoleJWTSecret, time.Hour),
 		Auth:          authSvc,
@@ -170,7 +172,7 @@ func newDeps(t *testing.T, seed ...domain.Office) httpgin.Deps {
 		ConsoleToken:  consoleToken,
 		Relay:         service.NewRelay(),
 		Tickets:       auth.NewChatTicketIssuer(chatTicketSecret, func() time.Duration { return time.Hour }),
-		Connector:     conn,
+		Connectors:    conns,
 		ChatRepo:      chatRepo,
 		ChatAdmin:     service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc),
 		Settings:      settingsSvc,

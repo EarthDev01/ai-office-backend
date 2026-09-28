@@ -1,0 +1,40 @@
+# GetMemberBankPendingSummary → helper.ResponseV2 {code:200, msg:"Success", payload:[BankMember], count} · error HTTP 400
+tool: bank_member_pending
+cases:
+  - name: แยกตามผลการตรวจ
+    responses:
+      all: {body: {code: 200, msg: Success, payload: [{username: abc123, bank_number: "123", bank_name: x, verify_status: PENDING}], count: 20}}
+      pending: {body: {code: 200, msg: Success, payload: [], count: 17}}
+      unsuccess: {body: {code: 200, msg: Success, payload: [], count: 2}}
+      fail: {body: {code: 200, msg: Success, payload: null, count: 0}}
+      dup: {body: {code: 200, msg: Success, payload: [], count: 1}}
+    expect:
+      status: ok
+      calls:
+        all: {path: /GetMemberBankPendingSummary/DEMO-SVC, query: {page: "1", limit: "1", status: ""}}
+        pending: {query: {status: PENDING}}
+        dup: {query: {status: DUPLICATE}}
+      fields:
+        ทั้งหมด: "20 บัญชี"
+        รอตรวจสอบ: "17 บัญชี"
+        ไม่พบธนาคาร: "2 บัญชี"
+        ผิดพลาด: "0 บัญชี"
+        ชื่อบัญชีซ้ำ: "1 บัญชี"
+      model_context: {has_pending: true}
+      link: "/Member/BankPending?service=REVNTy1TVkM="
+  - name: ไม่มีรอตรวจ
+    responses:
+      all: {body: {code: 200, msg: Success, payload: null, count: 0}}
+      pending: {body: {code: 200, msg: Success, payload: null, count: 0}}
+      unsuccess: {body: {code: 200, msg: Success, payload: null, count: 0}}
+      fail: {body: {code: 200, msg: Success, payload: null, count: 0}}
+      dup: {body: {code: 200, msg: Success, payload: null, count: 0}}
+    expect: {status: not_found}
+  - name: หลังบ้านตอบ 400
+    responses:
+      all: {status: 400, body: {code: 1, msg: "bad", payload: null}}
+      pending: {status: 400, body: {code: 1, msg: "bad", payload: null}}
+      unsuccess: {status: 400, body: {code: 1}}
+      fail: {status: 400, body: {code: 1}}
+      dup: {status: 400, body: {code: 1}}
+    expect: {status: error, error_code: http_error}

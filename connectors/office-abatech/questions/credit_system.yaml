@@ -1,0 +1,65 @@
+# GET /api/GetBalanceAgent/:service (route/Agent.go:16 · controller/Agent.go:168-180 · ไม่มี auth) → {code:0, msg:"Success", payload:BalanceAgentCredit}
+#   snapshot ใน OFFICE balance_credit_agent · ไม่พบ = zero value (service "") → ห้ามตอบว่า 0 · updated_at = unix วินาที
+#   ไม่ใช้ ReloadBalanceAgent (ยิง gateway สด + upsert DB) — ให้ผู้ใช้กดรีเฟรชเอง
+# GET /api/CheckCreditBalanceEnter/:service (sms/route.go:44) → {code:0, msg:"สำเร็จ", payload:<float>} · ยิง SMS provider สด (backend ไม่มี timeout)
+#   provider ยังไม่ตั้งค่า = code 0 payload 0 (แยกจากเหลือ 0 จริงไม่ได้)
+#   frontend: components/Dashboard/Layout/TopNavbar.vue:400-432 (Agent Credit / SMS Credit ทุกหน้า)
+questions: [BQ-41, BQ-42]
+tools:
+  - name: credit_agent_balance
+    description: ยอดเครดิตเอเจ้น (Agent Credit) ล่าสุดที่ระบบบันทึกไว้ของเว็บ พร้อมเวลาที่อัปเดต
+    questions: [BQ-41]
+    permission: credit_system
+    freshness: live
+    calls:
+      - id: a
+        method: GET
+        path: /GetBalanceAgent/{service}
+        cache_ttl: 0
+        timeout_ms: 10000
+        schema:
+          type: object
+          required: [amount, service]
+          properties:
+            amount: {type: number}
+            unit: {type: string}
+            updated_at: {type: integer}
+            service: {type: string}
+    values:
+      - {name: amount, from: a, path: amount}
+      - {name: updated_at, from: a, path: updated_at}
+      - {name: recorded, from: a, path: service}
+    not_found: {when: "recorded == ''", message: ยังไม่มียอดเครดิตเอเจ้นที่บันทึกไว้ของเว็บนี้ กดไอคอนรีเฟรชข้าง Agent Credit ที่แถบด้านบนเพื่อดึงยอดล่าสุด}
+    card:
+      title: เครดิตเอเจ้น
+      fields:
+        - {label: Agent Credit คงเหลือ, value: amount, format: money}
+        - {label: อัปเดตล่าสุด, value: updated_at, format: datetime, when: "updated_at > 0"}
+      note: เป็นยอดล่าสุดที่ระบบบันทึกไว้ ถ้าต้องการยอดสดให้กดไอคอนรีเฟรชที่แถบด้านบน
+      link: {label: เปิดหลังบ้าน, path: "/DashboardOnce?service={service_b64}"}
+    model_context:
+      - {name: note, type: text, text: ยอดแสดงในการ์ดแล้ว เป็นยอดล่าสุดที่บันทึกไว้}
+
+  - name: credit_sms_balance
+    description: ยอด SMS Credit คงเหลือของเว็บ (ถามผู้ให้บริการ SMS สด)
+    questions: [BQ-42]
+    permission: credit_system
+    freshness: live
+    calls:
+      - id: s
+        method: GET
+        path: /CheckCreditBalanceEnter/{service}
+        cache_ttl: 0
+        timeout_ms: 10000
+        schema: {type: number}
+    values:
+      - {name: sms, from: s}
+    card:
+      title: SMS Credit
+      fields:
+        - {label: SMS Credit คงเหลือ, value: sms, format: number}
+      note: ถ้าเป็นศูนย์ อาจเหลือศูนย์จริงหรือยังไม่ได้ตั้งค่าบริการ SMS ของเว็บนี้
+      link: {label: เปิดหลังบ้าน, path: "/DashboardOnce?service={service_b64}"}
+    model_context:
+      - {name: is_zero, type: bool, expr: "sms == 0"}
+      - {name: note, type: text, text: ยอดแสดงในการ์ดแล้ว ถ้าเป็นศูนย์อาจยังไม่ได้ตั้งค่า}

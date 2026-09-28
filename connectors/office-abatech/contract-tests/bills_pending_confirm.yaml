@@ -1,0 +1,21 @@
+tool: bills_pending_confirm
+cases:
+  - name: มีบิลรอคอนเฟิร์ม
+    responses:
+      b:
+        body:
+          status: {code: 200}
+          data:
+            - {billpayment_id: INV-0012, billpayment_name: ก.ย. 2026, total: 15000, status: 4}
+            - {billpayment_id: INV-0011, billpayment_name: ส.ค. 2026, total: 9000, status: 3}
+    expect:
+      status: ok
+      fields: {บิลรอคอนเฟิร์ม: "1 ใบ", ยอดรวม: "15,000.00 บาท"}
+      table_cells:
+        - [INV-0012, ก.ย. 2026, "15,000.00", จ่ายแล้ว รอคอนเฟิร์ม]
+      model_context: {has_pending_confirm: true}
+      link: /BillPayment
+  - name: ไม่มี
+    responses:
+      b: {body: {status: {code: 200}, data: null}}
+    expect: {status: not_found}

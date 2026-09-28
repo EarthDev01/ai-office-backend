@@ -1,0 +1,55 @@
+# GET /api/Bonuslist/:service (bonus/route.go:21 · HandleGetBonusListModel) → {code, msg:"", payload:[BonustModel], is_deposit}
+#   ได้โปรทุกตัวไม่กรอง · status 1 = เปิด (BonusList.vue:174-177) · ช่วงเปิดจริง = start_date+bonus_start_time ถึง end_date+bonus_end_time
+#   ⚠️ ผู้ช่วยกรองแค่ status (ภาษา expression เทียบวันเวลาไม่ได้) — การ์ดแสดงช่วงวันให้ผู้ใช้ตรวจเอง
+questions: [BQ-11]
+tools:
+  - name: promotions_open
+    description: โปรโมชั่นที่สถานะเปิดอยู่ของเว็บ พร้อมช่วงวันเวลาที่ตั้งไว้
+    questions: [BQ-11]
+    permission: bonus
+    freshness: summary
+    calls:
+      - id: b
+        method: GET
+        path: /Bonuslist/{service}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [status]
+            properties:
+              bonus_name: {type: string}
+              title: {type: string}
+              status: {type: integer}
+              type_system: {type: string}
+              start_date: {type: string}
+              end_date: {type: string}
+              bonus_start_time: {type: string}
+              bonus_end_time: {type: string}
+    values:
+      - {name: all_count, from: b, agg: count}
+      - {name: open_count, from: b, filter: "item.status == 1", agg: count}
+      - {name: rows, from: b, filter: "item.status == 1", limit: 30}
+    not_found: {when: "open_count == 0", message: ไม่มีโปรโมชั่นที่เปิดอยู่}
+    card:
+      title: โปรโมชั่นที่เปิดอยู่
+      fields:
+        - {label: โปรที่เปิดอยู่, value: open_count, format: int, suffix: " รายการ"}
+        - {label: โปรทั้งหมดในระบบ, value: all_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        columns:
+          - {label: ชื่อโปร, field: bonus_name}
+          - {label: ประเภท, field: type_system}
+          - {label: เริ่ม, field: start_date, format: date}
+          - {label: สิ้นสุด, field: end_date, format: date}
+          - {label: เวลาเริ่ม, field: bonus_start_time}
+          - {label: เวลาสิ้นสุด, field: bonus_end_time}
+      note: แสดงโปรที่สถานะเปิด ตรวจช่วงวันเวลาในตารางว่ายังอยู่ในช่วงหรือไม่
+      link: {label: เปิดจัดการโปรโมชั่น, path: "/Bonus?service={service_b64}"}
+    model_context:
+      - {name: has_open, type: bool, expr: "open_count > 0"}
+      - {name: note, type: text, text: รายชื่อโปรแสดงในการ์ดแล้ว}

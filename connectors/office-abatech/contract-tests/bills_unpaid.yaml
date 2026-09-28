@@ -1,0 +1,29 @@
+# GetBillPayment → body ของ upstream {status:{code:200}, data:[bill]} (ไม่ใช่ envelope ปกติ)
+tool: bills_unpaid
+cases:
+  - name: รอจ่ายหนึ่ง ค้างหนึ่ง
+    responses:
+      b:
+        body:
+          status: {code: 200}
+          data:
+            - {id: b1, billpayment_id: INV-0012, billpayment_name: ก.ย. 2026, title: ค่าบริการระบบ, to_name: DEMOSLOT, total: 15000, end_date: "2026-09-30T00:00:00Z", status: 3}
+            - {id: b2, billpayment_id: INV-0009, billpayment_name: ส.ค. 2026, to_name: DEMOSLOT, total: 12000, end_date: "2026-08-31T00:00:00Z", status: 5}
+            - {id: b3, billpayment_id: INV-0005, billpayment_name: ก.ค. 2026, to_name: DEMOSLOT, total: 11000, end_date: "2026-07-31T00:00:00Z", status: 6}
+    expect:
+      status: ok
+      calls: {b: {path: /GetBillPayment}}
+      fields: {บิลที่ยังไม่ชำระ: "2 ใบ", ยอดรวม: "27,000.00 บาท", เลยกำหนดแล้ว: "1 ใบ"}
+      table_rows: 2
+      table_cells:
+        - [INV-0009, ส.ค. 2026, DEMOSLOT, "12,000.00", "31/08/2026", ค้างชำระ]
+      model_context: {has_unpaid: true, has_overdue: true}
+      link: /BillPayment
+  - name: ไม่มีบิลค้าง
+    responses:
+      b: {body: {status: {code: 200}, data: [{billpayment_id: INV-1, total: 1, status: 6}]}}
+    expect: {status: not_found}
+  - name: เรียก upstream ไม่สำเร็จ
+    responses:
+      b: {body: {code: 1, msg: "Post https://console-blpmv3.me: timeout", payload: null}}
+    expect: {status: error, error_code: schema_mismatch}

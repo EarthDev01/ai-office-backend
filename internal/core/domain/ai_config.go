@@ -14,10 +14,12 @@ type UpdateOffice struct {
 	Label          *string    `json:"label"`
 	AllowedOrigins *[]string  `json:"allowed_origins"`
 	HostAPIBase    *string    `json:"host_api_base"`
+	Kind           *string    `json:"kind"`
 	GroupID        *string    `json:"group_id"`
 	Enabled        *bool      `json:"enabled"`
 	IsHidden       *bool      `json:"is_hidden"`
 	Theme          *string    `json:"theme"`
+	AccentColor    *string    `json:"accent_color"`
 	Placement      *Placement `json:"placement"`
 }
 
@@ -45,5 +47,6 @@ type Bootstrap struct {
 	DisplayName  string    `json:"display_name"`
 	Greeting     string    `json:"greeting"`
 	Theme        string    `json:"theme"`
+	AccentColor  string    `json:"accent_color,omitempty"`
 	Placement    Placement `json:"placement"`
 }

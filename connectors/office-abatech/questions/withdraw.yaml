@@ -1,0 +1,242 @@
+# GET /api/GetWithdrawStatementListByFilter/:service (route/deposit.go:16 · controller/withdraw.go:60-109 · ⚠️ ไม่มี auth ที่ backend)
+#   frontend: components/Withdraw/WithdrawStatementV2.vue:1519-1573 · status "0" = ทุกสถานะ · N ≤ 90 = สถานะเดียว · > 90 = status > 3
+#   วันเดียวเสมอ (date → [00:00, +1 วัน) ตาม time.Local ของ pod) · limit ตันที่ 2000 · sort=datetime&order=1 = เก่าสุดก่อน
+#   response {code:0, msg:"Success", payload:[WithdrawModel], count} (count ตันที่ 5000) · error {code:1, msg, payload:[]} ไม่มี count → envelope raw
+#   ⚠️ แถวมี phone_number / bank_number / bank_name ของลูกค้า → ไม่ขึ้นการ์ด ไม่ถึงโมเดล (values เลือกเฉพาะที่ประกาศ)
+# GET /api/GetWithdrawP2PRemainCount/:service (route/deposit.go:17 · controller/withdraw.go:111-134) → {code:0, count} ถอน P2P สำเร็จแต่ยังมียอดเหลือ
+# GET /api/WithdrawByID/:service?id=<hex> (withdraw/route.go:36) · ไม่พบ/รหัสผิด → {code:1, msg:"ไม่พบข้อมูล"} → not_found_codes [1]
+#   payload WithdrawModelByID: status operator_name comment update_time comment_time_lime[] (ไม่มี IP)
+questions: [BQ-03, BQ-04, BQ-06]
+tools:
+  - name: withdraw_pending_by_status
+    description: >-
+      รายการถอนที่ยังไม่จบ (ไม่นับ สำเร็จ ยกเลิก ถูกซ่อน) ของวันนี้หรือวันที่ถาม แยกตามสถานะ พร้อมจำนวน ยอดรวม และรายการเก่าสุด
+      · หลังบ้านนี้ดูได้ทีละวัน
+    questions: [BQ-03]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ YYYY-MM-DD (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: w
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: &wq {date: "{date:input.date|date:today}", status: "0", limit: "2000", page: "1", sort: datetime, order: "1", search: "", banknumber: ""}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: &wlist
+          type: object
+          required: [code, payload, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [datetime, username, amount, status]
+                properties:
+                  id: {type: string}
+                  datetime: {type: string}
+                  update_time: {type: string}
+                  username: {type: string}
+                  amount: {type: number}
+                  status: {type: integer}
+                  channel: {type: string}
+                  operator_name: {type: string}
+                  comment: {type: string}
+      - id: p2p
+        method: GET
+        path: /GetWithdrawP2PRemainCount/{service}
+        query: {date: "{date:input.date|date:today}", banknumber: ""}
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 15000
+        optional: true
+        schema: {type: object, required: [code, count], properties: {code: {type: integer}, count: {type: integer}}}
+    values:
+      - {name: fetched_count, from: w, path: payload, agg: count}
+      - {name: total_count, from: w, path: count}
+      - {name: pending_count, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", agg: count}
+      - {name: pending_amount, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", agg: sum, field: amount}
+      - {name: rows, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", group_by: status, field: amount, sort_by: count, order: desc}
+      - {name: oldest, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", agg: first, field: datetime}
+      - {name: bank_check_count, from: w, path: payload, filter: "item.status == 13", agg: count}
+      - {name: p2p_remain, from: p2p, path: count}
+    not_found: {when: "pending_count == 0 && coalesce(p2p_remain, 0) == 0", message: ไม่มีรายการถอนค้างในวันที่ถาม}
+    card:
+      title: รายการถอนที่ยังไม่สำเร็จ
+      fields:
+        - {label: รายการค้าง, value: pending_count, format: int, suffix: " รายการ"}
+        - {label: ยอดรวมที่ค้าง, value: pending_amount, format: money, suffix: " บาท"}
+        - {label: รายการค้างเก่าสุดสร้างเมื่อ, value: oldest, format: datetime}
+        - {label: ต้องตรวจสอบยอดธนาคาร, value: bank_check_count, format: int, suffix: " รายการ", when: "bank_check_count > 0"}
+        - {label: ถอน P2P ที่ยังมียอดเหลือต้องจัดการ, value: p2p_remain, format: int, suffix: " รายการ", when: "coalesce(p2p_remain, 0) > 0"}
+        - {label: รายการทั้งวัน (นับจากที่ดึงได้บางส่วน), value: total_count, format: int, suffix: " รายการ", when: "total_count > fetched_count"}
+      table:
+        rows: rows
+        columns:
+          - {label: สถานะ, field: key, format: "status:withdraw"}
+          - {label: จำนวน, field: count, format: int, suffix: " รายการ"}
+          - {label: ยอดรวม, field: sum, format: money}
+      note: นับเฉพาะรายการที่สร้างในวันที่ถาม
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "pending_count > 0"}
+      - {name: needs_bank_check, type: bool, expr: "bank_check_count > 0"}
+      - {name: counted_partially, type: bool, expr: "total_count > fetched_count"}
+      - {name: statuses, type: labels, from: rows, pluck: key, format: "status:withdraw"}
+
+  - name: withdraw_pending_oldest
+    description: >-
+      รายการถอนที่ค้างนานที่สุด (ยังไม่จบ) ของวันนี้หรือวันที่ถาม เรียงจากเก่าสุด · ถ้าถามค้างข้ามวันให้ระบุวันที่ทีละวัน
+    questions: [BQ-04]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      date: {type: date, description: วันที่ YYYY-MM-DD (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: w
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: *wq
+        envelope: raw
+        cache_ttl: 60
+        timeout_ms: 25000
+        schema: *wlist
+    values:
+      - {name: pending_count, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", agg: count}
+      - {name: rows, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", sort_by: datetime, order: asc, limit: 10}
+      - {name: oldest, from: w, path: payload, filter: "!in(item.status, 1, 4, 11)", sort_by: datetime, order: asc, agg: first, field: datetime}
+    not_found: {when: "pending_count == 0", message: ไม่มีรายการถอนค้างในวันที่ถาม}
+    card:
+      title: รายการถอนที่ค้างนานสุด
+      fields:
+        - {label: รายการค้างทั้งหมด, value: pending_count, format: int, suffix: " รายการ"}
+        - {label: เก่าสุดสร้างเมื่อ, value: oldest, format: datetime}
+      table:
+        rows: rows
+        columns:
+          - {label: สร้างเมื่อ, field: datetime, format: datetime}
+          - {label: ยูสเซอร์, field: username}
+          - {label: ยอด, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+      note: แสดงสูงสุดสิบรายการที่เก่าที่สุดของวันที่ถาม
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}"}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+      - {name: note, type: text, text: รายการและเวลาแสดงในการ์ดแล้ว}
+
+  - name: withdraw_find
+    description: >-
+      ค้นรายการถอนของสมาชิก 1 ยูสในวันที่ถาม (ไม่ระบุ = วันนี้) บอกเวลา ยอด สถานะ ผู้ทำรายการ และรหัสรายการ
+    questions: [BQ-06]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      username: {type: string, required: true, pattern: "^[A-Za-z0-9_.@-]{2,40}$", description: ยูสเซอร์เนมของสมาชิก}
+      date: {type: date, description: วันที่ YYYY-MM-DD (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: w
+        method: GET
+        path: /GetWithdrawStatementListByFilter/{service}
+        query: {date: "{date:input.date|date:today}", status: "0", search: "{input.username}", limit: "100", page: "1", sort: _id, order: "-1", banknumber: ""}
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema: *wlist
+    values:
+      - {name: rows, from: w, path: payload, filter: "lower(item.username) == lower(input.username)", limit: 20}
+      - {name: found, from: w, path: payload, filter: "lower(item.username) == lower(input.username)", agg: count}
+    not_found: {when: "found == 0", message: ไม่พบรายการถอนของยูสนี้ในวันที่ถาม (ค้นได้ทีละวัน ลองระบุวันอื่น)}
+    card:
+      title: รายการถอนของสมาชิก
+      fields:
+        - {label: พบรายการถอน, value: found, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยอด, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: ผู้ทำรายการ, field: operator_name}
+          - {label: รหัสรายการ, field: id}
+      note: ถามประวัติการเปลี่ยนสถานะของรายการได้ด้วยรหัสรายการ
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}"}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+      - {name: note, type: text, text: รายการและรหัสรายการแสดงในการ์ดแล้ว}
+
+  - name: withdraw_by_id
+    description: >-
+      รายละเอียดรายการถอน 1 รายการจากรหัสรายการ (ตัวอักษรยี่สิบสี่ตัว) — สถานะ ผู้แก้ล่าสุด หมายเหตุ และประวัติการเปลี่ยนสถานะ
+    questions: [BQ-06]
+    permission: withdraw_list
+    freshness: summary
+    input:
+      id: {type: string, required: true, pattern: "^[0-9a-fA-F]{24}$", description: รหัสรายการถอน}
+    calls:
+      - id: d
+        method: GET
+        path: /WithdrawByID/{service}
+        query: {id: "{input.id}"}
+        not_found_codes: [1]
+        cache_ttl: 0
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [id, datetime, amount, status]
+          properties:
+            id: {type: string}
+            datetime: {type: string}
+            update_time: {type: string}
+            username: {type: string}
+            amount: {type: number}
+            status: {type: integer}
+            operator_name: {type: string}
+            comment: {type: string}
+            count_deposit: {type: integer}
+            comment_time_lime:
+              type: array
+              nullable: true
+              items:
+                type: object
+                properties:
+                  datetime: {type: string}
+                  action: {type: string}
+                  status: {type: integer}
+                  operator_name: {type: string}
+    values:
+      - {name: status, from: d, path: status}
+      - {name: username, from: d, path: username}
+      - {name: amount, from: d, path: amount}
+      - {name: created, from: d, path: datetime}
+      - {name: updated, from: d, path: update_time}
+      - {name: operator, from: d, path: operator_name}
+      - {name: comment, from: d, path: comment}
+      - {name: timeline, from: d, path: comment_time_lime, sort_by: datetime, order: asc}
+    card:
+      title: รายละเอียดรายการถอน
+      fields:
+        - {label: ยูสเซอร์, value: username}
+        - {label: ยอด, value: amount, format: money, suffix: " บาท"}
+        - {label: สถานะ, value: status, format: "status:withdraw"}
+        - {label: สร้างเมื่อ, value: created, format: datetime}
+        - {label: เปลี่ยนสถานะล่าสุด, value: updated, format: datetime}
+        - {label: ผู้แก้ล่าสุด, value: operator, when: "operator != ''"}
+        - {label: หมายเหตุ, value: comment, when: "comment != ''"}
+      table:
+        rows: timeline
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: การทำงาน, field: action}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: ผู้ทำ, field: operator_name}
+      note: ไม่แสดง IP ของผู้ทำรายการ
+      link: {label: เปิดรายการถอน, path: "/Withdraw?service={service_b64}"}
+    model_context:
+      - {name: is_final, type: bool, expr: "in(status, 1, 4)"}
+      - {name: needs_bank_check, type: bool, expr: "status == 13"}
+      - {name: timeline_statuses, type: labels, from: timeline, pluck: status, format: "status:withdraw"}

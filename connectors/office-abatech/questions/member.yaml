@@ -1,0 +1,72 @@
+# GET /api/GetMemberCount/:service (member/route.go:29 · handler :124-141) → {code, msg:"", payload:{all, current}}
+#   all = สมาชิกที่ active ≠ 4 · current = สมัครวันนี้ (date_regis วันนี้ตาม time.Local ของ pod) · ดูวันอื่นไม่ได้
+#   frontend: pages/Member/index.vue:63-74 การ์ด ยอดสมาชิกทั้งหมด / สมาชิกใหม่วันนี้
+# GET /api/GetMemberBankPendingSummary/:service (member/route.go:92 · GetBankMember · backend ตรวจ P061 เอง)
+#   page/limit ต้อง ≥ 1 · status = bank_list.verify_status (PENDING UNSUCCESS FAIL DUPLICATE · ว่าง = ทั้งหมด — MemberBankPending.vue:458-464)
+#   response helper.ResponseV2 → {code:200, msg:"Success", payload:[BankMember], count} → envelope raw · count = จำนวนบัญชี ไม่ใช่จำนวนคน
+#   ⚠️ แถวมี bank_name/bank_number/phone_number → ใช้แค่ count
+# ไม่ใช้ GetMemberByUsername / GetMemberSearch / GetMemberAll / GetMemberExcell — คืน password, otp_code, token, session_id ของสมาชิก (BQ-05, BQ-08 ตอบด้วย fact)
+questions: [BQ-07, BQ-09]
+tools:
+  - name: member_stats
+    description: จำนวนสมาชิกทั้งหมดของเว็บ และจำนวนสมาชิกที่สมัครวันนี้ (ดูวันอื่นไม่ได้)
+    questions: [BQ-07]
+    permission: member
+    freshness: summary
+    calls:
+      - id: m
+        method: GET
+        path: /GetMemberCount/{service}
+        cache_ttl: 60
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [all, current]
+          properties:
+            all: {type: integer}
+            current: {type: integer}
+    values:
+      - {name: all, from: m, path: all}
+      - {name: today_new, from: m, path: current}
+    card:
+      title: จำนวนสมาชิก
+      fields:
+        - {label: สมาชิกทั้งหมด, value: all, format: int, suffix: " คน"}
+        - {label: สมัครใหม่วันนี้, value: today_new, format: int, suffix: " คน"}
+      note: สมัครใหม่นับเฉพาะวันนี้ ระบบไม่มีตัวเลขย้อนหลังรายวันให้ผู้ช่วยดึง
+      link: {label: เปิดรายการสมาชิก, path: "/Member?service={service_b64}"}
+    model_context:
+      - {name: has_new_today, type: bool, expr: "today_new > 0"}
+      - {name: note, type: text, text: ตัวเลขแสดงในการ์ดแล้ว สมัครใหม่นับเฉพาะวันนี้}
+
+  - name: bank_member_pending
+    description: จำนวนบัญชีธนาคารของสมาชิกที่ยังรอตรวจสอบ แยกตามผลการตรวจ (รอตรวจสอบ ไม่พบธนาคาร ผิดพลาด ชื่อบัญชีซ้ำ)
+    questions: [BQ-09]
+    permission: member_bank_pending
+    freshness: summary
+    calls:
+      - {id: all, method: GET, path: "/GetMemberBankPendingSummary/{service}", query: {page: "1", limit: "1", sort: date_regis, order: "1", status: ""}, envelope: raw, cache_ttl: 60, timeout_ms: 20000, schema: &cnt {type: object, required: [code, count], properties: {code: {type: integer}, count: {type: integer}}}}
+      - {id: pending, method: GET, path: "/GetMemberBankPendingSummary/{service}", query: {page: "1", limit: "1", sort: date_regis, order: "1", status: PENDING}, envelope: raw, cache_ttl: 60, timeout_ms: 20000, schema: *cnt}
+      - {id: unsuccess, method: GET, path: "/GetMemberBankPendingSummary/{service}", query: {page: "1", limit: "1", sort: date_regis, order: "1", status: UNSUCCESS}, envelope: raw, cache_ttl: 60, timeout_ms: 20000, optional: true, schema: *cnt}
+      - {id: fail, method: GET, path: "/GetMemberBankPendingSummary/{service}", query: {page: "1", limit: "1", sort: date_regis, order: "1", status: FAIL}, envelope: raw, cache_ttl: 60, timeout_ms: 20000, optional: true, schema: *cnt}
+      - {id: dup, method: GET, path: "/GetMemberBankPendingSummary/{service}", query: {page: "1", limit: "1", sort: date_regis, order: "1", status: DUPLICATE}, envelope: raw, cache_ttl: 60, timeout_ms: 20000, optional: true, schema: *cnt}
+    values:
+      - {name: total, from: all, path: count}
+      - {name: pending, from: pending, path: count}
+      - {name: unsuccess, from: unsuccess, path: count}
+      - {name: fail, from: fail, path: count}
+      - {name: dup, from: dup, path: count}
+    not_found: {when: "total == 0", message: ไม่มีบัญชีธนาคารของสมาชิกที่รอตรวจสอบ}
+    card:
+      title: บัญชีสมาชิกที่รอตรวจสอบ
+      fields:
+        - {label: ทั้งหมด, value: total, format: int, suffix: " บัญชี"}
+        - {label: รอตรวจสอบ, value: pending, format: int, suffix: " บัญชี"}
+        - {label: ไม่พบธนาคาร, value: unsuccess, format: int, suffix: " บัญชี"}
+        - {label: ผิดพลาด, value: fail, format: int, suffix: " บัญชี"}
+        - {label: ชื่อบัญชีซ้ำ, value: dup, format: int, suffix: " บัญชี"}
+      note: นับเป็นจำนวนบัญชี (สมาชิก 1 คนอาจมีหลายบัญชี)
+      link: {label: เปิดรายการสมาชิกที่รอตรวจสอบ, path: "/Member/BankPending?service={service_b64}"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "total > 0"}
+      - {name: note, type: text, text: จำนวนแสดงในการ์ดแล้ว}

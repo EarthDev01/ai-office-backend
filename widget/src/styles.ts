@@ -24,16 +24,51 @@ export const CSS = `
 
 .launcher{
   position:fixed; z-index:2147483000;
-  width:56px; height:56px; border-radius:50%;
+  width:58px; height:58px; border-radius:50%; padding:0;
   border:0; cursor:pointer;
-  background:var(--accent); color:#fff;
-  box-shadow:var(--shadow);
+  color:var(--on-accent,#fff);
+  /* แสงเงาบนสีหลัก — ให้ปุ่มดูนูน ไม่แบน (สีหลักตั้งจากคอนโซลได้) */
+  background:
+    radial-gradient(120% 90% at 30% 18%, rgba(255,255,255,.34), rgba(255,255,255,0) 58%),
+    linear-gradient(160deg, rgba(255,255,255,0) 45%, rgba(0,0,0,.18)),
+    var(--accent);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.22),
+    0 2px 4px rgba(19,40,43,.12),
+    0 10px 24px -6px var(--accent);
   display:grid; place-items:center;
-  font-family:var(--font-head); font-size:15px; font-weight:700;
-  transition:transform .12s ease;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease;
+  -webkit-tap-highlight-color:transparent;
 }
-.launcher:hover{transform:translateY(-2px)}
-.launcher img{width:32px;height:32px;border-radius:50%;object-fit:cover}
+.launcher:hover{
+  transform:translateY(-2px) scale(1.04);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.28), 0 4px 8px rgba(19,40,43,.14), 0 16px 30px -8px var(--accent);
+}
+.launcher:active{transform:scale(.95)}
+.launcher:focus-visible{outline:3px solid var(--accent-soft); outline-offset:3px}
+/* วงแสงเบา ๆ ตอนปุ่มโผล่ครั้งแรก — บอกว่ามีผู้ช่วยแล้ว (2 รอบแล้วหยุด) */
+.launcher::after{
+  content:""; position:absolute; inset:0; border-radius:50%;
+  box-shadow:0 0 0 0 var(--accent); opacity:.55;
+  animation:aio-ping 1.8s ease-out 2; pointer-events:none;
+}
+@keyframes aio-ping{0%{box-shadow:0 0 0 0 var(--accent);opacity:.5}100%{box-shadow:0 0 0 16px var(--accent);opacity:0}}
+.launcher .face,.launcher .close{
+  grid-area:1/1; display:grid; place-items:center;
+  transition:transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+}
+.launcher .close{opacity:0; transform:rotate(-90deg) scale(.6)}
+.launcher[data-open="true"] .face{opacity:0; transform:rotate(90deg) scale(.6)}
+.launcher[data-open="true"] .close{opacity:1; transform:none}
+.launcher[data-open="true"]::after{animation:none; opacity:0}
+.launcher img{width:46px;height:46px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px rgba(255,255,255,.55)}
+.ico{width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ico .fill{fill:currentColor;stroke:none}
+.launcher .close.ico{width:24px;height:24px;stroke-width:2.2}
+@media (prefers-reduced-motion: reduce){
+  .launcher,.launcher .face,.launcher .close{transition:none}
+  .launcher::after{animation:none}
+}
 
 .panel{
   position:fixed; z-index:2147483000;
@@ -54,11 +89,12 @@ export const CSS = `
 }
 .head .avatar{
   width:32px;height:32px;border-radius:50%;
-  background:var(--accent); color:#fff;
+  background:var(--accent); color:var(--on-accent,#fff);
   display:grid;place-items:center;
   font-family:var(--font-head);font-weight:700;font-size:13px;
   flex:0 0 auto; overflow:hidden;
 }
+.head .avatar .ico{width:19px;height:19px;stroke-width:1.9}
 .head .avatar img{width:100%;height:100%;object-fit:cover}
 .head .name{font-family:var(--font-head);font-weight:600;font-size:15px;line-height:1.2}
 /* ป้ายชื่อเว็บค้างบนหัวตลอด — ห้าม scroll หายไป */
@@ -86,7 +122,7 @@ export const CSS = `
 }
 .bubble .txt{white-space:pre-wrap}
 .bubble .txt:empty{display:none}
-.row.me .bubble{background:var(--accent);color:#fff;border-color:transparent}
+.row.me .bubble{background:var(--accent);color:var(--on-accent,#fff);border-color:transparent}
 .bubble.err{background:var(--danger-soft);border-color:transparent}
 .bubble.load{color:var(--muted);font-size:13px}
 .dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--muted);margin-left:3px;animation:aio-bl 1.1s infinite}
@@ -124,7 +160,7 @@ export const CSS = `
 .foot textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 .foot .send{
   border:0;border-radius:10px;padding:0 15px;height:38px;cursor:pointer;
-  background:var(--accent);color:#fff;font-family:var(--font-head);font-weight:600;
+  background:var(--accent);color:var(--on-accent,#fff);font-family:var(--font-head);font-weight:600;
 }
 .foot .send:disabled,.foot textarea:disabled{opacity:.5;cursor:default}
 

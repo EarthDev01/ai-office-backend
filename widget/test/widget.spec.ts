@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '../src/index'
+import { mount, __resetSessions } from '../src/index'
+import { readToken, readService } from '../src/page'
+import { V10X_PAGE, ABATECH_PAGE, isPageConfig, fakeJWT, loginV10x } from './fixtures'
 
 const base = {
   enabled: true,
@@ -16,11 +18,24 @@ const base = {
 
 const w = () => (window as any).__aiOffice
 
+const realFetch = globalThis.fetch
+
+/** fetch จำลอง: page-config = v10x · อย่างอื่นให้ handler ตอบ (ค่าเริ่มต้น payload null) */
+function mockFetch(handler: (url: string, init: any) => any = async () => ({ ok: true, json: async () => ({ payload: null }) }), page: unknown = V10X_PAGE) {
+  globalThis.fetch = (async (url: any, init: any) => {
+    if (isPageConfig(url)) return { ok: true, status: 200, json: async () => ({ payload: page }) }
+    return handler(String(url), init)
+  }) as any
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
   document.head.innerHTML = ''
   localStorage.clear()
   delete (window as any).__aiOffice
+  __resetSessions()
+  globalThis.fetch = realFetch
+  mockFetch()
 })
 
 describe('isolation', () => {
@@ -156,47 +171,113 @@ function tick() {
   return new Promise((r) => setTimeout(r, 0))
 }
 
-describe('อ่าน token กับ service จาก localStorage ของ office', () => {
-  it('อ่าน token ที่ยังไม่หมดอายุ', async () => {
-    const { readOfficeToken } = await import('../src/index')
+describe('อ่าน token กับ service ตาม page-config (v10x)', () => {
+  it('อ่าน token ที่ยังไม่หมดอายุ', () => {
     localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    expect(readOfficeToken()).toBe('jwt-abc')
+    expect(readToken(V10X_PAGE.token)).toBe('jwt-abc')
   })
 
-  it('token หมดอายุแล้วถือว่าไม่มี', async () => {
-    const { readOfficeToken } = await import('../src/index')
+  it('token หมดอายุแล้วถือว่าไม่มี', () => {
     localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) - 1 }))
-    expect(readOfficeToken()).toBe('')
+    expect(readToken(V10X_PAGE.token)).toBe('')
   })
 
-  it('ค่าที่พังอยู่ใน localStorage ต้องไม่ทำให้ throw', async () => {
-    const { readOfficeToken } = await import('../src/index')
+  it('ค่าที่พังอยู่ใน localStorage ต้องไม่ทำให้ throw', () => {
     localStorage.setItem('auth_token', 'ไม่ใช่ json')
-    expect(readOfficeToken()).toBe('')
+    expect(readToken(V10X_PAGE.token)).toBe('')
   })
 
-  it('อ่าน service ที่แอดมินเลือกอยู่', async () => {
-    const { readOfficeService } = await import('../src/index')
+  it('อ่าน service ที่แอดมินเลือกอยู่', () => {
     localStorage.setItem('web-service', 'PG99')
-    expect(readOfficeService()).toBe('PG99')
+    expect(readService(V10X_PAGE.service)).toBe('PG99')
+  })
+})
+
+describe('อ่าน token กับ service ตาม page-config (abatech)', () => {
+  it('token ดิบ · ค่า "null" ที่หน้าเขียนตอนออกจากระบบ = ไม่มี', () => {
+    localStorage.setItem('headertoken', 'jwt-raw')
+    expect(readToken(ABATECH_PAGE.token)).toBe('jwt-raw')
+    localStorage.setItem('headertoken', 'null')
+    expect(readToken(ABATECH_PAGE.token)).toBe('')
+  })
+
+  it('service มาจาก ?service= แบบ base64 · ไม่มี/พัง = ยังไม่เลือกเว็บ', () => {
+    history.replaceState(null, '', '/Deposit?service=' + encodeURIComponent(btoa('DEMOSLOT')))
+    expect(readService(ABATECH_PAGE.service)).toBe('DEMOSLOT')
+    history.replaceState(null, '', '/Dashboard')
+    expect(readService(ABATECH_PAGE.service)).toBe('')
+    history.replaceState(null, '', '/Deposit?service=%%%')
+    expect(readService(ABATECH_PAGE.service)).toBe('')
+    history.replaceState(null, '', '/')
+  })
+
+  it('ยิง bootstrap ด้วย headertoken + service จาก URL', async () => {
+    localStorage.setItem('headertoken', 'aba-jwt')
+    history.replaceState(null, '', '/Deposit?service=' + btoa('DEMOSLOT'))
+    const calls: any[] = []
+    let sentAuth = ''
+    mockFetch(async (_u, init) => {
+      sentAuth = init?.headers?.Authorization ?? ''
+      return { ok: true, json: async () => ({ payload: null }) }
+    }, ABATECH_PAGE)
+
+    await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
+    history.replaceState(null, '', '/')
+
+    expect(calls[0].url).toBe('https://ai.example.com/api/ai/widget/service/DEMOSLOT/bootstrap')
+    expect(sentAuth).toBe('Bearer aba-jwt')
+  })
+
+  it('หน้าที่ไม่ผูกเว็บ (ไม่มี ?service=) → ไม่ยิง และบอกสาเหตุ', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    localStorage.setItem('headertoken', 'aba-jwt')
+    history.replaceState(null, '', '/Dashboard')
+    mockFetch(undefined, ABATECH_PAGE)
+    const calls: any[] = []
+    await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
+    expect(calls).toHaveLength(0)
+    expect(info.mock.calls.flat().join(' ')).toContain('?service=')
+    info.mockRestore()
+  })
+
+  it('สิทธิ์อ่านจาก JWT อีกใบ (localStorage.token) · Isactive != 1 ถูกตัด · ไม่ยิงหลังบ้าน', async () => {
+    localStorage.setItem('headertoken', 'aba-jwt')
+    localStorage.setItem('token', fakeJWT({ result: { role: { permission: [
+      { code: '4001', Isactive: 1 }, { code: '4002', Isactive: 0 }, { code: 'M003', Isactive: 1 },
+    ] } } }))
+    history.replaceState(null, '', '/Deposit?service=' + btoa('DEMOSLOT'))
+    const calls: { url: string; init: any }[] = []
+    mockFetch(async (u, init) => {
+      calls.push({ url: u, init })
+      if (u.endsWith('/browser-session')) return Response.json({ payload: { ticket: 'tkt', expires_in: 1800 } })
+      if (u.endsWith('/chat')) return new Response('event: done\ndata: {}\n\n', { status: 200 })
+      throw new Error('unexpected ' + u)
+    }, ABATECH_PAGE)
+
+    await mount({ bootstrap: base, apiBase: 'https://ai.test' })
+    await w().__send('ยอดฝากวันนี้')
+    history.replaceState(null, '', '/')
+
+    const session = calls.find((c) => c.url.endsWith('/browser-session'))!
+    expect(session.url).toBe('https://ai.test/api/ai/widget/service/DEMOSLOT/browser-session')
+    expect(session.init.headers.Authorization).toBe('Bearer aba-jwt')
+    expect(JSON.parse(session.init.body)).toEqual({ permissions: ['4001', 'M003'] })
+    expect(calls.some((c) => c.url.startsWith('http://localhost:7777'))).toBe(false)
   })
 })
 
 describe('การยิง bootstrap', () => {
-  it('ใส่ public key และ service ลงใน path + ส่ง Bearer', async () => {
-    localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    localStorage.setItem('web-service', 'PG99')
+  it('ใส่ service ลงใน path + ส่ง Bearer', async () => {
+    loginV10x('PG99')
 
     const calls: any[] = []
-    const origFetch = globalThis.fetch
     let sentAuth = ''
-    globalThis.fetch = (async (url: any, init: any) => {
+    mockFetch(async (_u, init) => {
       sentAuth = init?.headers?.Authorization ?? ''
       return { ok: true, json: async () => ({ payload: null }) }
-    }) as any
+    })
 
     await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
-    globalThis.fetch = origFetch
 
     expect(calls[0].url).toBe('https://ai.example.com/api/ai/widget/service/PG99/bootstrap')
     expect(sentAuth).toBe('Bearer jwt-abc')
@@ -210,7 +291,7 @@ describe('การยิง bootstrap', () => {
   })
 
   it('ล็อกอินแล้วแต่ยังไม่ได้เลือกเว็บ → ไม่ยิง', async () => {
-    localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt-abc', expiration: Math.floor(Date.now() / 1000) + 600 }))
+    loginV10x('')
     const calls: any[] = []
     await mount({ dataset: { apiBase: 'https://ai.example.com' }, onFetch: (i) => calls.push(i) })
     expect(calls).toHaveLength(0)
@@ -227,24 +308,21 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
 
   it('ล็อกอินแล้วแต่ยังไม่เลือกเว็บ → บอกว่าไม่พบ web-service', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
+    loginV10x('')
     await mount({ dataset: { apiBase: 'https://ai.example.com' } })
     expect(info.mock.calls.flat().join(' ')).toContain('web-service')
     info.mockRestore()
   })
 
-  it('403 ORIGIN_NOT_REGISTERED → บอกโดเมนและวิธีแก้', async () => {
+  it('403 ORIGIN_NOT_REGISTERED (ตั้งแต่ page-config) → บอกโดเมนและวิธีแก้', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    localStorage.setItem('web-service', 'K11S')
+    loginV10x('K11S')
 
-    const orig = globalThis.fetch
     globalThis.fetch = (async () => ({
       ok: false, status: 403,
       json: async () => ({ message: 'ORIGIN_NOT_REGISTERED', error: 'โดเมนนี้ยังไม่ได้ลงทะเบียน' }),
     })) as any
     await mount({ dataset: { apiBase: 'https://ai.example.com' } })
-    globalThis.fetch = orig
 
     const out = info.mock.calls.flat().join(' ')
     expect(out).toContain('ORIGIN_NOT_REGISTERED')
@@ -255,18 +333,50 @@ describe('บอกสาเหตุเมื่อไม่โผล่', () =
 
   it('not_in_allowlist → บอกให้ไปเพิ่ม username', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    localStorage.setItem('auth_token', JSON.stringify({ value: 'jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
-    localStorage.setItem('web-service', 'K11S')
+    loginV10x('K11S')
 
-    const orig = globalThis.fetch
-    globalThis.fetch = (async () => ({
+    mockFetch(async () => ({
       ok: true, status: 200,
       json: async () => ({ payload: { enabled: false, reason: 'not_in_allowlist' } }),
-    })) as any
+    }))
     await mount({ dataset: { apiBase: 'https://ai.example.com' } })
-    globalThis.fetch = orig
 
     expect(info.mock.calls.flat().join(' ')).toContain('allowlist')
     info.mockRestore()
+  })
+})
+
+describe('สีหลักจากคอนโซล', () => {
+  const host = () => w().__host() as HTMLElement
+
+  it('ตั้งสีแล้วทับ --accent + คำนวณพื้นอ่อนและสีตัวอักษรให้', async () => {
+    await mount({ bootstrap: { ...base, accent_color: '#1e66f5' } })
+    expect(host().style.getPropertyValue('--accent')).toBe('#1e66f5')
+    expect(host().style.getPropertyValue('--accent-soft')).toMatch(/^#[0-9a-f]{6}$/)
+    expect(host().style.getPropertyValue('--on-accent')).toBe('#ffffff')
+  })
+
+  it('สีสว่าง → ตัวอักษรบนสีหลักเป็นสีเข้ม อ่านออก', async () => {
+    await mount({ bootstrap: { ...base, accent_color: '#ffd400' } })
+    expect(host().style.getPropertyValue('--on-accent')).toBe('#13282B')
+  })
+
+  it('ไม่ตั้ง / รูปแบบผิด → ใช้สีตั้งต้นของธีม (ไม่ใส่อะไรลง style)', async () => {
+    await mount({ bootstrap: base })
+    expect(host().style.getPropertyValue('--accent')).toBe('')
+    await mount({ bootstrap: { ...base, accent_color: 'red;background:url(x)' } })
+    expect(host().style.getPropertyValue('--accent')).toBe('')
+  })
+
+  it('หน้าตั้งค่าเปลี่ยนสีสดใน preview ได้', async () => {
+    document.body.innerHTML = '<div id="box"></div>'
+    await mount({ dataset: { previewMount: '#box' } })
+    window.postMessage({ type: 'ai-office:preview-config', config: { accent_color: '#aa3300' } }, window.location.origin)
+    await tick()
+    expect(host().style.getPropertyValue('--accent')).toBe('#aa3300')
+
+    window.postMessage({ type: 'ai-office:preview-config', config: { accent_color: '' } }, window.location.origin)
+    await tick()
+    expect(host().style.getPropertyValue('--accent')).toBe('')
   })
 })

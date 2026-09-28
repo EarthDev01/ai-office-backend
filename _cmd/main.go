@@ -151,7 +151,28 @@ func main() {
 	}
 
 	auditSvc := service.NewAuditService(auditRepo, time.Now)
-	officeService := service.NewOfficeService(repo, groupRepo, auditSvc)
+
+	// connector — ผิดแม้ไฟล์เดียวก็ไม่เปิด server · 1 โฟลเดอร์ = 1 ชนิดหลังบ้าน (office เลือกด้วย kind)
+	// office ที่ยังไม่ได้ตั้ง kind (record ก่อนมี field นี้) = defaultKind
+	const connectorsDir, defaultKind = "./connectors", "office-v10x"
+	loaded, err := connector.LoadDir(connectorsDir)
+	if err != nil {
+		log.Fatalf("[ERROR] %v", err)
+	}
+	conns := connector.Set{Registry: loaded, Default: defaultKind}
+	if !conns.Has(defaultKind) {
+		log.Fatalf("[ERROR] ไม่พบ connector %s ใน %s", defaultKind, connectorsDir)
+	}
+	for _, kind := range conns.Kinds() {
+		c, _ := conns.Get(kind)
+		if !c.Host.IsBrowser() {
+			// backend ยิงหลังบ้านเองไม่ได้ (Cloudflare + IP whitelist) — รองรับเฉพาะโหมด browser
+			log.Fatalf("[ERROR] connector %s ต้องเป็น mode: browser", kind)
+		}
+		fmt.Printf("[INFO] connector: %s · %d tool · %d เมนู ✔\n", kind, len(c.Tools), len(c.Menus.Menus))
+	}
+
+	officeService := service.NewOfficeService(repo, groupRepo, auditSvc, service.WithKinds(conns.Has))
 
 	// widget หา office จากโดเมน — โดเมนซ้ำข้าม office / รูปแบบเก่าที่ยังไม่ normalize ทำให้หาผิดตัวได้
 	if issues, err := officeService.OriginIssues(ctx); err != nil {
@@ -163,7 +184,7 @@ func main() {
 	}
 
 	// cache ttl เป็นค่าคงที่ (ไม่ได้มาจาก env)
-	identity := service.NewIdentityResolver(60 * time.Second)
+	identity := service.NewIdentityResolver(60*time.Second, conns)
 
 	// console session JWT ██ ต้องมี secret จริงบน production — ห้ามปล่อยให้ใช้ dev secret หลุดขึ้นจริง
 	//
@@ -221,22 +242,6 @@ func main() {
 		fmt.Printf("[INFO] LLM key %s: %s\n", p.ID, state)
 	}
 
-	// connector — ผิดแม้ไฟล์เดียวก็ไม่เปิด server · office ทุกเจ้าตอนนี้เป็น office-v10x
-	const connectorsDir, connectorKind = "./connectors", "office-v10x"
-	connectors, err := connector.LoadDir(connectorsDir)
-	if err != nil {
-		log.Fatalf("[ERROR] %v", err)
-	}
-	conn, ok := connectors[connectorKind]
-	if !ok {
-		log.Fatalf("[ERROR] ไม่พบ connector %s ใน %s", connectorKind, connectorsDir)
-	}
-	if !conn.Host.IsBrowser() {
-		// backend ยิงหลังบ้านเองไม่ได้ (Cloudflare + IP whitelist) — รองรับเฉพาะโหมด browser
-		log.Fatalf("[ERROR] connector %s ต้องเป็น mode: browser", connectorKind)
-	}
-	fmt.Printf("[INFO] connector: %s · %d tool · %d เมนู ✔\n", connectorKind, len(conn.Tools), len(conn.Menus.Menus))
-
 	// ตั๋วแชท ██ secret จริงต้องตั้งบน production (เหตุผลเดียวกับ CONSOLE_JWT_SECRET ข้างบน)
 	if os.Getenv("CHAT_TICKET_SECRET") == "" {
 		if !cfg.App.IsDev() {
@@ -268,7 +273,8 @@ func main() {
 		return time.Duration(settingsSvc.Current().TicketTTLMin) * time.Minute
 	})
 	relay := service.NewRelay()
-	loc, _ := conn.Location()
+	defConn, _ := conns.For("")
+	loc, _ := defConn.Location()
 	chatSvc := service.NewChatService(llm, chatRepo, service.NewToolRunner(relay, settingsSvc), loc, settingsSvc, usageSvc)
 
 	chatAdmin := service.NewChatAdminService(chatRepo, verifRepo, accessRepo, usageSvc)
@@ -289,7 +295,7 @@ func main() {
 		Chat:         chatSvc,
 		Relay:        relay,
 		Tickets:      chatTickets,
-		Connector:    conn,
+		Connectors:   conns,
 		ChatAdmin:    chatAdmin,
 		Settings:     settingsSvc,
 		Usage:        usageSvc,

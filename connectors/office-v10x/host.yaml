@@ -35,6 +35,9 @@ page_auth:
     # UI (helper.checkPermission) ให้สิทธิ์เมื่อ Role.Permission[].code ตรง และ action.is_view = true
     permissions: {path: permission, pluck: code, where_field: action.is_view, where_value: true}
     permissions_request: /GetPrefixOfficeMainSuperCom/{service}
+    # backend ตัดสินเว็บที่เข้าได้: role.list_service ที่ permission = true · ว่าง = ไม่จำกัด
+    # (ข้อมูลจริง demo-staging_office: list_service ว่างทั้ง 9 employee · office-api-v10 เองก็ไม่เช็ค field นี้)
+    services: {path: role.list_service, pluck: service, where_field: permission, where_value: true}
 host_api:
   envelope: {code_field: code, ok_codes: [0], data_field: data, message_field: message}
   timeout_ms: 8000

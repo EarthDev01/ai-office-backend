@@ -1,0 +1,43 @@
+# GetWorkingLog → {code:0, msg:"", payload:[WorkingLogV2] | null} (log/model.go:65-81)
+tool: worklog_search
+cases:
+  - name: กรองตามยูสของสมาชิก
+    service: DEMOSLOT
+    input: {username: user01, date: "2026-09-23"}
+    responses:
+      l:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {id: w1, datetime: "2026-09-23T04:12:09Z", operator_name: Admin A, operator_id: "65ab", action: แจกโบนัสฟรี, change: "50", username: user01, detail: "แจกโบนัสฟรี user : user01 จำนวน 50", ip: "10.0.3.17", service: DEMOSLOT, data_new: {amount: 50}}
+            - {id: w2, datetime: "2026-09-23T03:00:00Z", operator_name: Admin B, action: เช็คเครดิต, username: user02, service: DEMOSLOT}
+            - {id: w3, datetime: "2026-09-23T02:00:00Z", operator_name: Admin B, action: คืนเครดิต, username: USER01, service: DEMOSLOT}
+    expect:
+      status: ok
+      calls:
+        l: {path: /GetWorkingLog, query: {date: "2026-09-23", service: DEMOSLOT}}
+      fields: {พบรายการ: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["23/09/2026 11:12", Admin A, แจกโบนัสฟรี, user01]
+        - ["23/09/2026 09:00", Admin B, คืนเครดิต, USER01]
+      link: /Logs/Working
+  - name: กรองตามพนักงาน วันนี้
+    input: {operator: admin b}
+    responses:
+      l: {body: {code: 0, msg: "", payload: [{datetime: "2026-09-24T03:00:00Z", operator_name: Admin B, action: เช็คเครดิต, username: user02}, {datetime: "2026-09-24T02:00:00Z", operator_name: Admin A, action: x, username: u}]}}
+    expect:
+      status: ok
+      calls:
+        l: {query: {date: "2026-09-24", service: DEMO-SVC}}
+      fields: {พบรายการ: "1 รายการ"}
+  - name: ไม่พบ
+    input: {username: nobody}
+    responses:
+      l: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}
+  - name: หลังบ้าน error
+    responses:
+      l: {body: {code: 1, msg: "error", payload: null}}
+    expect: {status: error, error_code: host_error}

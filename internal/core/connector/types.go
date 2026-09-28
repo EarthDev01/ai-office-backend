@@ -72,6 +72,28 @@ type IdentitySpec struct {
 	// PermissionsRequest — path (template {service}) ของเส้นหลังบ้านที่คืนรายการสิทธิ์ของผู้ที่ล็อกอิน
 	// ใช้เมื่อ JWT ไม่มีสิทธิ์ติดมา · ตั้งไว้แล้ว Permissions.path จะอ่านจาก response ของเส้นนี้แทน
 	PermissionsRequest string `yaml:"permissions_request" json:"permissions_request,omitempty"`
+	// PermissionsToken — JWT อีกใบในหน้า (คนละใบกับที่แนบ Authorization) ที่มีสิทธิ์ติดมา · widget decode เอง
+	// แล้วอ่าน Permissions.path สัมพัทธ์กับ Root ของ payload ใบนั้น · ใช้แทน PermissionsRequest (ตั้งได้อย่างใดอย่างหนึ่ง)
+	PermissionsToken *TokenSource `yaml:"permissions_token" json:"permissions_token,omitempty"`
+
+	// ---- สิทธิ์เข้า service (backend อ่านจาก JWT ที่แนบ Authorization · ไม่ส่งลงหน้าเว็บ) ----
+
+	// Services = รายชื่อ service ที่บัญชีนี้เข้าได้ (path สัมพัทธ์กับ Root) · ไม่ตั้ง = ไม่จำกัด
+	Services *PluckSpec `yaml:"services" json:"-"`
+	// ServicesEmpty = รายชื่อว่างแปลว่าอะไร: all (ค่าเริ่มต้น · ไม่จำกัด) | none (เข้าไม่ได้สักเว็บ)
+	ServicesEmpty string `yaml:"services_empty" json:"-"`
+	// AllServicesWhen = expression ที่จริงแล้วเข้าได้ทุก service (ตัวแปร level, dept) เช่น "level >= 10 || dept == 'D002'"
+	AllServicesWhen string `yaml:"all_services_when" json:"-"`
+	allServicesExpr *Expr
+}
+
+// AllServices = บัญชีนี้เข้าได้ทุก service ตาม all_services_when
+func (id *IdentitySpec) AllServices(level int32, dept string) bool {
+	if id == nil || id.allServicesExpr == nil {
+		return false
+	}
+	v, err := id.allServicesExpr.Eval(map[string]any{"level": float64(level), "dept": dept})
+	return err == nil && v == true
 }
 
 type PluckSpec struct {
@@ -386,4 +408,54 @@ type ContextSpec struct {
 	Pluck  string `yaml:"pluck"`  // field ใน item (labels)
 	Format string `yaml:"format"` // status:<table> (labels)
 	Text   string `yaml:"text"`
+}
+
+// Strings ดึงรายการสตริงจาก v ตาม spec: array ที่ Path → item ที่ WhereField == WhereValue → ค่า Pluck (ว่าง = ตัว item)
+// ค่าว่าง/ไม่ใช่สตริงถูกข้าม · ตัวเลขเทียบแบบค่า (1 ใน yaml == 1.0 ใน JSON)
+func (p *PluckSpec) Strings(v any) []string {
+	if p == nil {
+		return nil
+	}
+	list, ok := GetPath(v, p.Path).([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range list {
+		if p.WhereField != "" && !sameValue(GetPath(item, p.WhereField), p.WhereValue) {
+			continue
+		}
+		val := item
+		if p.Pluck != "" {
+			val = GetPath(item, p.Pluck)
+		}
+		if s, ok := val.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func sameValue(a, b any) bool {
+	if fa, ok := toFloat(a); ok {
+		fb, ok := toFloat(b)
+		return ok && fa == fb
+	}
+	return a == b
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildHostURL, hostFetch } from '../src/hostfetch'
-import { mount, unmount } from '../src/index'
+import { mount, unmount, __resetSessions } from '../src/index'
+import { V10X_PAGE } from './fixtures'
 
 const realFetch = globalThis.fetch
 afterEach(() => {
@@ -75,6 +76,7 @@ describe('แชท: ตั๋ว → SSE → fetch/relay → การ์ด', 
   beforeEach(() => {
     document.body.innerHTML = ''
     localStorage.clear()
+    __resetSessions()
     localStorage.setItem('auth_token', JSON.stringify({ value: 'office-jwt', expiration: Math.floor(Date.now() / 1000) + 600 }))
     localStorage.setItem('web-service', 'K11S')
   })
@@ -87,7 +89,7 @@ describe('แชท: ตั๋ว → SSE → fetch/relay → การ์ด', 
       if (u.endsWith('/api/ai/widget/page-config')) {
         return Response.json({
           payload: {
-            kind: 'office-v10x', mode: 'browser', host_api_base: 'https://office.test/api',
+            ...V10X_PAGE,
             identity: {
               permissions_request: '/GetPrefixOfficeMainSuperCom/{service}',
               permissions: { path: 'permission', pluck: 'code', where_field: 'action.is_view', where_value: true },
@@ -150,7 +152,7 @@ describe('แชท: ตั๋ว → SSE → fetch/relay → การ์ด', 
   it('server ส่ง error → ฟองแดงพร้อมข้อความจาก server และไม่มีฟอง "ไม่มีคำตอบ"', async () => {
     globalThis.fetch = (async (url: string) => {
       const u = String(url)
-      if (u.endsWith('/page-config')) return Response.json({ payload: { kind: 'office-v10x', mode: 'browser', host_api_base: 'https://office.test/api' } })
+      if (u.endsWith('/page-config')) return Response.json({ payload: V10X_PAGE })
       if (u.endsWith('/browser-session')) return Response.json({ payload: { ticket: 'tkt', expires_in: 1800 } })
       if (u.endsWith('/chat')) {
         return sse([

@@ -1,0 +1,143 @@
+# office-abatech → GOTOPOPOFFICE (module abaoffice · :7777) · โหมด browser (ไม่แก้หลังบ้าน — เหมือน office-v10x)
+# widget ยิง API เดิมที่หน้า office-abatech ใช้อยู่ ด้วย token ของแอดมินเอง
+#
+# ที่มา (ตรวจกับโค้ดจริง office-abatech fb29edea · GOTOPOPOFFICE main · 28/09/2026):
+#   token   : store/index.js OfficeCallAPI/ServiceCallAPI แนบ "Authorization: Bearer " + state.headertoken
+#             pages/login.vue:257 · layouts/menu.vue:575 → localStorage["headertoken"] = JWT ดิบ (ไม่มี expiration ห่อ)
+#             ออกจากระบบ → setItem("headertoken", null) = สตริง "null"
+#   perm    : headertoken ถูกล้าง role.permission = nil ก่อนเซ็น (GOTOPOPOFFICE employee/route.go IsLogin)
+#             ใบที่มีสิทธิ์ครบคือ localStorage["token"] (menu.vue:558 this.user = jwt.decode(res.token).result)
+#             UI (store/index.js GetPermission) ให้สิทธิ์เมื่อ role.permission[].code ตรง และ Isactive == 1
+#   service : ?service=<base64 ชื่อ service> ใน URL (store/index.js ServiceCallAPI atob(payload.service))
+#   base    : plugins/main.js axios.defaults.baseURL = "/api" (prod) · dev = plugins/config.js API_URL
+#             dev ที่ API คนละโดเมน → snippet ใส่ data-host-api-base (nuxt.config.js AI_HOST_API_BASE) หรือตั้งในคอนโซล
+#   path    : ServiceCallAPI = path + "/" + service + query → เส้นต่อเว็บคือ /<Endpoint>/{service}
+#   envelope: helper.Response → {code, msg, payload} · code 0 = สำเร็จ · auth ล้ม = HTTP 200 {code 401}
+#   identity: JWT claim "result" = employee.User (id, name, full_name, deptcode, level, service[], role{…})
+#   เว็บที่เข้าได้: layouts/menu.vue:449-465 — level >= 10 หรือ deptcode D002 เห็นทุกเว็บ · นอกนั้นเฉพาะ user.service[].service
+kind: office-abatech
+label: หลังบ้าน abatech
+mode: browser
+page_auth:
+  token: {source: localStorage, key: headertoken, format: raw}
+  service: {source: query, key: service, encoding: base64}
+  host_api_base: "{origin}/api"
+  session_path: ""
+  auth_scheme: Bearer
+  identity:
+    source: jwt
+    root: result
+    id: id
+    username: name
+    display_name: full_name
+    level: level
+    dept: deptcode
+    permissions: {path: role.permission, pluck: code, where_field: Isactive, where_value: 1}
+    permissions_token: {source: localStorage, key: token, format: raw}
+    services: {path: service, pluck: service}
+    services_empty: none
+    all_services_when: "level >= 10 || dept == 'D002'"
+host_api:
+  envelope: {code_field: code, ok_codes: [0], data_field: payload, message_field: msg}
+  timeout_ms: 8000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อทีม support ในห้องแชทประจำของเว็บ
+facts:
+  - id: assistant_scope
+    title: ผู้ช่วยทำอะไรได้บ้าง
+    text: >-
+      ผู้ช่วยเป็นระบบอัตโนมัติ อ่านข้อมูลหลังบ้านได้อย่างเดียวด้วยสิทธิ์ของผู้ที่ล็อกอินอยู่ และบอกทางไปเมนูได้
+      แต่ทำรายการ แก้ค่า หรือเพิ่มเครดิตแทนไม่ได้ เรื่องเทคนิคหรือระบบขัดข้องให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [ทำอะไรได้, เป็นใคร, คุยกับคน, ติดต่อ support, ระบบล่ม]
+    questions: [BQ-52, BQ-53, BQ-54, BQ-56]
+  - id: member_lookup_not_available
+    title: ค้นข้อมูลสมาชิกรายคน
+    text: >-
+      ผู้ช่วยค้นข้อมูลสมาชิกรายคน (วันสมัคร สถานะบัญชี บัญชีธนาคาร) ให้ไม่ได้ เพราะเส้นข้อมูลสมาชิกของหลังบ้านนี้ส่งข้อมูลลับของสมาชิกมาด้วย
+      ดูเองได้ที่เมนู รายการสมาชิก แล้วค้นด้วยยูสเซอร์เนม · ผู้ช่วยตอบได้เรื่องรายการฝากและรายการถอนของยูสนั้นรายวัน
+    keywords: [ข้อมูลสมาชิก, วันสมัคร, สมาชิกคนนี้, ออนไลน์ล่าสุด, ยืนยันตัวตน, สถานะสมาชิก]
+    questions: [BQ-05]
+  - id: unverified_members_not_available
+    title: จำนวนสมาชิกที่ยังไม่ยืนยันตัวตน
+    text: >-
+      หลังบ้านนี้ไม่มีตัวกรองหรือตัวนับสมาชิกที่ยังไม่ยืนยันตัวตน ผู้ช่วยจึงนับให้ไม่ได้
+      ถ้าต้องการดูบัญชีธนาคารของสมาชิกที่รอตรวจสอบ ถามผู้ช่วยได้ หรือเปิดเมนู รายการสมาชิกที่รอตรวจสอบ
+    keywords: [ยังไม่ยืนยัน, ไม่ยืนยันตัวตน, สมาชิกไม่ยืนยัน]
+    questions: [BQ-08]
+  - id: profit_report_not_available
+    title: รายงานกำไรขาดทุน
+    text: >-
+      ผู้ช่วยดึงหน้า รายงานกำไรขาดทุน ให้ไม่ได้ เพราะหน้านั้นบันทึกแคชรายงานลงระบบทุกครั้งที่เปิด ซึ่งผู้ช่วยไม่เรียกใช้
+      ดูเองได้ที่เมนู รายงาน › รายงานกำไรขาดทุน · ถ้ามีสิทธิ์รายงานภาพรวม ถามผู้ช่วยเรื่องยอดฝาก ยอดถอน โบนัส และฝากลบถอนตามช่วงวันได้
+    keywords: [กำไรขาดทุน, กำไร, ขาดทุน, รายงานกำไร, profit, ส่วนแบ่ง]
+    questions: [BQ-12]
+  - id: agent_credit_snapshot
+    title: ยอดเครดิตเอเจ้นที่ผู้ช่วยแสดง
+    text: >-
+      ยอด Agent Credit ที่ผู้ช่วยแสดงคือค่าล่าสุดที่ระบบบันทึกไว้พร้อมเวลาที่อัปเดต ผู้ช่วยไม่กดรีเฟรชยอดให้ เพราะการรีเฟรชจะบันทึกยอดใหม่ลงระบบ
+      ถ้าต้องการยอดล่าสุดให้กดไอคอนรีเฟรชข้าง Agent Credit ที่แถบด้านบนเอง
+    keywords: [รีเฟรชเครดิต, เครดิตล่าสุด, เครดิตไม่อัปเดต, agent credit ไม่ตรง]
+    questions: [BQ-41]
+  - id: no_credit_forecast
+    title: คาดการณ์เวลาเครดิตหมด
+    text: >-
+      ระบบเก็บยอดเครดิตเอเจ้นไว้เพียงค่าล่าสุดค่าเดียวต่อเว็บ ไม่มีประวัติย้อนหลัง จึงประเมินไม่ได้ว่าเครดิตจะหมดเมื่อไหร่
+      ผู้ช่วยบอกได้แค่ยอดล่าสุดที่บันทึกไว้และเวลาที่อัปเดต
+    keywords: [เครดิตจะหมด, หมดเมื่อไหร่, พอใช้ถึง, คาดการณ์]
+    questions: [BQ-43]
+  - id: topup_system_credit
+    title: เติมเครดิตระบบ (เครดิตเอเจ้น / SMS)
+    text: >-
+      ผู้ช่วยเติมเครดิตระบบแทนไม่ได้ ให้ติดต่อทีม support ในห้องแชทประจำของเว็บเพื่อขอเติม
+      ถ้ามีบิลที่ต้องชำระ ดูได้ที่เมนู บิลค่าใช้จ่ายระบบ หรือถามผู้ช่วยว่ามีบิลค้างไหม
+    keywords: [เติมเครดิตระบบ, เติมเครดิตเอเจ้น, เติม SMS, ซื้อเครดิต]
+    questions: [BQ-45]
+  - id: topup_not_arrived
+    title: เติมเครดิตระบบแล้วยังไม่เข้า
+    text: >-
+      ระบบไม่มีข้อมูลรายการเติมเครดิตระบบให้ผู้ช่วยตรวจ จึงบอกไม่ได้ว่ารายการเติมถึงไหนแล้ว
+      ที่ตรวจได้คือบิลที่จ่ายแล้วแต่ยังรอคอนเฟิร์ม ถ้าบิลยืนยันแล้วแต่เครดิตยังไม่เข้า ให้ติดต่อทีม support ในห้องแชทประจำของเว็บ
+    keywords: [เติมแล้วไม่เข้า, เครดิตไม่เข้า, จ่ายแล้วไม่เข้า]
+    questions: [BQ-46]
+  - id: member_credit_check
+    title: เครดิตคงเหลือของสมาชิก
+    text: >-
+      ผู้ช่วยไม่เช็คเครดิตของสมาชิกให้ เพราะการเช็คเครดิตในหลังบ้านนี้ถูกบันทึกเป็นประวัติการทำงานในชื่อพนักงานทุกครั้ง
+      เช็คเองได้ที่เมนู ระบบจัดการเครดิตสมาชิก แท็บ เช็คเครดิต (ต้องมีสิทธิ์แท็บนั้น)
+    keywords: [เครดิตสมาชิก, เครดิตยูส, เช็คเครดิต, ยอดเครดิตคงเหลือ]
+    questions: [BQ-47]
+  - id: no_ip_answer
+    title: IP ของผู้ทำรายการ
+    text: >-
+      ผู้ช่วยไม่แสดง IP ของผู้ทำรายการหรือพนักงาน ประวัติการทำงานของหลังบ้านนี้เก็บ IP ของเครื่องแม่ข่าย ไม่ใช่ของพนักงาน
+      ถ้าต้องการตรวจว่าใครทำรายการ ถามผู้ช่วยเรื่องประวัติการทำงานของพนักงานได้ หรือเปิดเมนู รายงานการทำงานของพนักงาน
+    keywords: [IP, ไอพี, เข้าจากที่ไหน, ใครเข้าระบบ, ล็อกอิน]
+    questions: [BQ-06, BQ-35]
+  - id: no_deposit_by_id
+    title: ค้นรายการฝากตามรหัสรายการ
+    text: >-
+      หน้ารายการฝากของหลังบ้านนี้ค้นด้วยรหัสรายการไม่ได้ ผู้ช่วยจึงค้นรายการฝากได้ด้วยยูสเซอร์เนมทีละวันเท่านั้น
+      รายการถอนค้นด้วยรหัสรายการได้
+    keywords: [รหัสรายการฝาก, เลขรายการฝาก, id ฝาก]
+    questions: [BQ-06]
+  - id: one_day_at_a_time
+    title: รายการฝากถอนดูได้ทีละวัน
+    text: >-
+      หน้ารายการฝากและรายการถอนของหลังบ้านนี้ดึงข้อมูลได้ทีละวัน ผู้ช่วยจึงตอบรายการค้างหรือค้นรายการได้ทีละวัน
+      ถ้าถามหลายวันให้ระบุทีละวัน · ยอดสรุปตามช่วงวันถามได้ที่รายงานภาพรวม
+    keywords: [หลายวัน, ย้อนหลัง, ทั้งสัปดาห์, ข้ามวัน]
+    questions: [BQ-03, BQ-04, BQ-06]
+  - id: emergency_buttons
+    title: ปุ่ม Disabled และ SOS
+    text: >-
+      แถบด้านบนของหลังบ้านนี้มีปุ่ม Disabled ซึ่งปิดหรือเปิดการใช้งานบัญชีพนักงานของตัวเอง และปุ่ม SOS ซึ่งสั่งปิดเซิร์ฟเวอร์ของทั้งกลุ่มหลังบ้าน
+      ทั้งสองปุ่มถามยืนยันก่อนทำงาน ผู้ช่วยไม่กดปุ่มใดแทนและไม่แนะนำให้กด ถ้ามีเหตุฉุกเฉินให้แจ้งหัวหน้าหรือทีม support ในห้องแชทประจำของเว็บก่อน
+    keywords: [ฉุกเฉิน, SOS, ปิดเว็บ, ปิดระบบ, disabled, ปุ่มแดง, ปุ่มเหลือง]
+    questions: [BQ-55]
+  - id: dashboard_page_no_service
+    title: หน้าที่ไม่ได้เลือกเว็บ
+    text: >-
+      ผู้ช่วยทำงานกับเว็บที่เลือกอยู่ในหลังบ้านเท่านั้น หน้าที่ไม่ได้ผูกกับเว็บใดจะไม่มีปุ่มผู้ช่วย ให้เลือกเว็บจากเมนูด้านซ้ายก่อน
+    keywords: [เลือกเว็บ, เว็บไหน, เปลี่ยนเว็บ]
+    questions: [BQ-56]

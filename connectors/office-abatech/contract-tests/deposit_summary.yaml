@@ -1,0 +1,55 @@
+# DepositBankSummaryV2 → {code:0, msg:"", payload:[BankStatementModel]} · GetDepositStatementListByFilter → {code:0, msg:"Success", payload:[], count}
+tool: deposit_summary
+cases:
+  - name: สองบัญชี
+    service: DEMOSLOT
+    responses:
+      s:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {code: KBANK, full_name: บจก. ตัวอย่าง, number: "1234567890", deposit: 98000, remain: 1500, count: 57, balance: 152340.5, status: 1, today_deposit: 98000}
+            - {code: SCB, full_name: บจก. ตัวอย่างสอง, number: "5556667778", deposit: 12000, remain: 0, count: 9, balance: 3000, status: 1, today_deposit: 12000}
+      all: {body: {code: 0, msg: Success, payload: [{username: u1, amount: 1, status: 1}], count: 66}}
+      queue: {body: {code: 0, msg: Success, payload: [], count: 3}}
+    expect:
+      status: ok
+      calls:
+        s: {path: /DepositBankSummaryV2/DEMOSLOT, query: {start_date: "2026-09-24 00:00:00", end_date: "2026-09-24 23:59:00", deposit_type: open}}
+        all: {path: /GetDepositStatementListByFilter/DEMOSLOT, query: {date: "2026-09-24", status: "0", limit: "1"}}
+        queue: {query: {status: "2"}}
+      fields:
+        ยอดฝากสำเร็จ (ทุกบัญชี): "110,000.00 บาท"
+        ยอดตกค้างรอยืนยัน: "1,500.00 บาท"
+        รายการฝากทั้งหมด: "66 รายการ"
+        รายการรอคิว: "3 รายการ"
+      table_rows: 2
+      table_cells:
+        - [KBANK, บจก. ตัวอย่าง, "98,000.00", "1,500.00"]
+      model_context: {has_remain: true, has_queue: true}
+      link: "/Deposit?service=REVNT1NMT1Q="
+  - name: ระบุวันที่
+    input: {date: "2026-09-20"}
+    responses:
+      s: {body: {code: 0, msg: "", payload: [{code: KBANK, deposit: 0, remain: 0}]}}
+      all: {body: {code: 0, msg: Success, payload: [], count: 0}}
+      queue: {body: {code: 0, msg: Success, payload: [], count: 0}}
+    expect:
+      status: ok
+      calls:
+        s: {query: {start_date: "2026-09-20 00:00:00", end_date: "2026-09-20 23:59:00"}}
+        all: {query: {date: "2026-09-20"}}
+      model_context: {has_remain: false, has_queue: false}
+  - name: ไม่มีบัญชีและไม่มีรายการ
+    responses:
+      s: {body: {code: 0, msg: "", payload: null}}
+      all: {body: {code: 0, msg: Success, payload: [], count: 0}}
+      queue: {body: {code: 0, msg: Success, payload: [], count: 0}}
+    expect: {status: not_found}
+  - name: เส้นรายการฝากตอบ error (ไม่มี count)
+    responses:
+      s: {body: {code: 0, msg: "", payload: []}}
+      all: {body: {code: 1, msg: "mongo: timeout", payload: []}}
+      queue: {body: {code: 0, msg: Success, payload: [], count: 0}}
+    expect: {status: error, error_code: schema_mismatch}

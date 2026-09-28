@@ -22,7 +22,6 @@ export async function runChat(opts: {
   apiBase: string
   service: string
   session: ChatSession
-  readToken: () => string
   conversationID: string
   text: string
   on: ChatHandlers
@@ -47,7 +46,7 @@ export async function runChat(opts: {
   const relays: Promise<void>[] = []
   const relay = (cmd: FetchCommand) =>
     relays.push(
-      hostFetch(session.hostApiBase(), cmd, opts.readToken())
+      hostFetch(session.hostApiBase(), cmd, session.readToken(), session.authScheme())
         .then((r) =>
           fetch(`${base}/chat/relay/${encodeURIComponent(cmd.id)}`, {
             method: 'POST',

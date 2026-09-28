@@ -1,0 +1,15 @@
+# GetBalanceAgent → {code:0, msg:"Success", payload:{amount, code, name, unit, updated_at, service}}
+tool: credit_agent_balance
+cases:
+  - name: มียอดที่บันทึกไว้
+    responses:
+      a: {body: {code: 0, msg: Success, payload: {amount: 152340.5, code: 1001, name: Credit, unit: THB, updated_at: 1727150000, service: DEMO-SVC}}}
+    expect:
+      status: ok
+      calls: {a: {path: /GetBalanceAgent/DEMO-SVC}}
+      fields: {Agent Credit คงเหลือ: "152,340.50", อัปเดตล่าสุด: "24/09/2024 10:53"}
+      link: "/DashboardOnce?service=REVNTy1TVkM="
+  - name: ยังไม่เคยบันทึก (zero value) — ไม่ตอบว่าเป็นศูนย์
+    responses:
+      a: {body: {code: 0, msg: Success, payload: {amount: 0, code: 0, name: "", unit: "", updated_at: 0, service: ""}}}
+    expect: {status: not_found}

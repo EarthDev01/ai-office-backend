@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Window } from 'happy-dom'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { V10X_PAGE, isPageConfig } from './fixtures'
 
 const BUNDLE = resolve(__dirname, '../../static/widget/ai-office.v1.js')
 
@@ -17,6 +18,8 @@ async function boot(payload: unknown, opts: { attrs?: string; loggedIn?: boolean
   const calls: string[] = []
 
   ;(win as any).fetch = async (url: string) => {
+    // page-config ไม่นับเป็นการยิงของผู้ใช้ (ไม่มีตัวตน) — test สนใจเฉพาะเส้นที่มี token
+    if (isPageConfig(url)) return { ok: true, json: async () => ({ payload: V10X_PAGE }) }
     calls.push(String(url))
     return { ok: true, json: async () => ({ payload }) }
   }

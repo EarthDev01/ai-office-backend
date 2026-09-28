@@ -22,6 +22,7 @@ type Office struct {
 	ID             string   `json:"id"                 bson:"_id"`
 	Label          string   `json:"label"              bson:"label"`
 	PublicKey      string   `json:"public_key"         bson:"public_key"`
+	Kind           string   `json:"kind"               bson:"kind,omitempty"` // ชนิดหลังบ้าน = connectors/<kind>/ · ว่าง = kind ตั้งต้นของระบบ (record เก่า)
 	AllowedOrigins []string `json:"allowed_origins"    bson:"allowed_origins"`
 	// HostAPIBase — URL API หลังบ้านที่ widget ของ office นี้ยิง · ว่าง = {origin}/api ตาม connector
 	// ใช้กับ office ที่หน้าเว็บกับ API อยู่คนละโดเมน (เช่น หน้า dev ที่ localhost) — ทุกโดเมนของ office นี้ยิงไปที่เดียวกัน
@@ -31,6 +32,7 @@ type Office struct {
 	Enabled   bool      `json:"enabled"            bson:"enabled"`
 	IsHidden  bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
 	Theme     string    `json:"theme"              bson:"theme"`
+	Accent    string    `json:"accent_color"       bson:"accent_color,omitempty"` // สีหลักของ widget #rrggbb · ว่าง = สีตั้งต้น
 	Placement Placement `json:"placement"          bson:"placement"`
 	Services  []Service `json:"services"           bson:"services"`
 	CreatedAt time.Time `json:"created_at"         bson:"created_at"`
@@ -141,6 +143,7 @@ type CreateOffice struct {
 	Label   string `json:"label"`
 	GroupID string `json:"group_id"`
 	Origin  string `json:"origin"` // URL ของ domain · ว่างได้ (ใส่ทีหลังในหน้าตั้งค่า)
+	Kind    string `json:"kind"`   // ชนิดหลังบ้าน · ว่าง = kind ตั้งต้นของระบบ
 }
 
 func NewPublicKey() string {

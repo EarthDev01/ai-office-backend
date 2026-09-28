@@ -1,0 +1,26 @@
+tool: bank_accounts_deposit
+cases:
+  - name: เปิดสองปิดหนึ่ง
+    responses:
+      s:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {code: KBANK, full_name: บจก. ตัวอย่าง, number: "1234567890", status: 1, balance: 152340.5, today_deposit: 98000, deposit: 98000, remain: 0}
+            - {code: SCB, full_name: บจก. สอง, number: "2", status: 0, balance: 0, today_deposit: 0, deposit: 0, remain: 0}
+            - {code: KTB, full_name: บจก. สาม, number: "3", status: 1, balance: 5000, today_deposit: 1000, deposit: 1000, remain: 0}
+    expect:
+      status: ok
+      calls:
+        s: {path: /DepositBankSummaryV2/DEMO-SVC, query: {deposit_type: all, start_date: "2026-09-24 00:00:00", end_date: "2026-09-24 23:59:00"}}
+      fields: {บัญชีฝากทั้งหมด: "3 บัญชี", เปิดใช้งาน: "2 บัญชี", ปิดใช้งาน: "1 บัญชี"}
+      table_rows: 3
+      table_cells:
+        - [KBANK, บจก. ตัวอย่าง, เปิดใช้งาน, "152,340.50", "98,000.00"]
+      model_context: {has_open: true, has_closed: true}
+      link: "/Statement?service=REVNTy1TVkM="
+  - name: ไม่มีบัญชี
+    responses:
+      s: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}

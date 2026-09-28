@@ -20,6 +20,8 @@ export interface Bootstrap {
   display_name: string
   greeting: string
   theme: ThemeMode
+  /** สีหลัก #rrggbb ที่ตั้งจากคอนโซล · ว่าง = สีตั้งต้นของ widget */
+  accent_color?: string
   placement: Placement
 }
 
@@ -29,6 +31,7 @@ export const PREVIEW_ALLOWED_FIELDS = [
   'display_name',
   'greeting',
   'theme',
+  'accent_color',
   'placement',
   'service_label',
   'is_hidden',

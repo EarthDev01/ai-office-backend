@@ -1,39 +1,30 @@
 import { createShadow, injectFonts } from './shadow'
-import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, el, renderCard, scroll, type UI } from './ui'
+import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, el, renderCard, scroll, setOpen, type UI } from './ui'
 import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
-import { ChatSession } from './session'
+import { ChatSession, PageConfigError } from './session'
+import { describeSource, readService } from './page'
 import { runChat, runConsoleChat, ChatError, type ConsoleTurn } from './chat'
 
 // data-* ที่ห้ามมาจากหน้าเว็บ — service ที่เปิดอยู่เราอ่านจาก localStorage ของ office เอง
 // (data-public-key ไม่อยู่ในนี้ เพราะมันระบุแค่ว่าหน้านี้เป็นของ office ไหน)
 const TENANT_ATTRS = ['serviceId', 'websiteId', 'businessId', 'tenant', 'tenantId', 'officeId', 'apiKey']
 
-// office-v10x เก็บของ 2 อย่างนี้ไว้ที่ localStorage (backoffice-api-survey.md §2.1, §3)
-const TOKEN_KEY = 'auth_token'   // { value: <JWT>, expiration: <unix วินาที> }
-const SERVICE_KEY = 'web-service' // service ที่แอดมินเลือกอยู่ตอนนี้
+// ChatSession ต่อ API ของ AI (1 หน้า = 1 ตัว) — page-config โหลดครั้งเดียวแล้วใช้ร่วมกันทุกครั้งที่ mount ใหม่
+const sessions = new Map<string, ChatSession>()
 
-/** อ่าน Bearer token ของหน้า office — รูปแบบเดียวกับ helper.getItemWithExpireV2 */
-export function readOfficeToken(): string {
-  try {
-    const raw = localStorage.getItem(TOKEN_KEY)
-    if (!raw) return ''
-    const parsed = JSON.parse(raw) as { value?: string; expiration?: number }
-    if (!parsed?.value) return ''
-    const now = Math.floor(Date.now() / 1000)
-    if (typeof parsed.expiration === 'number' && parsed.expiration <= now) return ''
-    return parsed.value
-  } catch {
-    return ''
-  }
+/** test เท่านั้น — ล้าง page-config/ตั๋วที่จำไว้ระหว่างเคส */
+export function __resetSessions() {
+  sessions.clear()
 }
 
-/** service ที่แอดมินกำลังเปิดอยู่ — เปลี่ยนได้ตลอดโดยไม่โหลดหน้าใหม่ จึงอ่านสดทุกครั้ง */
-export function readOfficeService(): string {
-  try {
-    return localStorage.getItem(SERVICE_KEY) ?? ''
-  } catch {
-    return ''
+function sessionFor(apiBase: string, hostAPIBase = ''): ChatSession {
+  const k = apiBase + '|' + hostAPIBase
+  let s = sessions.get(k)
+  if (!s) {
+    s = new ChatSession(apiBase, hostAPIBase)
+    sessions.set(k, s)
   }
+  return s
 }
 
 const DEFAULT_BOOTSTRAP: Bootstrap = {
@@ -117,6 +108,7 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   const previewSelector = ds.previewMount ?? ''
   const preview = previewSelector !== ''
   const apiBase = opts.apiBase ?? ds.apiBase ?? ''
+  const session = sessionFor(apiBase, ds.hostApiBase)
 
   let cfg: Bootstrap
   if (opts.console) {
@@ -133,7 +125,7 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   } else if (opts.bootstrap) {
     cfg = { ...DEFAULT_BOOTSTRAP, ...opts.bootstrap }
   } else {
-    const fetched = await fetchBootstrap(apiBase, opts.onFetch)
+    const fetched = await fetchBootstrap(apiBase, session, opts.onFetch)
     if (!fetched) return
     cfg = { ...DEFAULT_BOOTSTRAP, ...fetched }
   }
@@ -152,7 +144,6 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   injectFonts(root)
 
   const ui = buildUI(root)
-  const session = new ChatSession(apiBase, readOfficeToken)
   state = { ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false, console: opts.console ?? null, history: [] }
 
   render(cfg)
@@ -169,7 +160,7 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   })
 
   if (preview) {
-    ui.panel.dataset.open = 'true'
+    setOpen(ui, true)
     // ██ ผูก listener เฉพาะโหมด preview เท่านั้น
     // ██ ถ้าผูกในโหมดปกติ สคริปต์อื่นในหน้า office จะสั่งเปลี่ยนหน้าตา/ถ้อยคำของ AI ได้
     window.addEventListener('message', onPreviewMessage)
@@ -182,7 +173,9 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
 function render(cfg: Bootstrap) {
   if (!state) return
   state.cfg = cfg
-  state.host.setAttribute('data-theme', resolveTheme(cfg.theme))
+  const theme = resolveTheme(cfg.theme)
+  state.host.setAttribute('data-theme', theme)
+  applyAccent(state.host, cfg.accent_color, theme)
   applyAppearance(state.ui, cfg)
   applyPlacement(state.ui, cfg)
   state.ui.launcher.style.display = cfg.is_hidden ? 'none' : 'grid'
@@ -210,22 +203,26 @@ function onPreviewMessage(ev: MessageEvent) {
 }
 
 // ไม่ต้องส่งว่าเป็น office ไหน — server ดูจากโดเมนของหน้านี้ (header Origin ที่เบราว์เซอร์ใส่ให้เอง)
-// snippet จึงเหมือนกันทุกโดเมนของ officeลูกค้า
-async function fetchBootstrap(apiBase: string, onFetch?: MountOptions['onFetch']): Promise<Bootstrap | null> {
-  const token = readOfficeToken()
-  const serviceID = readOfficeService()
+// snippet จึงเหมือนกันทุกโดเมนของ officeลูกค้า · วิธีอ่าน login ของหน้านี้มาจาก page-config (ตาม kind ของ office)
+async function fetchBootstrap(apiBase: string, session: ChatSession, onFetch?: MountOptions['onFetch']): Promise<Bootstrap | null> {
+  const pc = await loadPageConfig(session)
+  if (!pc) return null
+  const token = session.readToken()
+  const serviceID = readService(pc.service)
 
   // ยังไม่ล็อกอิน หรือยังไม่ได้เลือกเว็บ → ไม่ต้องยิง ไม่ต้องโผล่
   //
   // แต่ต้องบอกสาเหตุออกมา ไม่งั้นคนติดตั้งจะไม่มีทางรู้ว่าทำไมปุ่มไม่ขึ้น
   // (เงียบอย่างเดียวเคยทำให้เสียเวลาไล่หาสาเหตุมาแล้ว)
   if (!token || !serviceID) {
+    const t = describeSource(pc.token)
+    const sv = describeSource(pc.service)
     explain(
       !token && !serviceID
-        ? 'ไม่พบ localStorage["auth_token"] และ localStorage["web-service"] — หน้านี้ยังไม่ได้ล็อกอินหลังบ้าน'
+        ? `ไม่พบ ${t} และ ${sv} — หน้านี้ยังไม่ได้ล็อกอินหลังบ้าน`
         : !token
-          ? 'ไม่พบ localStorage["auth_token"] ที่ยังไม่หมดอายุ — ยังไม่ได้ล็อกอิน หรือ token หมดอายุแล้ว'
-          : 'ไม่พบ localStorage["web-service"] — ยังไม่ได้เลือกเว็บในหลังบ้าน',
+          ? `ไม่พบ ${t} ที่ยังไม่หมดอายุ — ยังไม่ได้ล็อกอิน หรือ token หมดอายุแล้ว`
+          : `ไม่พบ ${sv} — ยังไม่ได้เลือกเว็บในหลังบ้าน (หน้านี้ไม่ได้ผูกกับเว็บใด)`,
     )
     return null
   }
@@ -256,6 +253,17 @@ async function fetchBootstrap(apiBase: string, onFetch?: MountOptions['onFetch']
   }
 }
 
+/** page-config ของหน้านี้ · ไม่สำเร็จ = บอกสาเหตุใน console แล้วคืน null */
+async function loadPageConfig(session: ChatSession) {
+  try {
+    return await session.pageConfig()
+  } catch (e) {
+    const code = e instanceof PageConfigError ? e.message : ''
+    explain(`โหลดการตั้งค่าของหน้านี้ไม่สำเร็จ (${code || (e as Error).message})`, HINTS[code] ?? 'หลังบ้าน ai ทำงานอยู่ไหม')
+    return null
+  }
+}
+
 /** คำอธิบายสาเหตุให้คนติดตั้งอ่าน — ไม่ทำให้หน้า office พัง แค่บอกใน console */
 function explain(reason: string, hint?: string) {
   console.info(`[ai-office] ไม่แสดงผู้ช่วย: ${reason}` + (hint ? `\n           → ${hint}` : ''))
@@ -264,7 +272,8 @@ function explain(reason: string, hint?: string) {
 const HINTS: Record<string, string> = {
   ORIGIN_NOT_REGISTERED: `โดเมน ${location.origin} ยังไม่ได้ลงทะเบียน — เพิ่มใน "URL ของ domain" ที่ officeai`,
   ORIGIN_REQUIRED: 'เบราว์เซอร์ไม่ได้ส่ง Origin มา — widget ต้องถูกเรียกจากหน้าเว็บของ officeลูกค้า',
-  SERVICE_NOT_ALLOWED: 'บัญชีนี้ไม่มี service นี้ใน Role.ListService ของหลังบ้าน',
+  SERVICE_NOT_ALLOWED: 'บัญชีนี้ไม่มีสิทธิ์เปิดเว็บนี้ในหลังบ้าน (รายชื่อเว็บของบัญชี)',
+  KIND_NOT_SUPPORTED: 'ชนิดหลังบ้านของ domain นี้ยังไม่มี connector — ตรวจ "ชนิดหลังบ้าน" ที่คอนโซล',
   SESSION_EXPIRED: 'token หมดอายุ ให้ล็อกอินหลังบ้านใหม่',
   NOT_AUTHENTICATED: 'ไม่ได้ส่ง token ไป หรือ token ใช้ไม่ได้',
   BACKOFFICE_UNAVAILABLE: 'ตรวจสอบผู้ใช้กับ officeลูกค้า ไม่ได้ชั่วคราว',
@@ -278,7 +287,7 @@ const HINTS: Record<string, string> = {
 function toggle(open?: boolean) {
   if (!state) return
   const next = open ?? state.ui.panel.dataset.open !== 'true'
-  state.ui.panel.dataset.open = String(next)
+  setOpen(state.ui, next)
   if (next) state.ui.input.focus()
 }
 
@@ -307,7 +316,12 @@ async function send(opts: MountOptions) {
     return
   }
 
-  const service = readOfficeService()
+  const pc = await loadPageConfig(s.session)
+  const service = pc ? readService(pc.service) : ''
+  if (!service) {
+    addBubble(s.ui.log, 'ai', MESSAGES.unavailable, 'err')
+    return
+  }
   opts.onFetch?.({ url: `${s.apiBase}/api/ai/widget/service/${encodeURIComponent(service)}/chat`, body: { text } })
 
   s.busy = true
@@ -328,7 +342,6 @@ async function send(opts: MountOptions) {
       apiBase: s.apiBase,
       service,
       session: s.session,
-      readToken: readOfficeToken,
       conversationID: s.conversationID,
       text,
       on: {
@@ -464,23 +477,35 @@ if (self) {
   if (self.src) {
     if (!ds.apiBase) ds.apiBase = new URL(self.src, location.href).origin
   }
-  // ██ office-v10x เป็น SPA — ล็อกอินแล้ว set localStorage โดยไม่ reload หน้า
+  // ██ หลังบ้านส่วนใหญ่เป็น SPA — ล็อกอิน/สลับเว็บแล้วเปลี่ยน storage หรือ URL โดยไม่ reload หน้า
   // ██ widget จึงต้องเฝ้า session เอง ไม่งั้นปุ่มจะไม่โผล่จนกว่าจะ refresh มือ
   // ██ storage event ไม่ยิงใน tab เดียวกัน จึง poll เบา ๆ
   //
   // sig = ลายเซ็น session: '' = ยังไม่ล็อกอิน · ไม่งั้น = service ที่เปิดอยู่
   // (หรือ '\0' ถ้าล็อกอินแล้วแต่ยังไม่เลือก service)
+  const session = sessionFor(ds.apiBase ?? '', ds.hostApiBase)
+  let page: Awaited<ReturnType<typeof loadPageConfig>> = null
+  let retryAt = 0
   let lastSig: string | null = null
-  const sessionSig = () => (readOfficeToken() ? readOfficeService() || '\0' : '')
   const sync = () => {
     try {
-      const sig = sessionSig()
+      // ต้องรู้ก่อนว่าหลังบ้านชนิดนี้เก็บ login ไว้ที่ไหน — โหลดไม่ได้ ลองใหม่ทุก 30 วิ
+      if (!page) {
+        if (Date.now() < retryAt) return
+        retryAt = Date.now() + 30_000
+        void loadPageConfig(session).then((pc) => {
+          page = pc
+          if (pc) sync()
+        })
+        return
+      }
+      const sig = session.readToken() ? readService(page.service) || '\0' : ''
       if (sig === lastSig) return
       lastSig = sig
       if (sig === '') unmount() // ออกจากระบบ → เก็บปุ่มทันที ไม่ต้อง refresh
       else void mount({ dataset: ds }) // ล็อกอิน / สลับ service → (re)mount
     } catch {
-      /* localStorage เข้าไม่ได้ — ปล่อยผ่าน */
+      /* storage เข้าไม่ได้ — ปล่อยผ่าน */
     }
   }
   const boot = () => {
@@ -490,7 +515,7 @@ if (self) {
       return
     }
     // โหมด preview (หน้า console) ไม่มี session ของ office — mount ครั้งเดียวเลย
-    // ไม่ต้องเฝ้า session (ตัวเฝ้าไว้สำหรับ widget จริงที่ฝังในหน้า office-v10x เท่านั้น)
+    // ไม่ต้องเฝ้า session (ตัวเฝ้าไว้สำหรับ widget จริงที่ฝังในหน้าหลังบ้านเท่านั้น)
     if (ds.previewMount) {
       void mount({ dataset: ds })
       return

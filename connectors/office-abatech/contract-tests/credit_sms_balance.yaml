@@ -1,0 +1,22 @@
+# CheckCreditBalanceEnter → {code:0, msg:"สำเร็จ", payload:<float>} · error {code:1, msg:"API  เกิดข้อผิดพลาด", payload:0}
+tool: credit_sms_balance
+cases:
+  - name: มียอด
+    responses:
+      s: {body: {code: 0, msg: สำเร็จ, payload: 4820}}
+    expect:
+      status: ok
+      calls: {s: {path: /CheckCreditBalanceEnter/DEMO-SVC}}
+      fields: {SMS Credit คงเหลือ: "4,820"}
+      model_context: {is_zero: false}
+      link: "/DashboardOnce?service=REVNTy1TVkM="
+  - name: ศูนย์ (อาจยังไม่ตั้งค่า)
+    responses:
+      s: {body: {code: 0, msg: สำเร็จ, payload: 0}}
+    expect:
+      status: ok
+      model_context: {is_zero: true}
+  - name: provider ล่ม
+    responses:
+      s: {body: {code: 1, msg: "API  เกิดข้อผิดพลาด", payload: 0}}
+    expect: {status: error, error_code: host_error}

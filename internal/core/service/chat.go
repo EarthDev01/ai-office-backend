@@ -107,7 +107,11 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 	}
 	defer release()
 
-	now := s.now().In(s.loc)
+	loc := s.loc
+	if l, _ := conn.Location(); l != nil {
+		loc = l
+	}
+	now := s.now().In(loc)
 
 	// 5. ห้องแชท + ประวัติ
 	conv, history, isNew, err := s.openConversation(ctx, office, svc, t, req.ConversationID, text, st.HistoryTurns*2)

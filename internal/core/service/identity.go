@@ -8,15 +8,18 @@ import (
 	"sync"
 	"time"
 
+	"ai-office-backend/internal/core/connector"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 )
 
 // identityResolver อ่านจาก token ว่าเป็นใคร มีสิทธิ์อะไร เข้า service ไหนได้
 //
+// วิธีอ่านมาจาก page_auth.identity ของ connector ตาม kind ของ office (โค้ดนี้ไม่รู้จักรูป JWT ของหลังบ้านใด)
 // มี cache สั้น ๆ เพราะทุกข้อความในแชทจะต้อง resolve ใหม่
 type identityResolver struct {
-	ttl time.Duration
+	ttl   time.Duration
+	conns connector.Set
 
 	mu    sync.RWMutex
 	cache map[string]cachedCaller
@@ -28,15 +31,20 @@ type cachedCaller struct {
 }
 
 // รับเฉพาะ JWT จริงที่ officeลูกค้า ออกให้แอดมินตอน login — ไม่มีโหมด token ทดสอบ
-func NewIdentityResolver(ttl time.Duration) port.IdentityResolver {
+func NewIdentityResolver(ttl time.Duration, conns connector.Set) port.IdentityResolver {
 	if ttl <= 0 {
 		ttl = 60 * time.Second
 	}
-	return &identityResolver{ttl: ttl, cache: map[string]cachedCaller{}}
+	return &identityResolver{ttl: ttl, conns: conns, cache: map[string]cachedCaller{}}
 }
 
 func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cred domain.Credential) (domain.Caller, error) {
 	if cred.Token == "" {
+		return domain.Caller{}, domain.ErrNotAuthenticated
+	}
+	conn, ok := r.conns.For(office.Kind)
+	if !ok || conn.Host.PageAuth.Identity == nil || conn.Host.PageAuth.Identity.Source != "jwt" {
+		// office ตั้ง kind ที่ไม่มี connector / connector ไม่ได้อ่านตัวตนจาก JWT — ตรวจตัวตนไม่ได้
 		return domain.Caller{}, domain.ErrNotAuthenticated
 	}
 
@@ -45,11 +53,11 @@ func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cr
 		return c, nil
 	}
 
-	// ตัวตนจริงถูกเข้ารหัสอยู่ใน JWT อยู่แล้ว (claim "result" = EmployeeModel) จึง decode ตรง ๆ
+	// ตัวตนจริงถูกเข้ารหัสอยู่ใน JWT อยู่แล้ว จึง decode ตรง ๆ
 	// ไม่เรียก backoffice API เพราะอยู่หลัง Cloudflare + IP-whitelist ที่ server-to-server
-	// call ผ่านไม่ได้ · อีกทั้ง secret ของ JWT ผูกกับ IP (O9) จึง verify signature ฝั่ง
-	// server ไม่ได้ — เชื่อ token ที่ browser ล็อกอินมาแล้ว
-	caller, err := parseOfficeJWT(cred.Token)
+	// call ผ่านไม่ได้ · อีกทั้ง secret ของ JWT ผูกกับ UA/IP/Host ของหลังบ้าน จึง verify signature ฝั่ง
+	// server ไม่ได้ — เชื่อ token ที่ browser ล็อกอินมาแล้ว (ข้อมูลจริงยังคุมโดยหลังบ้านทุกครั้งที่ยิง)
+	caller, err := parseOfficeJWT(cred.Token, conn.Host.PageAuth.Identity)
 	if err != nil {
 		return domain.Caller{}, err
 	}
@@ -77,14 +85,11 @@ func (r *identityResolver) put(key string, caller domain.Caller) {
 	r.cache[key] = cachedCaller{caller: caller, until: time.Now().Add(r.ttl)}
 }
 
-// parseOfficeJWT อ่านตัวตนจาก payload ของ JWT หลังบ้านตรง ๆ
+// parseOfficeJWT อ่านตัวตนจาก payload ของ JWT หลังบ้านตรง ๆ ตาม spec ของ connector
 //
-// JWT = HS256 · payload = { exp, result: EmployeeModel } โดย result มี id/username/role
-// ที่มี permission กับ list_service ครบ
-//
-// ██ เราอ่านเฉพาะ payload · ไม่ verify signature เพราะ secret ผูกกับ UA+IP (O9)
-// ██ ที่ฝั่ง server คำนวณซ้ำไม่ได้ ทางที่ถูกระยะยาวคือ service token แยก (survey §2.4 B)
-func parseOfficeJWT(token string) (domain.Caller, error) {
+// ██ เราอ่านเฉพาะ payload · ไม่ verify signature (secret ของหลังบ้านคำนวณซ้ำฝั่ง server ไม่ได้/ไม่ใช่ความลับจริง)
+// ██ ทางที่ถูกระยะยาวคือ service token แยก (spec §7.3)
+func parseOfficeJWT(token string, spec *connector.IdentitySpec) (domain.Caller, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return domain.Caller{}, domain.ErrNotAuthenticated
@@ -96,56 +101,53 @@ func parseOfficeJWT(token string) (domain.Caller, error) {
 			return domain.Caller{}, domain.ErrNotAuthenticated
 		}
 	}
-
-	var claims struct {
-		Exp    int64 `json:"exp"`
-		Result struct {
-			ID       string `json:"id"`
-			Username string `json:"username"`
-			Role     struct {
-				Name       string `json:"name"`
-				Level      int32  `json:"level"`
-				Permission []struct {
-					Code string `json:"code"`
-				} `json:"permission"`
-				ListService []struct {
-					Service    string `json:"service"`
-					Permission bool   `json:"permission"`
-				} `json:"list_service"`
-			} `json:"role"`
-		} `json:"result"`
-	}
+	var claims map[string]any
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return domain.Caller{}, domain.ErrNotAuthenticated
 	}
-
-	res := claims.Result
-	if res.ID == "" && res.Username == "" {
+	user, ok := connector.GetPath(claims, spec.Root).(map[string]any)
+	if !ok {
 		return domain.Caller{}, domain.ErrNotAuthenticated
-	}
-	if claims.Exp > 0 && time.Now().Unix() >= claims.Exp {
-		return domain.Caller{}, domain.ErrSessionExpired
 	}
 
 	caller := domain.Caller{
-		AdminID:  res.ID,
-		Username: res.Username,
-		RoleName: res.Role.Name,
-		Level:    res.Role.Level,
+		AdminID:  claimStr(connector.GetPath(user, spec.ID)),
+		Username: claimStr(connector.GetPath(user, spec.Username)),
+		Level:    int32(claimNum(connector.GetPath(user, spec.Level))),
+	}
+	if caller.AdminID == "" && caller.Username == "" {
+		return domain.Caller{}, domain.ErrNotAuthenticated
+	}
+	if exp := claimNum(claims["exp"]); exp > 0 && float64(time.Now().Unix()) >= exp {
+		return domain.Caller{}, domain.ErrSessionExpired
 	}
 	if caller.AdminID == "" {
-		caller.AdminID = res.Username
+		caller.AdminID = caller.Username
 	}
-	for _, p := range res.Role.Permission {
-		if p.Code != "" {
-			caller.Permissions = append(caller.Permissions, p.Code)
-		}
+	// สิทธิ์ติดมากับ JWT ใบนี้เฉพาะเมื่อ connector ไม่ได้บอกให้ widget อ่านจากที่อื่น
+	if spec.PermissionsRequest == "" && spec.PermissionsToken == nil {
+		caller.Permissions = spec.Permissions.Strings(user)
 	}
-	// เอาเฉพาะ service ที่ Permission == true — ตัวที่ false คือมีชื่อแต่ไม่ให้เข้า
-	for _, s := range res.Role.ListService {
-		if s.Permission && s.Service != "" {
-			caller.Services = append(caller.Services, s.Service)
-		}
+
+	// เว็บที่เข้าได้ — ตัดสินตาม connector (ไม่ตั้ง services = ไม่จำกัด)
+	switch {
+	case spec.AllServices(caller.Level, claimStr(connector.GetPath(user, spec.Dept))):
+		caller.AllServices = true
+	case spec.Services != nil:
+		caller.Services = spec.Services.Strings(user)
+		caller.ServicesStrict = spec.ServicesEmpty == "none"
+	default:
+		caller.AllServices = true
 	}
 	return caller, nil
+}
+
+func claimStr(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func claimNum(v any) float64 {
+	f, _ := v.(float64)
+	return f
 }
