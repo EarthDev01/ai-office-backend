@@ -1,0 +1,60 @@
+# theme-tangtem → หน้าเว็บผู้เล่น platform_Tangtem (Nuxt 2) · API topupserie_mootui · โหมด browser (ไม่แก้ธีม/API นอกจากแปะ script)
+# widget ยิง API เดิมที่หน้าเว็บใช้อยู่ ด้วย token ของผู้เล่นที่ล็อกอินอยู่ — ผู้เล่นเห็นได้แค่ข้อมูลของตัวเอง (API ตรวจเอง)
+#
+# ที่มา (ตรวจกับโค้ดจริง platform_Tangtem main 99dad92 · topupserie_mootui · 06/10/2026):
+#   token   : @nuxtjs/auth-next ค่าเริ่มต้น (nuxt.config.js:182-293 ไม่ได้ปิด localStorage)
+#             → localStorage["auth._token.<strategy>"] = "Bearer <jwt>" · strategy ที่ใช้อยู่ = localStorage["auth.strategy"]
+#             (local = ล็อกอินปกติ · local2 = LINE · logintoken = ล็อกอินด้วย token) · ออกจากระบบ = "false"
+#             widget ตัดคำว่า Bearer ออกเอง (page.ts stripScheme)
+#   header  : plugins/axios.js:31-43 แนบ Authorization ตามค่าที่เก็บ (มี Bearer อยู่แล้ว)
+#   base    : plugins/axios.js:2-3 prod = location.origin + "/api" · dev = https://tangtem-24-dev.24plusv3.vip/api (ตั้งในคอนโซล)
+#   service : ไม่มีตัวเลือกเว็บในหน้า — 1 โดเมน = 1 แบรนด์ = 1 deployment ของ topupserie → source: office
+#   identity: topupserie service/authJWT.go:16-20 claims {username, session_id, exp, iss, iat} · ไม่มีชื่อแบรนด์ใน token
+#   envelope: service/mainService.go Resp → {status:{code,message}, message:{code,message}, data} · message.code 0 = สำเร็จ
+#             ยูสใน body ไม่ตรง token → HTTP 200 body ว่าง (Resp 401 ไม่เขียนอะไร) = schema_mismatch = "ดึงไม่ได้"
+#   ⚠️ ห้ามใช้ /is_login (เขียน session + คืนรหัสผ่าน) · /get/bonus /get/wallet /withdraw /set/* (เขียนข้อมูล)
+kind: theme-tangtem
+label: หน้าเว็บผู้เล่น Tangtem
+mode: browser
+audience: player
+page_auth:
+  token:
+    source: localStorage
+    key: "auth._token.{key_from}"
+    key_from: {source: localStorage, key: auth.strategy, default: local}
+    format: raw
+  service: {source: office}
+  host_api_base: "{origin}/api"
+  session_path: ""
+  auth_scheme: Bearer
+  identity:
+    source: jwt
+    root: ""
+    id: username
+    username: username
+host_api:
+  envelope: {code_field: message.code, ok_codes: [0], data_field: data, message_field: message.message}
+  timeout_ms: 10000
+timezone: Asia/Bangkok
+day_cutoff: "00:00"
+support_message: ติดต่อแอดมินของเว็บผ่านช่องทางติดต่อที่หน้าเว็บ
+# สีของแบรนด์: plugins/setRootStyle.js ตั้งบน :root จากค่า /prefix (themecolor1/2) — หัวเว็บไล่สีด้วยคู่นี้
+# ไม่ใช้ fontcolor1 เป็นสีตัวอักษร (บางแบรนด์ตั้งดำบนสีม่วง อ่านยาก) — widget เลือกขาว/เข้มตามความสว่างเอง
+page_colors: {accent: --theme-color-1, accent_2: --theme-color-2}
+facts:
+  - id: assistant_scope
+    title: ผู้ช่วยทำอะไรได้บ้าง
+    text: >-
+      ผู้ช่วยเป็นระบบอัตโนมัติ ดูข้อมูลบัญชีของคุณเองได้อย่างเดียว เช่น ยอดเครดิต รายการฝาก รายการถอน และถอนได้หรือยัง
+      แต่ฝาก ถอน รับโปรโมชั่น หรือแก้ข้อมูลแทนไม่ได้ ต้องทำเองที่หน้าเว็บ เรื่องที่ผู้ช่วยตอบไม่ได้ให้ติดต่อแอดมินของเว็บ
+    keywords: [ทำอะไรได้, เป็นใคร, คุยกับคน, ติดต่อแอดมิน, ช่วยอะไรได้]
+  - id: deposit_not_arrived
+    title: ฝากเงินแล้วยอดยังไม่เข้า
+    text: >-
+      ผู้ช่วยดูรายการฝากล่าสุดของคุณได้ ถ้ารายการขึ้นสถานะรอดำเนินการ ให้รอสักครู่ ถ้ารอนานผิดปกติหรือไม่มีรายการฝากเลย
+      ให้ติดต่อแอดมินของเว็บพร้อมสลิปการโอน
+    keywords: [ฝากไม่เข้า, ยอดไม่เข้า, เงินไม่เข้า, โอนแล้วไม่เข้า, เครดิตไม่เข้า]
+  - id: no_other_user
+    title: ข้อมูลของคนอื่น
+    text: ผู้ช่วยดูได้เฉพาะข้อมูลบัญชีของคุณที่ล็อกอินอยู่เท่านั้น ดูข้อมูลของสมาชิกคนอื่นไม่ได้
+    keywords: [บัญชีคนอื่น, ยูสคนอื่น, เพื่อน]

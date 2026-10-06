@@ -1,0 +1,3 @@
+# ผู้เล่นทุกคนที่ล็อกอินดูข้อมูลของตัวเองได้ — API ของ topupserie ตรวจว่า body ตรงกับ token เอง
+rules:
+  member: {logged_in: true, menu: เข้าสู่ระบบ, grant_hint: ล็อกอินก่อนแล้วถามใหม่}

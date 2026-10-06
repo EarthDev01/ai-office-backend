@@ -28,16 +28,20 @@ type Office struct {
 	// ใช้กับ office ที่หน้าเว็บกับ API อยู่คนละโดเมน (เช่น หน้า dev ที่ localhost) — ทุกโดเมนของ office นี้ยิงไปที่เดียวกัน
 	HostAPIBase string `json:"host_api_base" bson:"host_api_base,omitempty"`
 	// GroupID — กลุ่มที่ domain นี้อยู่ (หัว group ที่ตั้งชื่อเองในคอนโซล) · ว่าง = ยังไม่ได้จัดกลุ่ม
-	GroupID   string    `json:"group_id" bson:"group_id,omitempty"`
-	Enabled   bool      `json:"enabled"            bson:"enabled"`
-	IsHidden  bool      `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
-	Theme     string    `json:"theme"              bson:"theme"`
-	Accent    string    `json:"accent_color"       bson:"accent_color,omitempty"` // สีหลักของ widget #rrggbb · ว่าง = สีตั้งต้น
-	Placement Placement `json:"placement"          bson:"placement"`
-	Services  []Service `json:"services"           bson:"services"`
-	CreatedAt time.Time `json:"created_at"         bson:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"         bson:"updated_at"`
-	UpdatedBy string    `json:"updated_by"         bson:"updated_by"`
+	GroupID  string `json:"group_id" bson:"group_id,omitempty"`
+	Enabled  bool   `json:"enabled"            bson:"enabled"`
+	IsHidden bool   `json:"is_hidden"          bson:"is_hidden"` // โหลด widget แต่ไม่โชว์ปุ่มลอย ให้ office เรียกเปิดเอง
+	Theme    string `json:"theme"              bson:"theme"`
+	Accent   string `json:"accent_color"       bson:"accent_color,omitempty"` // สีหลักของ widget #rrggbb · ว่าง = สีตั้งต้น
+	// AccentColors = สีไล่ 2–4 สี (หัวแชท ปุ่มลอย ฟองข้อความผู้ใช้ ปุ่มส่ง) · ว่าง = ใช้ Accent สีเดียว (domain เก่า)
+	AccentColors []string `json:"accent_colors" bson:"accent_colors,omitempty"`
+	// ColorSource = ที่มาของสี: "" (เลือกเองในคอนโซล) | site (widget อ่านสีของแบรนด์จากหน้าเว็บตาม page_colors ของ connector)
+	ColorSource string    `json:"color_source" bson:"color_source,omitempty"`
+	Placement   Placement `json:"placement"          bson:"placement"`
+	Services    []Service `json:"services"           bson:"services"`
+	CreatedAt   time.Time `json:"created_at"         bson:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"         bson:"updated_at"`
+	UpdatedBy   string    `json:"updated_by"         bson:"updated_by"`
 }
 
 // Service คือแบรนด์/เว็บย่อยใต้ office หนึ่ง
@@ -53,6 +57,12 @@ type Service struct {
 	DisplayName string   `json:"display_name" bson:"display_name"`
 	Greeting    string   `json:"greeting"     bson:"greeting"`
 	AvatarURL   string   `json:"avatar_url"   bson:"avatar_url"`
+	// LauncherIcon = รูปปุ่มเปิดแชท (ฟองแชท 3D · widget ย้อมสีตามสีของ widget) asset:launchers/<ไฟล์> · ว่าง = รูปแรกในคลัง
+	LauncherIcon string `json:"launcher_icon" bson:"launcher_icon,omitempty"`
+	// Tagline = คำโปรยใต้ชื่อบนหัวแชท เช่น "ผู้ช่วยดูแลลูกค้า · ตอบทันที 24 ชม." · ว่าง = ไม่แสดง
+	Tagline string `json:"tagline" bson:"tagline,omitempty"`
+	// Background = พื้นหลังห้องแชท: "" (สีพื้นของธีม) | pattern:<id> | asset:<ไฟล์ในคลังรูป> | URL รูป (ตรวจด้วย ValidateLookValue)
+	Background string `json:"background" bson:"background,omitempty"`
 }
 
 func (o *Office) FindService(id string) (Service, bool) {

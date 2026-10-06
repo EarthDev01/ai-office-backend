@@ -19,9 +19,19 @@ export interface Bootstrap {
   avatar_url: string
   display_name: string
   greeting: string
+  /** รูปปุ่มเปิดแชท (ฟองแชท 3D) asset:launchers/<ไฟล์> — widget ย้อมสีตามสีของ widget · ว่าง = ไอคอนในตัว */
+  launcher_icon?: string
+  /** คำโปรยใต้ชื่อบนหัวแชท · ว่าง = ไม่แสดง */
+  tagline?: string
+  /** พื้นหลังห้องแชท: '' | pattern:<id> | asset:<ไฟล์> | URL รูป (server ตรวจแล้ว · widget ตรวจซ้ำก่อนใส่ CSS) */
+  background?: string
   theme: ThemeMode
   /** สีหลัก #rrggbb ที่ตั้งจากคอนโซล · ว่าง = สีตั้งต้นของ widget */
   accent_color?: string
+  /** สีไล่ 2–4 สี (เลือกเองในคอนโซล) · ว่าง = ใช้ accent_color สีเดียว (domain เก่า) */
+  accent_colors?: string[]
+  /** site = อ่านสีของแบรนด์จากหน้าเว็บ (ตาม page_colors ใน page-config) · ว่าง = ใช้สีที่ตั้งในคอนโซล */
+  color_source?: string
   placement: Placement
 }
 
@@ -30,8 +40,13 @@ export const PREVIEW_ALLOWED_FIELDS = [
   'avatar_url',
   'display_name',
   'greeting',
+  'tagline',
+  'launcher_icon',
+  'background',
   'theme',
   'accent_color',
+  'accent_colors',
+  'color_source',
   'placement',
   'service_label',
   'is_hidden',

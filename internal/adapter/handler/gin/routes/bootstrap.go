@@ -11,10 +11,12 @@ import (
 
 type BootstrapHandler struct {
 	svc port.OfficeService
+	// resolve แปลงค่าหน้าตาแบบ "random" เป็นรูปจริงก่อนส่ง (คลังรูปอยู่ที่ WidgetHandler) · nil = ไม่แปลง
+	resolve func(*domain.Bootstrap)
 }
 
-func NewBootstrapHandler(svc port.OfficeService) *BootstrapHandler {
-	return &BootstrapHandler{svc: svc}
+func NewBootstrapHandler(svc port.OfficeService, resolve func(*domain.Bootstrap)) *BootstrapHandler {
+	return &BootstrapHandler{svc: svc, resolve: resolve}
 }
 
 // Bootstrap — widget ถามว่า "ฉันควรโผล่ไหม และหน้าตาเป็นยังไง"
@@ -27,6 +29,9 @@ func (h *BootstrapHandler) Bootstrap(c *gin.Context, office domain.Office, calle
 
 	switch err {
 	case nil:
+		if h.resolve != nil {
+			h.resolve(&b)
+		}
 		ResData(c, http.StatusOK, "SUCCESS", "", b)
 	case domain.ErrServiceNotAllowed:
 		// บัญชีนี้ไม่มีสิทธิ์ใน service ที่หน้าเว็บอ้างมา — ไม่บอกว่ามี service นี้จริงหรือเปล่า

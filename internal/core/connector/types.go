@@ -34,14 +34,18 @@ type HostConfig struct {
 	Kind string `yaml:"kind"`
 	// Mode = วิธีดึงข้อมูล: "host" (ค่าเริ่มต้น · backend ยิง /api/ai/read ของ host ด้วยกุญแจดอกเล็ก)
 	// หรือ "browser" (widget ในหน้าแอดมินยิง API เดิมของหลังบ้านด้วย token ของแอดมินเอง — ไม่ต้องแก้หลังบ้าน)
-	Mode           string   `yaml:"mode"`
-	Label          string   `yaml:"label"`
+	Mode  string `yaml:"mode"`
+	Label string `yaml:"label"`
+	// Audience = ใครคุยกับผู้ช่วย: admin (ค่าเริ่มต้น · หลังบ้าน) | player (หน้าเว็บผู้เล่น) — ใช้เขียน system prompt
+	Audience       string   `yaml:"audience"`
 	PageAuth       PageAuth `yaml:"page_auth"`
 	HostAPI        HostAPI  `yaml:"host_api"`
 	Timezone       string   `yaml:"timezone"`
 	DayCutoff      string   `yaml:"day_cutoff"`
 	SupportMessage string   `yaml:"support_message"`
-	Facts          []Fact   `yaml:"facts"`
+	// PageColors = ตัวแปร CSS บนหน้าเว็บที่เก็บสีของแบรนด์ — office ที่ตั้ง "ใช้สีของเว็บ" ให้ widget อ่านสีจากตรงนี้
+	PageColors *PageColors `yaml:"page_colors"`
+	Facts      []Fact      `yaml:"facts"`
 }
 
 // HeaderSource = header ที่ widget แนบเพิ่ม (โหมด browser) เช่น header ที่หลังบ้านเดิมต้องการนอกจาก Authorization
@@ -119,18 +123,38 @@ type PageAuth struct {
 	Identity *IdentitySpec `yaml:"identity" json:"identity,omitempty"`
 }
 
+// TokenSource — key มี {key_from} ได้ = ชื่อช่องขึ้นกับค่าในอีกช่อง
+// (เช่น @nuxtjs/auth เก็บ token ที่ auth._token.<strategy> และชื่อ strategy ที่ใช้อยู่ที่ auth.strategy)
 type TokenSource struct {
-	Source          string `yaml:"source"           json:"source"` // localStorage | sessionStorage
-	Key             string `yaml:"key"              json:"key"`
-	Format          string `yaml:"format"           json:"format"` // raw | json-expiration
-	ValueField      string `yaml:"value_field"      json:"value_field,omitempty"`
-	ExpirationField string `yaml:"expiration_field" json:"expiration_field,omitempty"`
+	Source          string      `yaml:"source"           json:"source"` // localStorage | sessionStorage
+	Key             string      `yaml:"key"              json:"key"`
+	KeyFrom         *KeyFromRef `yaml:"key_from"         json:"key_from,omitempty"`
+	Format          string      `yaml:"format"           json:"format"` // raw | json-expiration
+	ValueField      string      `yaml:"value_field"      json:"value_field,omitempty"`
+	ExpirationField string      `yaml:"expiration_field" json:"expiration_field,omitempty"`
+}
+
+// ServiceSource — source: office = 1 โดเมนคือ 1 เว็บ (หน้าเว็บไม่มีตัวเลือกเว็บ เช่น หน้าผู้เล่น)
+// ใช้ service แรกที่เปิดอยู่ของ office · page-config ส่งค่าไปให้ใน Value · ไม่ต้องตั้ง key
+// PageColors = ชื่อตัวแปร CSS (เช่น --theme-color-1) บน :root ของหน้าเว็บ · on_accent ไม่ตั้ง = widget เลือกสีตัวอักษรเอง
+type PageColors struct {
+	Accent   string `yaml:"accent"    json:"accent"`
+	Accent2  string `yaml:"accent_2"  json:"accent_2,omitempty"`
+	OnAccent string `yaml:"on_accent" json:"on_accent,omitempty"`
+}
+
+// KeyFromRef = ช่องที่เก็บส่วนหนึ่งของชื่อช่อง token · ไม่มีค่า = ใช้ Default
+type KeyFromRef struct {
+	Source  string `yaml:"source"  json:"source"` // localStorage | sessionStorage
+	Key     string `yaml:"key"     json:"key"`
+	Default string `yaml:"default" json:"default,omitempty"`
 }
 
 type ServiceSource struct {
-	Source   string `yaml:"source"   json:"source"` // localStorage | sessionStorage | query
+	Source   string `yaml:"source"   json:"source"` // localStorage | sessionStorage | query | office
 	Key      string `yaml:"key"      json:"key"`
 	Encoding string `yaml:"encoding" json:"encoding"` // none | base64
+	Value    string `yaml:"-"        json:"value,omitempty"`
 }
 
 // HostAPI = วิธีที่ backend คุยกับ host แบบ server-to-server (base URL อยู่ใน DB ต่อ office)

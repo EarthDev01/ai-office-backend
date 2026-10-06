@@ -1,0 +1,22 @@
+# response ตาม topupserie controller/member.go Amount + service/mainService.go RespDynamicQuery
+tool: my_balance
+cases:
+  - name: มีเครดิต
+    username: somchai01
+    responses:
+      a: {body: {status: {code: 200, message: ok}, message: {code: 0, message: สำเร็จ}, data: {amount: 1520.5}}}
+    expect:
+      status: ok
+      calls:
+        a: {path: /amount, body: {username: somchai01}}
+      fields: {เครดิตคงเหลือ: "1,520.50 บาท"}
+      model_context: {has_credit: true}
+      link: /
+  - name: ระบบเกมไม่ตอบ (HTTP 500 cannotCheckAmount)
+    responses:
+      a: {status: 500, body: {status: {code: 500, message: server error}, message: {code: 1, message: ไม่สามารถตรวจสอบยอดเงินได้}, data: {amount: 0}}}
+    expect: {status: error}
+  - name: token หมดอายุ (middleware 401)
+    responses:
+      a: {status: 401, body: {status: {code: 401, message: unauthorized}, message: {code: 1, message: unauthorized}, data: null}}
+    expect: {status: error}

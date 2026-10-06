@@ -3,7 +3,7 @@ import type { Bootstrap, Card } from './types'
 export interface UI {
   launcher: HTMLButtonElement
   panel: HTMLDivElement
-  head: { avatar: HTMLDivElement; name: HTMLDivElement; site: HTMLDivElement }
+  head: { avatar: HTMLDivElement; name: HTMLDivElement; tag: HTMLDivElement; site: HTMLDivElement }
   log: HTMLDivElement
   input: HTMLTextAreaElement
   send: HTMLButtonElement
@@ -27,7 +27,8 @@ export function buildUI(root: ShadowRoot): UI {
   const avatar = el('div', 'avatar') as HTMLDivElement
   const nameWrap = el('div', 'namewrap')
   const name = el('div', 'name') as HTMLDivElement
-  nameWrap.appendChild(name)
+  const tag = el('div', 'tag') as HTMLDivElement
+  nameWrap.append(name, tag)
   const site = el('div', 'site') as HTMLDivElement
   site.title = 'เว็บที่กำลังคุยอยู่'
   const close = el('button', 'x') as HTMLButtonElement
@@ -54,7 +55,7 @@ export function buildUI(root: ShadowRoot): UI {
   panel.append(head, log, foot)
   root.append(launcher, panel)
 
-  const ui = { launcher, panel, head: { avatar, name, site }, log, input, send }
+  const ui = { launcher, panel, head: { avatar, name, tag, site }, log, input, send }
   close.addEventListener('click', () => setOpen(ui, false))
   return ui
 }
@@ -91,11 +92,23 @@ const CHAT_SPARK = [
 ]
 const CLOSE = [{ d: 'M7 7l10 10M17 7L7 17' }]
 
-function launcherFace(ui: UI, avatarURL: string) {
+/**
+ * ปุ่มเปิดแชท = ฟองแชท 3D ลอย (รูปจากคลัง) ย้อมสีด้วยสีไล่ของ widget — แสง/เงาของรูปยังอยู่ จุดขาวยังขาว
+ * (ชั้นสีใช้ mix-blend-mode: color ตัดตามรูปด้วย mask) · ไม่มีรูป = ไอคอนในตัวบนวงกลมสีหลักแบบเดิม
+ */
+function launcherFace(ui: UI, iconURL: string) {
   ui.launcher.textContent = ''
   const face = el('span', 'face')
-  if (avatarURL) face.appendChild(img(avatarURL))
-  else face.appendChild(icon('ico', CHAT_SPARK))
+  if (iconURL) {
+    ui.launcher.dataset.icon = 'true'
+    const wrap = el('span', 'licon')
+    wrap.style.setProperty('--licon', `url("${iconURL}")`)
+    wrap.append(img(iconURL), el('span', 'tint'))
+    face.appendChild(wrap)
+  } else {
+    delete ui.launcher.dataset.icon
+    face.appendChild(icon('ico', CHAT_SPARK))
+  }
   ui.launcher.append(face, icon('ico close', CLOSE))
 }
 
@@ -254,15 +267,59 @@ export function applyPlacement(ui: UI, b: Bootstrap) {
   }
 }
 
-export function applyAppearance(ui: UI, b: Bootstrap) {
+/**
+ * หน้าตาตามที่ตั้งในคอนโซล · assetBase = ที่อยู่คลังรูปของ ai-office-backend (สำหรับค่า asset:<ไฟล์>)
+ * showSite = โชว์ป้ายรหัสเว็บบนหัว (หลังบ้านต้องรู้ว่าคุยเรื่องเว็บไหน · หน้าเว็บผู้เล่นไม่ต้อง)
+ */
+export function applyAppearance(ui: UI, b: Bootstrap, assetBase = '', showSite = true) {
   ui.head.name.textContent = b.display_name || 'ผู้ช่วยหลังบ้าน'
+  ui.head.tag.textContent = b.tagline ?? ''
   // ป้ายชื่อ service ค้างบนหัวตลอด — แอดมินต้องรู้ตลอดว่ากำลังคุยเรื่อง service ไหน
-  ui.head.site.textContent = b.service_label || b.service_id || ''
+  ui.head.site.textContent = showSite ? b.service_label || b.service_id || '' : ''
+  ui.head.site.style.display = ui.head.site.textContent ? '' : 'none'
 
+  const avatar = lookURL(b.avatar_url, assetBase)
   ui.head.avatar.textContent = ''
-  if (b.avatar_url) ui.head.avatar.appendChild(img(b.avatar_url))
+  if (avatar) ui.head.avatar.appendChild(img(avatar))
   else ui.head.avatar.appendChild(icon('ico', CHAT_SPARK))
-  launcherFace(ui, b.avatar_url)
+  // ปุ่มเปิดแชทเป็นฟองแชทเสมอ (รูปผู้ช่วยอยู่บนหัวแชท)
+  launcherFace(ui, lookURL(b.launcher_icon, assetBase))
+
+  // หัวแชทแบบไล่สี + รูปผู้ช่วยใหญ่ — เมื่อตั้งรูป/คำโปรย/พื้นหลังไว้ (ไม่ตั้งอะไร = หน้าตาเดิม)
+  if (avatar || b.tagline || b.background) ui.panel.dataset.rich = 'true'
+  else delete ui.panel.dataset.rich
+  applyBackground(ui.log, b.background ?? '', assetBase)
+  // พื้นหลังเป็นรูป (รูปในคลังเป็นโทนเข้ม) → ช่องพิมพ์และฟองของ AI เป็นกระจกเข้มให้กลืนกับรูป
+  if (ui.log.dataset.bg === 'image') ui.panel.dataset.bgimg = 'true'
+  else delete ui.panel.dataset.bgimg
+}
+
+// ค่าที่ลงไปเป็น CSS url(...) — ห้ามมีเครื่องหมายคำพูด วงเล็บ ช่องว่าง (server ตรวจแล้ว ตรวจซ้ำกันไว้)
+const SAFE_URL = /^(https:\/\/|http:\/\/localhost(:\d+)?\/)[A-Za-z0-9._~:/?#[\]@!$&*+,;=%-]+$/
+const PATTERNS = new Set(['dots', 'grid', 'diagonal', 'glow'])
+
+/** asset:<ไฟล์> → URL ในคลังรูป · URL ตรง ๆ ต้องปลอดภัย · อย่างอื่น = '' */
+export function lookURL(v: string | undefined, assetBase: string): string {
+  if (!v) return ''
+  if (v.startsWith('asset:')) {
+    const name = v.slice(6)
+    return /^[a-z0-9_-]+\/[A-Za-z0-9._-]+$/.test(name) ? `${assetBase}/widget/v1/assets/${name}` : ''
+  }
+  return SAFE_URL.test(v) ? v : ''
+}
+
+function applyBackground(log: HTMLElement, v: string, assetBase: string) {
+  log.style.removeProperty('--log-img')
+  delete log.dataset.bg
+  if (v.startsWith('pattern:')) {
+    const p = v.slice(8)
+    if (PATTERNS.has(p)) log.dataset.bg = p
+    return
+  }
+  const url = lookURL(v, assetBase)
+  if (!url) return
+  log.dataset.bg = 'image'
+  log.style.setProperty('--log-img', `url("${url}")`)
 }
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -271,24 +328,57 @@ const HEX = /^#[0-9a-f]{6}$/i
  * สีหลักจากคอนโซล — ทับ --accent ของธีมทั้งสว่าง/มืด · สีพื้นอ่อนและสีตัวอักษรบนสีหลักคำนวณให้เอง
  * (สีไม่ถูกรูปแบบ = ใช้สีตั้งต้น — ค่านี้เข้า style จึงรับเฉพาะ #rrggbb)
  */
-export function applyAccent(host: HTMLElement, color: string | undefined, theme: 'light' | 'dark') {
-  const props = ['--accent', '--accent-soft', '--on-accent']
-  if (!color || !HEX.test(color)) {
+export function applyAccent(host: HTMLElement, colors: string | string[] | undefined, theme: 'light' | 'dark', onAccent = '') {
+  const props = ['--accent', '--accent-stops', '--accent-soft', '--on-accent']
+  const stops = (Array.isArray(colors) ? colors : colors ? [colors] : []).filter((c) => HEX.test(c)).slice(0, 4)
+  if (!stops.length) {
     for (const p of props) host.style.removeProperty(p)
     return
   }
-  const rgb = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+  const color = stops[0]
+  if (stops.length === 1) stops.push(color)
+  // ตัวอักษรบนสีไล่ต้องอ่านออกทุกช่วง — คิดความสว่างจากสีเฉลี่ยของทุกสี
+  const rgbs = stops.map((c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)))
+  const rgb = rgbs[0]
+  const mid = [0, 1, 2].map((k) => rgbs.reduce((a, c) => a + c[k], 0) / rgbs.length)
   // พื้นอ่อน = ผสมสีหลักกับพื้นของธีม (สว่าง: ขาว · มืด: สีพื้นแชท)
   const base = theme === 'dark' ? [0x15, 0x21, 0x23] : [0xff, 0xff, 0xff]
   const mix = (w: number) => '#' + rgb.map((c, i) => Math.round(c * w + base[i] * (1 - w)).toString(16).padStart(2, '0')).join('')
   // ความสว่างตาม WCAG — สีหลักสว่างใช้ตัวอักษรเข้ม ไม่งั้นใช้ขาว
-  const lum = rgb
+  const lum = mid
     .map((c) => c / 255)
     .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
     .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0)
   host.style.setProperty('--accent', color)
+  host.style.setProperty('--accent-stops', stops.join(', '))
   host.style.setProperty('--accent-soft', mix(theme === 'dark' ? 0.25 : 0.16))
-  host.style.setProperty('--on-accent', lum > 0.45 ? '#13282B' : '#ffffff')
+  host.style.setProperty('--on-accent', HEX.test(onAccent) ? onAccent : lum > 0.45 ? '#13282B' : '#ffffff')
+}
+
+/**
+ * สีของแบรนด์จากหน้าเว็บ (ตัวแปร CSS บน :root ที่ธีมตั้งจากค่าของแบรนด์) → #rrggbb
+ * ค่าที่อ่านได้ผ่านการแปลงเป็นสีจริงก่อน (ให้เบราว์เซอร์ตีความ) — ค่าแปลก ๆ จะไม่หลุดเข้า style
+ */
+export function readSiteColors(vars: { accent: string; accent_2?: string; on_accent?: string } | undefined) {
+  if (!vars) return null
+  const root = getComputedStyle(document.documentElement)
+  const probe = document.createElement('span')
+  probe.style.display = 'none'
+  document.body.appendChild(probe)
+  const toHex = (name?: string): string => {
+    if (!name || !/^--[A-Za-z0-9_-]+$/.test(name)) return ''
+    const raw = root.getPropertyValue(name).trim()
+    if (!raw) return ''
+    probe.style.color = ''
+    probe.style.color = raw
+    if (!probe.style.color) return ''
+    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(getComputedStyle(probe).color)
+    if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return ''
+    return '#' + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')
+  }
+  const out = { accent: toHex(vars.accent), accent2: toHex(vars.accent_2), on: toHex(vars.on_accent) }
+  probe.remove()
+  return out.accent ? out : null
 }
 
 export function scroll(log: HTMLElement) {

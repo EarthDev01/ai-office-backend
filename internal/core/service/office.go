@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
@@ -178,6 +179,32 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		}
 		o.Accent = c
 	}
+	if p.AccentColors != nil {
+		// เลือกเอง = ไล่สีเท่านั้น: 2–4 สี · ว่าง = ไม่ตั้ง (ใช้สีของเว็บ / สีตั้งต้น)
+		in := *p.AccentColors
+		if len(in) == 1 || len(in) > 4 {
+			return domain.Office{}, fmt.Errorf("สีไล่ต้องมี 2–4 สี")
+		}
+		out := make([]string, 0, len(in))
+		for _, c := range in {
+			c = strings.ToLower(strings.TrimSpace(c))
+			if !hexColorPattern.MatchString(c) {
+				return domain.Office{}, fmt.Errorf("สีต้องเป็นรหัส #rrggbb เช่น #2563eb")
+			}
+			out = append(out, c)
+		}
+		o.AccentColors = out
+	}
+	if p.ColorSource != nil {
+		switch *p.ColorSource {
+		case "", "custom":
+			o.ColorSource = ""
+		case "site":
+			o.ColorSource = "site"
+		default:
+			return domain.Office{}, fmt.Errorf("ที่มาของสีต้องเป็น custom หรือ site")
+		}
+	}
 	if p.Placement != nil {
 		if !allowedPositions[p.Placement.Position] {
 			return domain.Office{}, fmt.Errorf("position ต้องเป็น bottom-right หรือ bottom-left เท่านั้น")
@@ -289,7 +316,35 @@ func (s *officeService) UpdateService(ctx context.Context, officeID, serviceID s
 		svc.Greeting = *p.Greeting
 	}
 	if p.AvatarURL != nil {
-		svc.AvatarURL = *p.AvatarURL
+		v := strings.TrimSpace(*p.AvatarURL)
+		if err := domain.ValidateLookValue(v, false); err != nil {
+			return domain.Office{}, fmt.Errorf("รูปผู้ช่วย: %v", err)
+		}
+		svc.AvatarURL = v
+	}
+	if p.Tagline != nil {
+		v := strings.TrimSpace(*p.Tagline)
+		if utf8.RuneCountInString(v) > 80 {
+			return domain.Office{}, fmt.Errorf("คำโปรยยาวเกิน 80 ตัวอักษร")
+		}
+		svc.Tagline = v
+	}
+	if p.LauncherIcon != nil {
+		v := strings.TrimSpace(*p.LauncherIcon)
+		if v != "" && !strings.HasPrefix(v, "asset:launchers/") {
+			return domain.Office{}, fmt.Errorf("รูปปุ่มเปิดแชทต้องเลือกจากคลังรูป")
+		}
+		if err := domain.ValidateLookValue(v, false); err != nil {
+			return domain.Office{}, fmt.Errorf("รูปปุ่มเปิดแชท: %v", err)
+		}
+		svc.LauncherIcon = v
+	}
+	if p.Background != nil {
+		v := strings.TrimSpace(*p.Background)
+		if err := domain.ValidateLookValue(v, true); err != nil {
+			return domain.Office{}, fmt.Errorf("พื้นหลัง: %v", err)
+		}
+		svc.Background = v
 	}
 	after := *svc
 	saved, err := s.touchSave(ctx, o, actor)
@@ -455,8 +510,13 @@ func (s *officeService) Bootstrap(ctx context.Context, o domain.Office, serviceI
 		AvatarURL:    svc.AvatarURL,
 		DisplayName:  svc.DisplayName,
 		Greeting:     svc.Greeting,
+		Tagline:      svc.Tagline,
+		LauncherIcon: svc.LauncherIcon,
+		Background:   svc.Background,
 		Theme:        o.Theme,
 		AccentColor:  o.Accent,
+		AccentColors: o.AccentColors,
+		ColorSource:  o.ColorSource,
 		Placement:    o.Placement,
 	}, nil
 }
