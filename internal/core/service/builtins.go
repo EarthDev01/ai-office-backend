@@ -31,6 +31,7 @@ var refusalCategories = map[string]bool{
 }
 
 func builtinTools(conn *connector.Connector) []port.ToolDef {
+	place := placeName(conn)
 	tables := make([]any, 0, len(conn.Statuses.Tables))
 	names := make([]string, 0, len(conn.Statuses.Tables))
 	for k := range conn.Statuses.Tables {
@@ -54,14 +55,14 @@ func builtinTools(conn *connector.Connector) []port.ToolDef {
 		},
 		{
 			Name:        "lookup_menu",
-			Description: "ค้นเมนู/แท็บ/วิธีทำในหลังบ้านนี้ (ชื่อเมนูจริงของหลังบ้านนี้) — ใช้ตอบว่าเมนูหรือรายงานอยู่ตรงไหน และวิธีทำรายการที่ผู้ใช้ต้องกดเอง",
+			Description: "ค้นเมนู/แท็บ/วิธีทำใน" + place + " (ชื่อเมนูจริงของ" + place + ") — ใช้ตอบว่าเมนูหรือปุ่มอยู่ตรงไหน และวิธีทำรายการที่ผู้ใช้ต้องกดเอง",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 				"query": map[string]any{"type": "string", "description": "คำค้นสั้น ๆ เช่น เพิ่มเครดิต, รายการถอน, จัดการโปรโมชั่น", "maxLength": 80},
 			}, "required": []string{"query"}},
 		},
 		{
 			Name:        "explain_status",
-			Description: "อธิบายความหมายของสถานะรายการ (ฝาก/ถอน ฯลฯ) และสิ่งที่ต้องทำต่อ จากตารางสถานะของหลังบ้านนี้",
+			Description: "อธิบายความหมายของสถานะรายการ (ฝาก/ถอน ฯลฯ) และสิ่งที่ต้องทำต่อ จากตารางสถานะของ" + place,
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 				"table": map[string]any{"type": "string", "enum": tables, "description": "ชนิดของรายการ"},
 				"code":  map[string]any{"type": "integer", "description": "รหัสสถานะ ถ้าผู้ใช้บอกเป็นตัวเลข"},
@@ -70,12 +71,20 @@ func builtinTools(conn *connector.Connector) []port.ToolDef {
 		},
 		{
 			Name:        "host_facts",
-			Description: "ข้อเท็จจริงคงที่ของหลังบ้านนี้ เช่น มีปุ่มสถานการณ์ฉุกเฉินหรือไม่ และทำอะไร",
+			Description: "ข้อเท็จจริงคงที่ของ" + place + " เช่น ผู้ช่วยทำอะไรได้บ้าง และเรื่องที่ระบบทำให้ไม่ได้",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 				"topic": map[string]any{"type": "string", "description": "หัวข้อ เช่น ปุ่มฉุกเฉิน", "maxLength": 80},
 			}, "required": []string{"topic"}},
 		},
 	}
+}
+
+// placeName — คำเรียกที่ที่ผู้ใช้อยู่: หลังบ้าน (แอดมิน) / หน้าเว็บ (ผู้เล่น) — ผู้เล่นต้องไม่ถูกชวนถามเรื่องหลังบ้าน
+func placeName(conn *connector.Connector) string {
+	if conn.Host.Audience == "player" {
+		return "เว็บนี้"
+	}
+	return "หลังบ้านนี้"
 }
 
 func normSearch(s string) string {

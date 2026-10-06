@@ -272,7 +272,8 @@ export function applyPlacement(ui: UI, b: Bootstrap) {
  * showSite = โชว์ป้ายรหัสเว็บบนหัว (หลังบ้านต้องรู้ว่าคุยเรื่องเว็บไหน · หน้าเว็บผู้เล่นไม่ต้อง)
  */
 export function applyAppearance(ui: UI, b: Bootstrap, assetBase = '', showSite = true) {
-  ui.head.name.textContent = b.display_name || 'ผู้ช่วยหลังบ้าน'
+  // หน้าเว็บผู้เล่น (ไม่โชว์ป้ายเว็บ) ไม่เรียกตัวเองว่า "ผู้ช่วยหลังบ้าน"
+  ui.head.name.textContent = b.display_name || (showSite ? 'ผู้ช่วยหลังบ้าน' : 'ผู้ช่วย')
   ui.head.tag.textContent = b.tagline ?? ''
   // ป้ายชื่อ service ค้างบนหัวตลอด — แอดมินต้องรู้ตลอดว่ากำลังคุยเรื่อง service ไหน
   ui.head.site.textContent = showSite ? b.service_label || b.service_id || '' : ''
