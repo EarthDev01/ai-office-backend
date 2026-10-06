@@ -44,8 +44,10 @@ type ChatRepository interface {
 }
 
 // ConversationFilter — ค่าว่าง = ไม่กรอง · Text ค้นในหัวข้อห้อง · IDs = จำกัดเฉพาะห้องเหล่านี้ (nil = ไม่จำกัด)
+// AdminID + Session ใช้กับประวัติฝั่ง widget (ตรงตัวทั้งคู่ ไม่เทียบกับ username)
 type ConversationFilter struct {
 	OfficeID, ServiceID, User, Text string
+	AdminID, Session                string
 	From, To                        *time.Time // กรองเวลาเปิดห้อง
 	IDs                             []string
 	Limit, Offset                   int

@@ -92,7 +92,17 @@ func openSession(t *testing.T, base string, perms ...string) string {
 // runChat ส่งคำถามแล้วเล่นบทเป็น widget: เจอ fetch → ตอบด้วย hostBody ผ่าน relay
 func runChat(t *testing.T, base, ticket, text string, hostBody func(cmd service.FetchCommand) string) []sseEvent {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"text": text})
+	return runChatIn(t, base, ticket, "", text, hostBody)
+}
+
+// runChatIn — conversationID ว่าง = ห้องใหม่
+func runChatIn(t *testing.T, base, ticket, conversationID, text string, hostBody func(cmd service.FetchCommand) string) []sseEvent {
+	t.Helper()
+	req := map[string]string{"text": text}
+	if conversationID != "" {
+		req["conversation_id"] = conversationID
+	}
+	body, _ := json.Marshal(req)
 	res := post(t, base+"/api/ai/widget/service/K11S/chat", ticket, string(body))
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
@@ -276,5 +286,170 @@ func TestChat_LookupMenu_ReferenceCardNoFetch(t *testing.T) {
 	}
 	if len(find(events, "done")) != 1 {
 		t.Fatalf("ต้องจบด้วย done: %v", events)
+	}
+}
+
+// scriptedLLM — รอบเลือก tool ตอบตาม rounds ทีละรอบ (หมดแล้ว = ไม่เรียก tool) · รอบ stream ตอบ reply
+type scriptedLLM struct {
+	mu       sync.Mutex
+	rounds   [][]port.ToolUse
+	calls    int
+	reply    string
+	streamed port.LLMRequest
+}
+
+func (f *scriptedLLM) Complete(_ context.Context, _ port.LLMRequest) (port.LLMResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.calls
+	f.calls++
+	if i < len(f.rounds) {
+		return port.LLMResponse{ToolUses: f.rounds[i], Usage: port.LLMUsage{InputTokens: 10, OutputTokens: 5}}, nil
+	}
+	return port.LLMResponse{Text: "พร้อม", Usage: port.LLMUsage{InputTokens: 10, OutputTokens: 1}}, nil
+}
+
+func (f *scriptedLLM) Stream(_ context.Context, req port.LLMRequest, onDelta func(string) error) (port.LLMUsage, error) {
+	f.mu.Lock()
+	f.streamed = req
+	f.mu.Unlock()
+	return port.LLMUsage{InputTokens: 20, OutputTokens: 7}, onDelta(f.reply)
+}
+
+func lookup(id, user string) port.ToolUse {
+	return port.ToolUse{ID: id, Name: "member_lookup", Input: map[string]any{"username": user}}
+}
+
+func TestChat_FollowUpRound_FetchesMoreThenStreams(t *testing.T) {
+	llm := &scriptedLLM{
+		rounds: [][]port.ToolUse{{lookup("t1", "somchai01")}, {lookup("t2", "somchai02")}},
+		reply:  "ดูในการ์ดครับ",
+	}
+	srv := chatServer(t, llm)
+	ticket := openSession(t, srv.URL, "MEMBER_INFO")
+
+	var searched []string
+	events := runChat(t, srv.URL, ticket, "เทียบยูส somchai01 กับ somchai02", func(cmd service.FetchCommand) string {
+		searched = append(searched, cmd.Query["search"])
+		return memberBody
+	})
+	if strings.Join(searched, ",") != "somchai01,somchai02" {
+		t.Fatalf("ต้องดึง 2 รอบตามลำดับ: %v", searched)
+	}
+	if n := len(find(events, "card")); n != 2 {
+		t.Fatalf("ต้องได้การ์ด 2 ใบ: %d", n)
+	}
+	// รอบเลือก 1 + ถามดึงเพิ่ม 2 (ได้ tool ใหม่ · ตอบพร้อม)
+	if llm.calls != 3 {
+		t.Fatalf("เรียกรอบเลือก tool %d ครั้ง", llm.calls)
+	}
+	// รอบ stream ต้องเห็นผล tool ของทั้ง 2 รอบ และห้ามเห็นคำว่า "พร้อม" ที่ทิ้งไปแล้ว
+	var results int
+	for _, m := range llm.streamed.Messages {
+		results += len(m.ToolResults)
+		if m.Role == "assistant" && strings.Contains(m.Text, "พร้อม") {
+			t.Fatalf("ข้อความรอบถามดึงเพิ่มหลุดเข้าบทสนทนา: %+v", m)
+		}
+	}
+	if results != 2 || llm.streamed.ToolChoice != port.ToolChoiceNone {
+		t.Fatalf("รอบ stream เห็นผล tool %d ชิ้น · tool_choice=%s", results, llm.streamed.ToolChoice)
+	}
+	if len(find(events, "done")) != 1 {
+		t.Fatalf("ต้องจบด้วย done: %v", events)
+	}
+}
+
+func TestChat_FollowUpRound_StopsAtMaxRounds(t *testing.T) {
+	llm := &scriptedLLM{rounds: [][]port.ToolUse{
+		{lookup("t1", "a1")}, {lookup("t2", "a2")}, {lookup("t3", "a3")}, {lookup("t4", "a4")},
+	}, reply: "ดูในการ์ดครับ"}
+	srv := chatServer(t, llm)
+	ticket := openSession(t, srv.URL, "MEMBER_INFO")
+
+	fetches := 0
+	events := runChat(t, srv.URL, ticket, "ดูยูสหลายคน", func(service.FetchCommand) string {
+		fetches++
+		return memberBody
+	})
+	if fetches != 3 {
+		t.Fatalf("ดึงได้สูงสุด 3 รอบ แต่ดึง %d", fetches)
+	}
+	if llm.calls != 3 {
+		t.Fatalf("ครบ 3 รอบแล้วต้องไม่ถามดึงเพิ่มอีก: %d", llm.calls)
+	}
+	if len(find(events, "done")) != 1 {
+		t.Fatalf("ต้องจบด้วย done: %v", events)
+	}
+}
+
+// slowLLM — รอบเลือก tool ช้ากว่า 2 วิ (จำลองโมเดลคิดนาน)
+type slowLLM struct{ fakeLLM }
+
+func (f *slowLLM) Complete(ctx context.Context, req port.LLMRequest) (port.LLMResponse, error) {
+	select {
+	case <-time.After(2500 * time.Millisecond):
+	case <-ctx.Done():
+	}
+	return f.fakeLLM.Complete(ctx, req)
+}
+
+// AC-2 ฝั่งโค้ดเรา: สถานะ "กำลังคิด" ต้องถึง widget ทันที ไม่รอโมเดล · ส่วน ≤ 2 วิกับโมเดลจริงวัดจาก first_token_ms ตอนทดสอบบนเว็บจริง
+func TestChat_StatusBeforeModel(t *testing.T) {
+	srv := chatServer(t, &slowLLM{fakeLLM{reply: []string{"สวัสดีครับ"}}})
+	ticket := openSession(t, srv.URL)
+
+	start := time.Now()
+	res := post(t, srv.URL+"/api/ai/widget/service/K11S/chat", ticket, `{"text":"สวัสดี"}`)
+	defer res.Body.Close()
+	sc := bufio.NewScanner(res.Body)
+	for sc.Scan() {
+		if line := sc.Text(); strings.HasPrefix(line, "data: ") && strings.Contains(line, `"thinking"`) {
+			if d := time.Since(start); d > 2*time.Second {
+				t.Fatalf("สถานะกำลังคิดมาช้า %v", d)
+			}
+			return
+		}
+	}
+	t.Fatal("ไม่ได้รับสถานะกำลังคิด")
+}
+
+func tokenText(events []sseEvent) string {
+	var b strings.Builder
+	for _, e := range find(events, "token") {
+		var tok struct{ Text string }
+		_ = json.Unmarshal(e.data, &tok)
+		b.WriteString(tok.Text)
+	}
+	return b.String()
+}
+
+// B-13 ครบวงจร: ขอคุยกับคน → ได้ช่องทาง support (ต่อท้ายให้แม้ LLM ลืม) · ขอซ้ำในห้องเดิม → หยุดวน ไม่เรียก LLM
+func TestChat_HumanHandoff_SupportThenStopLoop(t *testing.T) {
+	llm := &scriptedLLM{
+		rounds: [][]port.ToolUse{{{ID: "a1", Name: "answer_directly", Input: map[string]any{"category": "human_handoff"}}}},
+		reply:  "ผมเป็นผู้ช่วยอัตโนมัติครับ",
+	}
+	srv := chatServer(t, llm)
+	ticket := openSession(t, srv.URL)
+	noFetch := func(service.FetchCommand) string { t.Fatal("ต้องไม่ยิงหลังบ้าน"); return "" }
+
+	first := runChatIn(t, srv.URL, ticket, "", "ขอคุยกับคน", noFetch)
+	var st struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	_ = json.Unmarshal(find(first, "status")[0].data, &st)
+	calls := llm.calls
+
+	second := runChatIn(t, srv.URL, ticket, st.ConversationID, "ขอคุยกับคนครับ", noFetch)
+	if llm.calls != calls {
+		t.Fatalf("ขอซ้ำต้องไม่เรียก LLM อีก (เรียกเพิ่ม %d ครั้ง)", llm.calls-calls)
+	}
+	again := tokenText(second)
+	support := strings.TrimSpace(strings.TrimPrefix(again, "เรื่องนี้ผู้ช่วยยังช่วยไม่ได้ครับ"))
+	if support == "" || support == again || len(find(second, "done")) != 1 {
+		t.Fatalf("ขอซ้ำต้องได้ข้อความหยุดวน + ช่องทาง support แล้วจบ: %q", again)
+	}
+	if got := tokenText(first); !strings.Contains(got, "ผู้ช่วยอัตโนมัติ") || !strings.HasSuffix(got, support) {
+		t.Fatalf("ครั้งแรกต้องมีคำตอบ LLM แล้วต่อท้ายด้วยช่องทาง support: %q", got)
 	}
 }

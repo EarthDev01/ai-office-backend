@@ -2,7 +2,7 @@ unknown_message: สถานะนี้ยังไม่มีคำอธิ
 tables:
   withdraw:
     label: สถานะรายการถอน
-    source: office-v10x src/services/helper-function.ts withdrawStatus · ปุ่มจาก src/components (ChangeStatus.vue) ตาม appendix-v10x §6.1
+    source: office-v10x src/services/helper-function.ts withdrawStatus · ปุ่มจาก src/components (ChangeStatus.vue)
     questions: [BQ-29, BQ-03, BQ-04, BQ-06]
     entries:
       - {code: 1, label: สำเร็จ, aliases: [โอนแล้ว], meaning: โอนเงินให้สมาชิกเรียบร้อยแล้ว, next_action: ไม่ต้องทำอะไรต่อ, final: true}

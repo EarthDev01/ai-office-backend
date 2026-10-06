@@ -1,0 +1,21 @@
+# สำหรับเครื่อง dev เท่านั้น: MongoDB ให้ ai-office-backend (ระบบไม่ใช้ Redis)
+#   docker compose -f docker-compose.dev.yml up -d
+#   STORE_DRIVER=mongo DB_URI=mongodb://localhost:27017 go run ./_cmd
+#
+# ลองทั้ง image แบบ production (ต้องมี .env ที่ตั้ง secret ครบ):
+#   docker compose -f docker-compose.dev.yml --profile app up --build
+services:
+  mongo:
+    image: mongo:7
+    ports: ["127.0.0.1:27017:27017"]
+    volumes: [ai-office-mongo:/data/db]
+  app:
+    profiles: [app]
+    build: .
+    env_file: .env
+    environment:
+      DB_URI: mongodb://mongo:27017
+    ports: ["127.0.0.1:6767:6767"]
+    depends_on: [mongo]
+volumes:
+  ai-office-mongo: {}

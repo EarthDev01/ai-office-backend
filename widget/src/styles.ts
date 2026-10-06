@@ -109,6 +109,8 @@ export const CSS = `
   background:none;border:0;cursor:pointer;color:var(--muted);
   font-size:20px;line-height:1;padding:0 2px;
 }
+.head .x.hist{font-family:var(--font);font-size:12px;padding:3px 4px}
+.head .x.hist:disabled{opacity:.4;cursor:default}
 
 .head .namewrap{min-width:0;flex:1 1 auto}
 
@@ -150,6 +152,8 @@ export const CSS = `
 .datacard .src a{color:var(--accent);text-decoration:none;font-weight:500}
 .datacard.k-error,.datacard.k-denied{border-color:var(--danger);background:var(--danger-soft)}
 .datacard.k-not_found{border-style:dashed}
+.datacard.room{display:block;width:100%;text-align:left;cursor:pointer;font:inherit;margin-top:0}
+.datacard.room:hover,.datacard.room:focus-visible{border-color:var(--accent)}
 
 .foot{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface);align-items:flex-end}
 .foot textarea{
