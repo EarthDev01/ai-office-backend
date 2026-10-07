@@ -1,0 +1,22 @@
+# response ตาม topupserie controller/withdraw.go GetTurnover (respap/Turnover.model.go)
+tool: my_withdraw_check
+cases:
+  - name: ติดโปร ยังถอนไม่ได้
+    username: somchai01
+    responses:
+      t:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data: {turntotal: 3000, turnagent: 1200, fixWithdraw: 0, Withdrawfix: 0, turnover_slot: false, is_withdraw: false, message: ยังทำเทิร์นไม่ครบ, amount: 300, bonus_name: โปรสมาชิกใหม่, limit_per_time: 0, limit_per_day: 0, withdrawal_remaining: 0}
+    expect:
+      status: ok
+      calls:
+        t: {path: /get/turnover, body: {username: somchai01}}
+      fields: {ถอนได้ตอนนี้: ไม่ใช่, ชื่อโปรโมชั่น: โปรสมาชิกใหม่, ข้อความจากระบบ: ยังทำเทิร์นไม่ครบ}
+      model_context: {can_withdraw_now: false, has_promotion: true}
+      link: /
+  - name: บัญชีธนาคารยังไม่ยืนยัน (HTTP 400)
+    responses:
+      t: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: บัญชียังไม่ได้รับการยืนยัน}, data: null}}
+    expect: {status: not_found}

@@ -14,6 +14,7 @@ import (
 //	{service}                 service ของตั๋ว (ไม่ใช่ค่าจากผู้ใช้)
 //	{service_b64}             base64 ของ service (ลิงก์หน้า host ที่ใช้ ?service=base64)
 //	{input.username}          ค่าที่โมเดลส่งมา (ผ่านการตรวจ input แล้ว)
+//	{user.username}           ยูสเซอร์ของคนที่ล็อกอิน (จากตั๋ว ไม่ใช่ค่าจากผู้ใช้/โมเดล) — API ที่ตรวจว่า body ตรงกับ token
 //	{date:today}              YYYY-MM-DD ตาม timezone/day_cutoff ของ connector
 //	{datetime:today}          YYYY-MM-DD 00:00:00  · {datetime_end:today} → 23:59:59
 //	{month:today}             YYYY-MM · {unix:now} วินาที
@@ -25,6 +26,7 @@ var placeholderRe = regexp.MustCompile(`\{([^{}]+)\}`)
 // RenderContext = ค่าที่ template อ้างได้ · Now/Loc มาจากเวลาจริง + timezone ของ connector (B-6)
 type RenderContext struct {
 	ServiceID string
+	Username  string // ผู้ใช้ของตั๋ว
 	Input     map[string]any
 	Now       time.Time
 	Loc       *time.Location
@@ -99,6 +101,11 @@ func (rc RenderContext) resolveOne(p string) (any, error) {
 		return rc.ServiceID, nil
 	case p == "service_b64":
 		return base64.StdEncoding.EncodeToString([]byte(rc.ServiceID)), nil
+	case p == "user.username":
+		if rc.Username == "" {
+			return nil, fmt.Errorf("ไม่มียูสเซอร์ของผู้ที่ล็อกอิน")
+		}
+		return rc.Username, nil
 	case strings.HasPrefix(p, "input."):
 		v, ok := rc.Input[strings.TrimPrefix(p, "input.")]
 		if !ok {
@@ -213,7 +220,7 @@ func checkPlaceholder(p string, inputs map[string]InputSpec) error {
 		return nil
 	}
 	switch {
-	case p == "service" || p == "service_b64":
+	case p == "service" || p == "service_b64" || p == "user.username":
 		return nil
 	case strings.HasPrefix(p, "input."):
 		return check(p)

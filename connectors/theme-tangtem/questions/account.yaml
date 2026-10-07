@@ -1,0 +1,154 @@
+# เส้นที่หน้าเว็บ platform_Tangtem เรียกจริง (plugins/topupserie-controller/member/index.js) · ทุกเส้นอ่านอย่างเดียว · scope: office (1 โดเมน = 1 แบรนด์)
+# POST /amount (topupserie controller/member.go Amount) — ยูสจาก token · ยิง Agent /userinfo สด · data {amount}
+# POST /history (controller/history.go History) — body {username} ต้องตรง token · ไม่ส่งช่วงวัน = ล่าสุด 20 รายการต่อชนิด
+#   data {deposit[], withdraw[], bonus[]} · item HistortLogST {datetime, amount, bonus, bonus_name, status, bank_code, bank_number, comment…}
+#   ⚠️ bank_number ไม่ได้ปิดบัง — ห้ามขึ้นการ์ด (ไม่ได้ประกาศใน values)
+# POST /get/turnover (controller/withdraw.go 443-565) — body {username} · data RespST {is_withdraw, bonus_name, message, turntotal…}
+#   HTTP 400 bankNotVerified = ยังไม่ได้ยืนยันบัญชีธนาคาร → ถือเป็น "ไม่พบ" พร้อมข้อความ
+tools:
+  - name: my_balance
+    description: ยอดเครดิตคงเหลือของสมาชิกที่ล็อกอินอยู่ (ดึงสดจากระบบเกม) · ใช้เมื่อถามว่ามีเครดิตเท่าไหร่ เงินเหลือเท่าไหร่
+    permission: member
+    freshness: live
+    calls:
+      - id: a
+        method: POST
+        path: /amount
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [amount]
+          properties:
+            amount: {type: number}
+    values:
+      - {name: credit, from: a, path: amount}
+    card:
+      title: เครดิตคงเหลือ
+      fields:
+        - {label: เครดิตคงเหลือ, value: credit, format: money, suffix: " บาท"}
+      note: ดึงสดจากระบบเกม ณ เวลาที่ถาม
+      link: {label: ไปหน้าหลัก, path: "/"}
+    model_context:
+      - {name: has_credit, type: bool, expr: "credit > 0"}
+
+  - name: my_deposits
+    description: >-
+      รายการฝากล่าสุดของสมาชิกที่ล็อกอินอยู่ (สูงสุด 20 รายการ) พร้อมสถานะ และโปรโมชั่นที่รับตอนฝาก
+      · ใช้เมื่อถามว่าฝากเข้าหรือยัง ยอดฝากล่าสุด ฝากแล้วเครดิตไม่เข้า
+    permission: member
+    freshness: summary
+    calls:
+      - id: h
+        method: POST
+        path: /history
+        scope: office
+        body: {username: "{user.username}"}
+        cache_ttl: 20
+        timeout_ms: 15000
+        schema: &hschema
+          type: object
+          required: [deposit, withdraw]
+          properties:
+            deposit:
+              type: array
+              nullable: true
+              items: &hitem
+                type: object
+                required: [datetime, amount, status]
+                properties:
+                  datetime: {type: string}
+                  amount: {type: number}
+                  status: {type: integer}
+                  bonus_name: {type: string}
+            withdraw: {type: array, nullable: true, items: *hitem}
+    values:
+      - {name: rows, from: h, path: deposit, limit: 10}
+      - {name: pending, from: h, path: deposit, filter: "item.status != 1 && item.status != 4", agg: count}
+    not_found: {when: "empty(rows)", message: ยังไม่มีรายการฝาก}
+    card:
+      title: รายการฝากล่าสุด
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยอดฝาก, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: โปรโมชั่น, field: bonus_name}
+      note: ดูทั้งหมดได้ที่ ประวัติการใช้งาน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "pending > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
+
+  - name: my_withdraws
+    description: >-
+      รายการถอนล่าสุดของสมาชิกที่ล็อกอินอยู่ (สูงสุด 20 รายการ) พร้อมสถานะ · ใช้เมื่อถามว่าถอนเข้าหรือยัง ถอนค้างไหม
+    permission: member
+    freshness: summary
+    calls:
+      - id: h
+        method: POST
+        path: /history
+        scope: office
+        body: {username: "{user.username}"}
+        cache_ttl: 20
+        timeout_ms: 15000
+        schema: *hschema
+    values:
+      - {name: rows, from: h, path: withdraw, limit: 10}
+      - {name: pending, from: h, path: withdraw, filter: "item.status != 1 && item.status != 4", agg: count}
+    not_found: {when: "empty(rows)", message: ยังไม่มีรายการถอน}
+    card:
+      title: รายการถอนล่าสุด
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: ยอดถอน, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+      note: ดูทั้งหมดได้ที่ ประวัติการใช้งาน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    model_context:
+      - {name: has_pending, type: bool, expr: "pending > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+
+  - name: my_withdraw_check
+    description: >-
+      ตอนนี้สมาชิกที่ล็อกอินอยู่ถอนเงินได้หรือยัง และโปรโมชั่นที่ติดอยู่ (ถ้ามี) · ใช้เมื่อถามว่าถอนได้ไหม ทำไมถอนไม่ได้ ติดเทิร์นไหม
+    permission: member
+    freshness: live
+    calls:
+      - id: t
+        method: POST
+        path: /get/turnover
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        not_found_codes: [400]
+        schema:
+          type: object
+          required: [is_withdraw]
+          properties:
+            is_withdraw: {type: boolean}
+            bonus_name: {type: string}
+            message: {type: string}
+    values:
+      - {name: can_withdraw, from: t, path: is_withdraw}
+      - {name: promo, from: t, path: bonus_name, default: ""}
+      - {name: reason, from: t, path: message, default: ""}
+    not_found: {when: "false", message: ตรวจเงื่อนไขถอนไม่ได้ อาจเพราะบัญชีธนาคารยังไม่ได้ยืนยัน ลองเปิดหน้าถอนเงิน หรือติดต่อแอดมินของเว็บ}
+    card:
+      title: เงื่อนไขการถอน
+      fields:
+        - {label: ถอนได้ตอนนี้, value: can_withdraw, format: bool}
+        - {label: ชื่อโปรโมชั่น, value: promo, when: "!empty(promo)"}
+        - {label: ข้อความจากระบบ, value: reason, when: "!empty(reason)"}
+      note: ยอดเทิร์นและเงื่อนไขละเอียดดูได้ที่หน้าถอนเงิน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    model_context:
+      - {name: can_withdraw_now, type: bool, expr: "can_withdraw"}
+      - {name: has_promotion, type: bool, expr: "!empty(promo)"}

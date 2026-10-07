@@ -1,0 +1,17 @@
+# หน้าเว็บผู้เล่นเป็น modal บนหน้าหลัก — ชื่อปุ่มจาก plugins/i18n/th.js (buttonDeposit · buttonWithdraw · buttonSidebarMenuHistory · buttonPromotion)
+menus:
+  - {id: deposit, name: ฝากเงิน, path: /, group: กระเป๋าเงิน, permission: member, keywords: [ฝาก, ฝากเงิน, เติมเงิน, เติมเครดิต], description: ฝากเงินเข้าบัญชีของคุณ}
+  - {id: withdraw, name: ถอนเงิน, path: /, group: กระเป๋าเงิน, permission: member, keywords: [ถอน, ถอนเงิน], description: ถอนเงินเข้าบัญชีธนาคารของคุณ}
+  - {id: history, name: ประวัติการใช้งาน, path: /, group: บัญชี, permission: member, keywords: [ประวัติ, รายการฝาก, รายการถอน, ประวัติเล่นเกม], description: ประวัติการ เล่นเกม ฝากเงิน ถอนเงิน โบนัสของคุณ}
+  - {id: promotion, name: โปรโมชั่น, path: /, group: โปรโมชั่น, permission: member, keywords: [โปร, โปรโมชั่น, โบนัส, รับโปร], description: โปรโมชั่นที่เปิดให้รับ}
+guides:
+  - id: how_deposit
+    title: ฝากเงิน
+    menu: deposit
+    steps: [กดปุ่ม ฝากเงิน ที่หน้าเว็บ, เลือกช่องทางและทำตามขั้นตอนที่หน้าเว็บแสดง, ถ้าโอนแล้วยอดยังไม่เข้า ดูรายการได้ที่ ประวัติการใช้งาน]
+    keywords: [ฝากยังไง, วิธีฝาก, เติมเงินยังไง]
+  - id: how_withdraw
+    title: ถอนเงิน
+    menu: withdraw
+    steps: [กดปุ่ม ถอนเงิน ที่หน้าเว็บ, ตรวจยอดเทิร์นและเงื่อนไขโปรโมชั่นที่หน้าถอนเงิน, ใส่จำนวนเงินแล้วยืนยัน]
+    keywords: [ถอนยังไง, วิธีถอน]

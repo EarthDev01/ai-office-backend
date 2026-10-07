@@ -51,7 +51,7 @@ func (r *ToolRunner) Run(ctx context.Context, conn *connector.Connector, t domai
 			ModelContext: map[string]any{"status": connector.StatusError, "error": "bad_input", "detail": err.Error()}}}
 	}
 	loc, cutoff := conn.Location()
-	rc := connector.RenderContext{ServiceID: t.ServiceID, Input: input, Now: r.now(), Loc: loc, Cutoff: cutoff}
+	rc := connector.RenderContext{ServiceID: t.ServiceID, Username: t.Username, Input: input, Now: r.now(), Loc: loc, Cutoff: cutoff}
 
 	results := make(map[string]*connector.CallResult, len(tool.Calls))
 	calls := make([]domain.ToolCall, len(tool.Calls))

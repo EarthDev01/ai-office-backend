@@ -54,6 +54,8 @@ func (h *ChatHandler) connFor(c *gin.Context, office domain.Office) (*connector.
 type pageConfig struct {
 	Kind        string                  `json:"kind"`
 	Mode        string                  `json:"mode"`
+	Audience    string                  `json:"audience,omitempty"`
+	PageColors  *connector.PageColors   `json:"page_colors,omitempty"`
 	HostAPIBase string                  `json:"host_api_base"`
 	Token       connector.TokenSource   `json:"token"`
 	Service     connector.ServiceSource `json:"service"`
@@ -79,12 +81,24 @@ func (h *ChatHandler) PageConfig(c *gin.Context, office domain.Office) {
 	if scheme == "" {
 		scheme = "Bearer"
 	}
+	svc := pa.Service
+	if svc.Source == "office" {
+		// 1 โดเมน = 1 เว็บ — บอก widget ว่าเว็บไหน (ไม่ใช่ความลับ · ตั๋ว/สิทธิ์ยังตรวจที่ bootstrap ตามเดิม)
+		for _, s := range office.Services {
+			if s.Enabled {
+				svc.Value = s.ID
+				break
+			}
+		}
+	}
 	ResData(c, http.StatusOK, "SUCCESS", "", pageConfig{
 		Kind:        conn.Kind,
 		Mode:        conn.Host.Mode,
+		Audience:    conn.Host.Audience,
+		PageColors:  conn.Host.PageColors,
 		HostAPIBase: base,
 		Token:       pa.Token,
-		Service:     pa.Service,
+		Service:     svc,
 		AuthScheme:  scheme,
 		Identity:    pa.Identity,
 	})
@@ -285,6 +299,8 @@ type kindInfo struct {
 	Kind    string `json:"kind"`
 	Label   string `json:"label"`
 	Default bool   `json:"default"`
+	// SiteColors = หน้าเว็บชนิดนี้มีสีของแบรนด์ให้ widget อ่าน (เลือก "ใช้สีของเว็บ" ได้)
+	SiteColors bool `json:"site_colors"`
 }
 
 // ListKinds — GET /api/ai/admin/kinds · ชนิดหลังบ้านที่มี connector (ให้คอนโซลเลือกตอนตั้งค่า domain)
@@ -296,7 +312,7 @@ func ListKinds(c *gin.Context, conns connector.Set) {
 		if label == "" {
 			label = k
 		}
-		out = append(out, kindInfo{Kind: k, Label: label, Default: k == conns.Default})
+		out = append(out, kindInfo{Kind: k, Label: label, Default: k == conns.Default, SiteColors: conn.Host.PageColors != nil})
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", out)
 }

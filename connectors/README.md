@@ -62,6 +62,14 @@ page-config / ตัวตน / tool ของ office นั้นใช้ conn
 
 ตัวอย่างครบ: `internal/core/connector/testdata/sample-browser/`
 
+### หน้าเว็บผู้เล่น (`audience: player` · ตัวอย่าง `theme-tangtem/`)
+
+- `service: {source: office}` — หน้าไม่มีตัวเลือกเว็บ · ใช้ service แรกที่เปิดของ office (page-config ส่งค่าใน `service.value`)
+- `token.key` มี `{key_from}` ได้ + `key_from: {source, key, default}` — เช่น `@nuxtjs/auth` เก็บที่ `auth._token.<strategy>` · widget ตัดคำนำหน้า `Bearer ` ให้เอง และถือ `"false"` = ออกจากระบบ
+- body ใช้ `{user.username}` = ยูสของผู้ที่ล็อกอิน (จากตั๋ว ไม่ใช่จากโมเดล) สำหรับ API ที่ตรวจว่า body ตรง token
+- tool ของผู้เล่นประกาศ `scope: office` (1 โดเมน = 1 แบรนด์ ไม่มี `{service}` ใน API)
+- `audience: player` → system prompt พูดกับสมาชิก ไม่ใช่แอดมิน
+
 ## 1. `host.yaml`
 
 ```yaml

@@ -1,5 +1,5 @@
 import { createShadow, injectFonts } from './shadow'
-import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, el, renderCard, roomItem, formatFetched, scroll, setOpen, type UI } from './ui'
+import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, readSiteColors, el, renderCard, roomItem, formatFetched, scroll, setOpen, type UI } from './ui'
 import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
 import { ChatSession, PageConfigError } from './session'
 import { describeSource, readService } from './page'
@@ -76,6 +76,10 @@ interface State {
   busy: boolean
   console: ConsoleOptions | null
   history: ConsoleTurn[]
+  /** โชว์ป้ายรหัสเว็บบนหัวแชท — หน้าเว็บผู้เล่นไม่โชว์ */
+  showSite: boolean
+  /** ตัวแปร CSS ของหน้าเว็บที่เก็บสีของแบรนด์ (จาก page-config) */
+  pageColors?: { accent: string; accent_2?: string; on_accent?: string }
   /** ยกเลิกคำตอบที่กำลังส่ง — unmount (สลับเว็บ/ออกจากระบบ) เรียกเสมอ (B-15) */
   abort: AbortController | null
   /** กำลังโชว์รายการห้องย้อนหลังแทนห้องคุย */
@@ -93,6 +97,7 @@ let state: State | null = null
  */
 export function unmount(): void {
   window.removeEventListener('message', onPreviewMessage)
+  stopSiteColors()
   state?.abort?.abort()
   state?.host.remove()
   state = null
@@ -149,9 +154,13 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   injectFonts(root)
 
   const ui = buildUI(root)
+  // page-config โหลดไว้แล้วตอน bootstrap (จำไว้ต่อหน้า) — preview/คอนโซล/test ที่ส่ง bootstrap มาเองไม่มี
+  const pc = !preview && !opts.console && !opts.bootstrap ? await session.pageConfig().catch(() => null) : null
   state = {
     ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false,
     console: opts.console ?? null, history: [], abort: null, listing: false,
+    showSite: pc?.audience !== 'player',
+    pageColors: pc?.page_colors,
   }
   // ประวัติฝั่ง server มีเฉพาะแชทหลังบ้านจริง — คอนโซลเก็บห้องในหน้าเว็บ · preview ไม่ยิง API
   if (preview || opts.console) ui.head.history.style.display = 'none'
@@ -186,14 +195,15 @@ function render(cfg: Bootstrap) {
   state.cfg = cfg
   const theme = resolveTheme(cfg.theme)
   state.host.setAttribute('data-theme', theme)
-  applyAccent(state.host, cfg.accent_color, theme)
-  applyAppearance(state.ui, cfg)
+  const colorsReady = applyColors(theme)
+  applyAppearance(state.ui, cfg, state.apiBase, state.showSite)
   applyPlacement(state.ui, cfg)
   state.ui.launcher.style.display = cfg.is_hidden ? 'none' : 'grid'
 
   state.ui.log.textContent = ''
   if (cfg.greeting) addBubble(state.ui.log, 'ai', cfg.greeting)
   if (state.preview) addSys(state.ui.log, MESSAGES.preview)
+  if (!colorsReady) waitSiteColors()
 }
 
 function onPreviewMessage(ev: MessageEvent) {
@@ -305,9 +315,49 @@ const HINTS: Record<string, string> = {
   no_service: 'ยังไม่ได้เลือกเว็บในหลังบ้าน',
 }
 
+/** สี: ใช้สีของแบรนด์จากหน้าเว็บ (ถ้าตั้งไว้และอ่านได้) ไม่งั้นใช้สีที่ตั้งในคอนโซล */
+/** คืน false = ตั้ง "ใช้สีของเว็บ" แต่หน้าเว็บยังไม่มีสีให้อ่าน (ใช้สีตั้งต้นไปก่อน) */
+function applyColors(theme = resolveTheme(state?.cfg.theme ?? 'auto')): boolean {
+  if (!state) return true
+  const cfg = state.cfg
+  const site = cfg.color_source === 'site' ? readSiteColors(state.pageColors) : null
+  if (site) applyAccent(state.host, [site.accent, site.accent2 || site.accent], theme, site.on)
+  else if (cfg.color_source === 'site') applyAccent(state.host, undefined, theme) // อ่านสีของเว็บไม่ได้ = สีตั้งต้นของ widget
+  else applyAccent(state.host, cfg.accent_colors?.length ? cfg.accent_colors : cfg.accent_color, theme)
+  return cfg.color_source !== 'site' || !!site
+}
+
+// หน้าเว็บมักตั้งสีของแบรนด์หลังโหลดค่าแบรนด์จาก API (หลัง widget โผล่) — คอยอ่านซ้ำจนได้
+// ระหว่างรอซ่อนปุ่มไว้ไม่ให้เห็นสีตั้งต้นแวบ (สูงสุด SITE_COLOR_HIDE_MS แล้วโชว์ด้วยสีตั้งต้น · อ่านต่อถึง SITE_COLOR_GIVEUP_MS)
+const SITE_COLOR_HIDE_MS = 4000
+const SITE_COLOR_GIVEUP_MS = 20000
+let siteColorTimer: ReturnType<typeof setInterval> | null = null
+
+function waitSiteColors() {
+  stopSiteColors()
+  const s = state
+  if (!s || s.preview) return
+  const started = Date.now()
+  s.ui.launcher.style.visibility = 'hidden'
+  siteColorTimer = setInterval(() => {
+    if (state !== s) return stopSiteColors()
+    const done = applyColors()
+    const waited = Date.now() - started
+    if (done || waited > SITE_COLOR_HIDE_MS) s.ui.launcher.style.visibility = ''
+    if (done || waited > SITE_COLOR_GIVEUP_MS) stopSiteColors()
+  }, 250)
+}
+
+function stopSiteColors() {
+  if (siteColorTimer) clearInterval(siteColorTimer)
+  siteColorTimer = null
+}
+
 function toggle(open?: boolean) {
   if (!state) return
   const next = open ?? state.ui.panel.dataset.open !== 'true'
+  // หน้าเว็บอาจตั้งสีของแบรนด์หลัง widget โผล่ (โหลดค่าแบรนด์ทีหลัง) — อ่านใหม่ทุกครั้งที่เปิด
+  if (next) applyColors()
   setOpen(state.ui, next)
   if (next) state.ui.input.focus()
 }

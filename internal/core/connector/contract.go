@@ -29,8 +29,9 @@ type ContractFile struct {
 
 type ContractCase struct {
 	Name      string                      `yaml:"name"`
-	Now       string                      `yaml:"now"`     // RFC3339 (ไม่ใส่ = 2026-09-24T14:32:00+07:00)
-	Service   string                      `yaml:"service"` // ไม่ใส่ = DEMO-SVC
+	Now       string                      `yaml:"now"`      // RFC3339 (ไม่ใส่ = 2026-09-24T14:32:00+07:00)
+	Service   string                      `yaml:"service"`  // ไม่ใส่ = DEMO-SVC
+	Username  string                      `yaml:"username"` // {user.username} · ไม่ใส่ = demo_user
 	Input     map[string]any              `yaml:"input"`
 	Responses map[string]ContractResponse `yaml:"responses"` // call id → response ของ host
 	Expect    ContractExpect              `yaml:"expect"`
@@ -139,7 +140,11 @@ func (c *Connector) runCase(t *Tool, cs ContractCase) []error {
 		return []error{fmt.Errorf("input ไม่ผ่าน: %w", err)}
 	}
 	loc, cutoff := c.Location()
-	rc := RenderContext{ServiceID: svc, Input: input, Now: now, Loc: loc, Cutoff: cutoff}
+	user := cs.Username
+	if user == "" {
+		user = "demo_user"
+	}
+	rc := RenderContext{ServiceID: svc, Username: user, Input: input, Now: now, Loc: loc, Cutoff: cutoff}
 
 	results := map[string]*CallResult{}
 	for _, cl := range t.Calls {

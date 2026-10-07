@@ -1,0 +1,32 @@
+# response ตาม topupserie controller/history.go History (ไม่ส่งช่วงวัน = ล่าสุด 20 รายการต่อชนิด)
+tool: my_deposits
+cases:
+  - name: มีรายการฝาก 1 สำเร็จ 1 รอ
+    username: somchai01
+    responses:
+      h:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data:
+            deposit:
+              - {username: somchai01, datetime: "2026-09-24T06:10:00Z", amount: 500, bonus: 0, bonus_name: "", status: 0, bank_code: KBANK, bank_number: "1234567890", comment: ""}
+              - {username: somchai01, datetime: "2026-09-23T12:00:00Z", amount: 300, bonus: 30, bonus_name: โปรสมาชิกใหม่, status: 1, bank_code: KBANK, bank_number: "1234567890", comment: ""}
+            withdraw: []
+            bonus: []
+    expect:
+      status: ok
+      calls:
+        h: {path: /history, body: {username: somchai01}}
+      table_rows: 2
+      table_cells: [["24/09/2026 13:10", "500.00", รอดำเนินการ, ""], ["23/09/2026 19:00", "300.00", สำเร็จ, โปรสมาชิกใหม่]]
+      model_context: {has_pending: true}
+      link: /
+  - name: ยังไม่เคยฝาก
+    responses:
+      h: {body: {status: {code: 200, message: ok}, message: {code: 0, message: สำเร็จ}, data: {deposit: [], withdraw: [], bonus: []}}}
+    expect: {status: not_found}
+  - name: ยูสใน body ไม่ตรง token (Resp 401 ไม่เขียน body)
+    responses:
+      h: {status: 200, body: ""}
+    expect: {status: error}

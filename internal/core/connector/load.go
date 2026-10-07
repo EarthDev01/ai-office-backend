@@ -192,6 +192,8 @@ func toolLines(root *yaml.Node) []int {
 
 type addFn func(file string, line int, format string, a ...any)
 
+var cssVarRe = regexp.MustCompile(`^--[A-Za-z0-9_-]{1,60}$`)
+
 func (c *Connector) validateHost(file string, add addFn) {
 	h := &c.Host
 	if !kindRe.MatchString(c.Kind) {
@@ -200,17 +202,32 @@ func (c *Connector) validateHost(file string, add addFn) {
 	if h.Kind != c.Kind {
 		add(file, 0, "kind %q ต้องตรงกับชื่อโฟลเดอร์ %q", h.Kind, c.Kind)
 	}
+	if pc := h.PageColors; pc != nil {
+		for _, v := range []string{pc.Accent, pc.Accent2, pc.OnAccent} {
+			if v != "" && !cssVarRe.MatchString(v) {
+				add(file, 0, "page_colors: %q ต้องเป็นชื่อตัวแปร CSS เช่น --theme-color-1", v)
+			}
+		}
+		if pc.Accent == "" {
+			add(file, 0, "page_colors.accent ว่าง")
+		}
+	}
+	switch h.Audience {
+	case "", "admin", "player":
+	default:
+		add(file, 0, "audience ต้องเป็น admin|player")
+	}
 	pa := h.PageAuth
 	if pa.Token.Format == "" {
 		add(file, 0, "page_auth.token.format ต้องเป็น raw|json-expiration")
 	}
 	validateTokenSource(file, "page_auth.token", pa.Token, add)
 	switch pa.Service.Source {
-	case "localStorage", "sessionStorage", "query":
+	case "localStorage", "sessionStorage", "query", "office":
 	default:
-		add(file, 0, "page_auth.service.source ต้องเป็น localStorage|sessionStorage|query")
+		add(file, 0, "page_auth.service.source ต้องเป็น localStorage|sessionStorage|query|office")
 	}
-	if pa.Service.Key == "" {
+	if pa.Service.Key == "" && pa.Service.Source != "office" {
 		add(file, 0, "page_auth.service.key ว่าง")
 	}
 	switch pa.Service.Encoding {
@@ -667,6 +684,14 @@ func validateTokenSource(file, field string, t TokenSource, add addFn) {
 	}
 	if t.Key == "" {
 		add(file, 0, "%s.key ว่าง", field)
+	}
+	if strings.Contains(t.Key, "{key_from}") != (t.KeyFrom != nil) {
+		add(file, 0, "%s: key ที่มี {key_from} ต้องคู่กับ key_from (และกลับกัน)", field)
+	}
+	if kf := t.KeyFrom; kf != nil {
+		if (kf.Source != "localStorage" && kf.Source != "sessionStorage") || kf.Key == "" {
+			add(file, 0, "%s.key_from ต้องมี source (localStorage|sessionStorage) และ key", field)
+		}
 	}
 	switch t.Format {
 	case "", "raw":

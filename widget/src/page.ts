@@ -7,16 +7,20 @@
 
 export interface TokenSource {
   source: string // localStorage | sessionStorage
+  /** มี {key_from} ได้ — แทนด้วยค่าในช่อง key_from (ไม่มี = default) */
   key: string
+  key_from?: { source: string; key: string; default?: string }
   format?: string // raw | json-expiration
   value_field?: string
   expiration_field?: string
 }
 
 export interface ServiceSource {
-  source: string // localStorage | sessionStorage | query
+  source: string // localStorage | sessionStorage | query | office
   key: string
   encoding?: string // none | base64
+  /** source: office — เว็บของโดเมนนี้ที่ backend ส่งมา (หน้าเว็บไม่มีตัวเลือกเว็บ) */
+  value?: string
 }
 
 export interface PluckSpec {
@@ -30,6 +34,10 @@ export interface PluckSpec {
 export interface PageConfig {
   kind: string
   mode: string
+  /** admin (หลังบ้าน) | player (หน้าเว็บผู้เล่น — ไม่โชว์ป้ายรหัสเว็บบนหัวแชท) */
+  audience?: string
+  /** ตัวแปร CSS บน :root ของหน้าเว็บที่เก็บสีของแบรนด์ (ใช้เมื่อ office ตั้ง "ใช้สีของเว็บ") */
+  page_colors?: { accent: string; accent_2?: string; on_accent?: string }
   host_api_base: string
   token: TokenSource
   service: ServiceSource
@@ -46,7 +54,8 @@ export interface PageConfig {
 }
 
 // ค่าที่หน้าหลังบ้านเขียนทิ้งไว้ตอนออกจากระบบ (setItem("x", null) = สตริง "null")
-const EMPTY = new Set(['', 'null', 'undefined'])
+// @nuxtjs/auth เขียน "false" ตอนออกจากระบบ
+const EMPTY = new Set(['', 'null', 'undefined', 'false'])
 
 function storage(source: string): Storage | null {
   try {
@@ -62,9 +71,10 @@ function storage(source: string): Storage | null {
 export function readToken(src: TokenSource | undefined): string {
   if (!src) return ''
   try {
-    const raw = storage(src.source)?.getItem(src.key) ?? ''
+    const raw = storage(src.source)?.getItem(tokenKey(src)) ?? ''
     if (EMPTY.has(raw.trim())) return ''
-    if (src.format !== 'json-expiration') return raw.trim()
+    // บางไลบรารีเก็บ token พร้อมคำนำหน้า (เช่น "Bearer eyJ…") — ตัดออก widget ใส่ scheme ให้เองตอนยิง
+    if (src.format !== 'json-expiration') return stripScheme(raw)
 
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const value = parsed?.[src.value_field || 'value']
@@ -72,15 +82,29 @@ export function readToken(src: TokenSource | undefined): string {
     const exp = parsed[src.expiration_field || 'expiration']
     // หน่วยวินาที
     if (typeof exp === 'number' && exp <= Math.floor(Date.now() / 1000)) return ''
-    return value
+    return stripScheme(value)
   } catch {
     return ''
   }
 }
 
+function tokenKey(src: TokenSource): string {
+  if (!src.key_from) return src.key
+  const part = (storage(src.key_from.source)?.getItem(src.key_from.key) ?? '').trim()
+  return src.key.split('{key_from}').join(EMPTY.has(part) ? (src.key_from.default ?? '') : part)
+}
+
+function stripScheme(v: string): string {
+  const t = v.trim()
+  const m = /^bearer(\s+|$)/i.exec(t)
+  const out = m ? t.slice(m[0].length).trim() : t
+  return EMPTY.has(out) ? '' : out
+}
+
 /** service ที่แอดมินเปิดอยู่ — เปลี่ยนได้ตลอดโดยไม่โหลดหน้าใหม่ จึงอ่านสดทุกครั้ง */
 export function readService(src: ServiceSource | undefined): string {
   if (!src) return ''
+  if (src.source === 'office') return src.value ?? ''
   try {
     let raw = ''
     if (src.source === 'query') {
@@ -108,6 +132,7 @@ export function readService(src: ServiceSource | undefined): string {
 /** ชื่อที่คนติดตั้งอ่านรู้เรื่อง เช่น localStorage["headertoken"] / ?service= */
 export function describeSource(src: TokenSource | ServiceSource | undefined): string {
   if (!src) return '(ไม่ทราบ)'
+  if (src.source === 'office') return 'service ของ domain นี้ (เปิดอย่างน้อย 1 service ที่คอนโซล)'
   return src.source === 'query' ? `?${src.key}=` : `${src.source}["${src.key}"]`
 }
 

@@ -62,8 +62,9 @@ func NewRouter(d Deps) *gin.Engine {
 	widget := routes.NewWidgetHandler(d.BundlePath)
 	r.GET("/widget/v1/ai-office.js", widget.ServeBundle)
 	r.GET("/widget/v1/:legacy_key/ai-office.js", widget.ServeBundle)
+	r.GET("/widget/v1/assets/*path", widget.ServeAsset)
 
-	boot := routes.NewBootstrapHandler(d.OfficeService)
+	boot := routes.NewBootstrapHandler(d.OfficeService, widget.ResolveRandom)
 	office := routes.NewOfficeHandler(d.OfficeService)
 
 	// ---- ฝั่ง widget ----
@@ -165,6 +166,7 @@ func NewRouter(d Deps) *gin.Engine {
 
 		// ชนิดหลังบ้านที่เลือกได้ในหน้าตั้งค่า domain (= connector ที่โหลดอยู่)
 		admin.GET("/kinds", officeView, func(c *gin.Context) { routes.ListKinds(c, d.Connectors) })
+		admin.GET("/widget-assets", officeView, widget.ListAssets)
 		admin.GET("/offices", officeView, office.List)
 		admin.GET("/offices/:id", officeView, office.Get)
 
