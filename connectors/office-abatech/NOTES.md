@@ -1,6 +1,6 @@
 # office-abatech connector — บันทึกสำหรับ dev
 
-ตรวจกับโค้ดจริง `office-abatech` (fb29edea) + `GOTOPOPOFFICE` (main) · 28/09/2026 · ภาพรวม endpoint: `Docs-workflow/w-17-ai-office/appendix-abatech-endpoints.md`
+ตรวจกับโค้ดจริง `office-abatech` (fb29edea) + `GOTOPOPOFFICE` (main) · 28/09/2026
 
 ## 1. หลักที่ใช้
 - โหมด browser: widget ยิง API เดิมด้วย `headertoken` ของแอดมิน · path สัมพัทธ์กับ `host_api_base` (= `.../api`) · เส้นต่อเว็บ `/<Endpoint>/{service}` (service ธรรมดา ไม่ base64)

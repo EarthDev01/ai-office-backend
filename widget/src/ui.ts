@@ -3,7 +3,7 @@ import type { Bootstrap, Card } from './types'
 export interface UI {
   launcher: HTMLButtonElement
   panel: HTMLDivElement
-  head: { avatar: HTMLDivElement; name: HTMLDivElement; tag: HTMLDivElement; site: HTMLDivElement }
+  head: { avatar: HTMLDivElement; name: HTMLDivElement; tag: HTMLDivElement; site: HTMLDivElement; history: HTMLButtonElement }
   log: HTMLDivElement
   input: HTMLTextAreaElement
   send: HTMLButtonElement
@@ -31,11 +31,17 @@ export function buildUI(root: ShadowRoot): UI {
   nameWrap.append(name, tag)
   const site = el('div', 'site') as HTMLDivElement
   site.title = 'เว็บที่กำลังคุยอยู่'
+  // ปุ่มประวัติ — index.ts ซ่อนในโหมดคอนโซล/preview (ห้องอยู่ที่หน้าเว็บ ไม่มีประวัติฝั่ง server)
+  const history = el('button', 'x hist') as HTMLButtonElement
+  history.type = 'button'
+  history.textContent = 'ประวัติ'
+  history.title = 'ห้องแชทย้อนหลัง 7 วัน'
+  history.setAttribute('aria-label', 'ห้องแชทย้อนหลัง 7 วัน')
   const close = el('button', 'x') as HTMLButtonElement
   close.type = 'button'
   close.textContent = '×'
   close.setAttribute('aria-label', 'ปิด')
-  head.append(avatar, nameWrap, site, close)
+  head.append(avatar, nameWrap, site, history, close)
 
   const log = el('div', 'log') as HTMLDivElement
   log.setAttribute('aria-live', 'polite')
@@ -55,7 +61,7 @@ export function buildUI(root: ShadowRoot): UI {
   panel.append(head, log, foot)
   root.append(launcher, panel)
 
-  const ui = { launcher, panel, head: { avatar, name, tag, site }, log, input, send }
+  const ui = { launcher, panel, head: { avatar, name, tag, site, history }, log, input, send }
   close.addEventListener('click', () => setOpen(ui, false))
   return ui
 }
@@ -150,6 +156,22 @@ export function addLoader(log: HTMLDivElement, text: string): { set(t: string): 
     set: (s) => (t.textContent = s),
     remove: () => row.remove(),
   }
+}
+
+/** รายการห้องย้อนหลัง — ใช้หน้าตาการ์ดเดิม (หัวข้อ + เวลา) กดทั้งใบได้ */
+export function roomItem(title: string, when: string, onOpen: () => void): HTMLButtonElement {
+  const b = el('button', 'datacard room') as HTMLButtonElement
+  b.type = 'button'
+  const t = el('div', 'dc-title')
+  t.textContent = title
+  b.appendChild(t)
+  if (when) {
+    const src = el('div', 'src')
+    src.textContent = when
+    b.appendChild(src)
+  }
+  b.addEventListener('click', onOpen)
+  return b
 }
 
 /**

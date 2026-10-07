@@ -1,6 +1,6 @@
 # connectors/ — ปลั๊กต่อชนิดหลังบ้าน (kind)
 
-> เอกสาร dev · ใช้คู่กับ `Docs-workflow/w-17-ai-office/spec-v2.md` §5.3, §6, §7.4 และ `contract-host-ai.md`
+> เอกสาร dev · ใช้คู่กับ `Docs-workflow/w-17-ai-office/spec-v2.md` §5, §6, §7.3
 > 1 โฟลเดอร์ = 1 kind (`office-v10x`, `office-abatech`) · **ทุกอย่างที่ต่างกันระหว่างหลังบ้านอยู่ที่นี่เท่านั้น** — โค้ดกลาง (`internal/core`, `widget/src`) ห้ามมีชื่อ/พฤติกรรมของ kind ใด (`test/plugin_lint_test.go` บังคับ)
 
 ```

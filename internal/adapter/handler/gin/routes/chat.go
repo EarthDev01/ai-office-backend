@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +145,7 @@ func (h *ChatHandler) OpenSession(c *gin.Context, office domain.Office, caller d
 	t := domain.ChatTicket{
 		OfficeID: office.ID, ServiceID: b.ServiceID, AdminID: caller.AdminID, Username: caller.Username,
 		Level: caller.Level, Permissions: perms,
+		Session: domain.SessionFingerprint(strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))),
 	}
 	tok, err := h.tickets.Issue(t)
 	if err != nil {
@@ -156,6 +158,48 @@ func (h *ChatHandler) OpenSession(c *gin.Context, office domain.Office, caller d
 		"expires_in": int(ttl / time.Second),
 		"expires_at": time.Now().Add(ttl).UTC().Format(time.RFC3339),
 	})
+}
+
+// Conversations — GET …/service/:service_id/conversations?days=7 · ห้องของตัวเองใน session หลังบ้านนี้
+func (h *ChatHandler) Conversations(c *gin.Context, office domain.Office, t domain.ChatTicket) {
+	svc, ok := h.activeService(c, office, t)
+	if !ok {
+		return
+	}
+	days, _ := strconv.Atoi(c.Query("days"))
+	list, err := h.chat.Conversations(c.Request.Context(), office.ID, svc.ID, t, days)
+	if err != nil {
+		ResData(c, http.StatusInternalServerError, "INTERNAL_ERROR", "โหลดประวัติไม่สำเร็จ", nil)
+		return
+	}
+	out := make([]gin.H, 0, len(list))
+	for _, cv := range list {
+		out = append(out, gin.H{"id": cv.ID, "title": cv.Title, "updated_at": cv.UpdatedAt, "message_count": cv.MessageCount})
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", out)
+}
+
+// ConversationMessages — GET …/service/:service_id/conversations/:id · ข้อความ + การ์ดของห้องตัวเอง
+func (h *ChatHandler) ConversationMessages(c *gin.Context, office domain.Office, t domain.ChatTicket) {
+	svc, ok := h.activeService(c, office, t)
+	if !ok {
+		return
+	}
+	cv, msgs, err := h.chat.ConversationMessages(c.Request.Context(), office.ID, svc.ID, t, c.Param("id"))
+	if errors.Is(err, domain.ErrNotFound) {
+		ResData(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบห้องแชทนี้", nil)
+		return
+	}
+	if err != nil {
+		ResData(c, http.StatusInternalServerError, "INTERNAL_ERROR", "โหลดประวัติไม่สำเร็จ", nil)
+		return
+	}
+	// ส่งเฉพาะสิ่งที่ผู้ใช้เคยเห็นในห้อง — ไม่มี tool_calls/usage/ผลตรวจ
+	out := make([]gin.H, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, gin.H{"role": m.Role, "text": m.Text, "cards": m.Cards, "status": m.Status, "created_at": m.CreatedAt})
+	}
+	ResData(c, http.StatusOK, "SUCCESS", "", gin.H{"id": cv.ID, "title": cv.Title, "messages": out})
 }
 
 // activeService ตรวจซ้ำตอนใช้ตั๋ว — office/service ที่ถูกปิดหลังออกตั๋วต้องใช้ต่อไม่ได้
