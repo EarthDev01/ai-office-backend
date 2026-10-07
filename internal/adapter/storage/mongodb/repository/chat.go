@@ -110,6 +110,12 @@ func (r *chatRepo) SearchConversations(ctx context.Context, f port.ConversationF
 	if f.User != "" {
 		filter["$or"] = bson.A{bson.M{"admin_id": f.User}, bson.M{"username": f.User}}
 	}
+	if f.AdminID != "" {
+		filter["admin_id"] = f.AdminID
+	}
+	if f.Session != "" {
+		filter["session"] = f.Session
+	}
 	if f.Text != "" {
 		filter["title"] = bson.M{"$regex": regexp.QuoteMeta(f.Text), "$options": "i"}
 	}

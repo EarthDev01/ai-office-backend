@@ -38,6 +38,17 @@ cp .env.example .env
 go run ./_cmd                      # :6767
 ```
 
+## Docker / deploy
+
+```bash
+docker compose -f docker-compose.dev.yml up -d          # MongoDB สำหรับ dev
+docker build -t ai-office-backend .                    # image production (build widget ใหม่ข้างใน)
+```
+
+- image ตั้ง `APP_MODE=production` + `STORE_DRIVER=mongo` ให้แล้ว · ต้องส่ง `DB_URI`, `CONSOLE_JWT_SECRET`, `CHAT_TICKET_SECRET`, `LLM_KEY_SECRET` ผ่าน Secret — ไม่ครบ / ใช้ file store / ยังเป็นค่า `change-me-…` = ไม่ boot
+- probe `/healthz` · **1 replica เท่านั้น** (ตั๋ว คิว relay ตัวนับคนพร้อมกันอยู่ในหน่วยความจำ) · ingress ต้องไม่บัฟเฟอร์ SSE + timeout ≥ 60 วิ
+- CI `.github/workflows/build.yaml`: test (widget + Go) → Kaniko → JFrog → webhook · `develop`→dev · `main`→uat · tag `v*` → re-tag `:uat` เป็น prod (แบบเดียวกับ service อื่นในสาย mootui)
+
 คอนโซลคือ `Project/ai-office-report` ที่ :5173 — ฐานเริ่มต้นว่าง สร้างกลุ่ม → domain → service จากหน้า "หลังบ้านลูกค้า"
 
 ## test

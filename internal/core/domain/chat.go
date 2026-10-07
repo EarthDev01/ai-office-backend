@@ -2,6 +2,7 @@ package domain
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -37,6 +38,15 @@ var (
 	ErrQuotaExceeded = errors.New("QUOTA_EXCEEDED")
 )
 
+// SessionFingerprint — sha256 ของ token หลังบ้าน (ไม่เก็บ token จริง) · token ว่าง = ”
+func SessionFingerprint(token string) string {
+	if token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:16])
+}
+
 // ChatTicket คือตั๋วที่ widget ได้ตอนเปิด session — ผูก office + service + ผู้ใช้ + สิทธิ์
 //
 // ID ใช้ผูกผลของ relay: ตั๋วใบอื่นส่งผลแทรกเข้ามาไม่ได้
@@ -48,7 +58,10 @@ type ChatTicket struct {
 	Username    string
 	Level       int32
 	Permissions []string
-	ExpiresAt   time.Time
+	// Session = ลายนิ้วมือของ token หลังบ้านที่ใช้ขอตั๋ว (SessionFingerprint) — ห้องแชทผูกกับค่านี้
+	// JWT ปลอมที่อ้าง admin_id ของคนอื่นได้ลายนิ้วมือคนละค่า จึงเปิดห้องของเขาไม่ได้ (KI-A1)
+	Session   string
+	ExpiresAt time.Time
 }
 
 // Card คือข้อมูลที่ระบบสร้างเองจากผล API — ตัวเลข/ชื่อทั้งหมดอยู่ตรงนี้ ไม่ผ่าน LLM
@@ -122,7 +135,9 @@ type Conversation struct {
 	ServiceID string `json:"service_id" bson:"service_id"`
 	AdminID   string `json:"admin_id"   bson:"admin_id"`
 	Username  string `json:"username"   bson:"username"`
-	Title     string `json:"title"      bson:"title"`
+	// Session = ลายนิ้วมือ token หลังบ้านของคนเปิดห้อง (ไม่ส่งออก API) · ว่าง = ห้องก่อนมีการผูก (widget เปิดไม่ได้)
+	Session string `json:"-"          bson:"session,omitempty"`
+	Title   string `json:"title"      bson:"title"`
 	// MessageCount +2 ต่อ 1 รอบถาม-ตอบ
 	MessageCount int       `json:"message_count" bson:"message_count"`
 	CreatedAt    time.Time `json:"created_at"    bson:"created_at"`

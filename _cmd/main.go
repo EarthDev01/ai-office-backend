@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ai-office-backend/docs"
@@ -46,6 +47,10 @@ func main() {
 	var credRepo port.LLMCredentialRepository
 	var usageRepo port.UsageRepository
 	var deletionRepo port.DeletionRepository
+	// production ห้ามใช้ file store — ไฟล์อยู่ในเครื่อง/pod เดียว หายเมื่อ pod ถูกสร้างใหม่ (ประวัติแชท คีย์ LLM บัญชีคอนโซล)
+	if !cfg.App.IsDev() && !cfg.Store.IsMongo() {
+		log.Fatal("[ERROR] production ต้องตั้ง STORE_DRIVER=mongo และ DB_URI")
+	}
 	if cfg.Store.IsMongo() {
 		res, err := mongodb.New(ctx, cfg.Store.URI, cfg.Store.DBName)
 		if err != nil {
@@ -192,6 +197,12 @@ func main() {
 	// "dev-console-jwt-secret" ให้เสมอเมื่อ env ว่าง เช็คผ่าน cfg ที่ default แล้วจะไม่มีวัน "" จริง
 	// (กลายเป็น dead code) ทำให้ production ที่ลืมตั้ง CONSOLE_JWT_SECRET เซ็น JWT ด้วย secret
 	// ที่มี plaintext อยู่ในโค้ดแบบเงียบ ๆ โดยไม่มี fatal/warn ใด ๆ
+	// ค่าตัวอย่างจาก .env.example (change-me-…) ห้ามขึ้น production เช่นกัน
+	for _, k := range []string{"CONSOLE_JWT_SECRET", "CHAT_TICKET_SECRET"} {
+		if !cfg.App.IsDev() && strings.HasPrefix(os.Getenv(k), "change-me") {
+			log.Fatalf("[ERROR] %s ยังเป็นค่าตัวอย่าง — สร้างใหม่ด้วย: openssl rand -base64 32", k)
+		}
+	}
 	if os.Getenv("CONSOLE_JWT_SECRET") == "" {
 		if !cfg.App.IsDev() {
 			log.Fatal("[ERROR] CONSOLE_JWT_SECRET ต้องตั้งค่าก่อนรันบน production")

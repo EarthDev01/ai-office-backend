@@ -175,6 +175,8 @@ func (r *chatRepo) SearchConversations(_ context.Context, f port.ConversationFil
 		case f.OfficeID != "" && c.OfficeID != f.OfficeID,
 			f.ServiceID != "" && c.ServiceID != f.ServiceID,
 			f.User != "" && c.AdminID != f.User && c.Username != f.User,
+			f.AdminID != "" && c.AdminID != f.AdminID,
+			f.Session != "" && c.Session != f.Session,
 			text != "" && !strings.Contains(strings.ToLower(c.Title), text),
 			ids != nil && !ids[c.ID],
 			!inRange(c.CreatedAt, f.From, f.To):

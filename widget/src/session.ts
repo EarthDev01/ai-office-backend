@@ -1,3 +1,4 @@
+import { apiError, ChatError } from './chat'
 import { hostFetch } from './hostfetch'
 import { decodeJWT, dig, pluck, readToken, type PageConfig } from './page'
 
@@ -64,12 +65,9 @@ export class ChatSession {
       headers: { Authorization: `Bearer ${this.readToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissions }),
     })
-    const json = (await res.json().catch(() => null)) as
-      | { payload?: { ticket: string; expires_in: number }; message?: string; error?: string }
-      | null
-    if (!res.ok || !json?.payload?.ticket) {
-      throw new Error(json?.error || `ขอสิทธิ์ใช้งานผู้ช่วยไม่สำเร็จ (${res.status})`)
-    }
+    if (!res.ok) throw await apiError(res, `ขอสิทธิ์ใช้งานผู้ช่วยไม่สำเร็จ (${res.status})`)
+    const json = (await res.json().catch(() => null)) as { payload?: { ticket: string; expires_in: number } } | null
+    if (!json?.payload?.ticket) throw new ChatError(`ขอสิทธิ์ใช้งานผู้ช่วยไม่สำเร็จ (${res.status})`)
     this.cur = { service, ticket: json.payload.ticket, expiresAt: Date.now() + json.payload.expires_in * 1000 }
     return this.cur.ticket
   }

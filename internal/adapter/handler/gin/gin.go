@@ -99,6 +99,13 @@ func NewRouter(d Deps) *gin.Engine {
 		api.POST("/chat", append(ticketAPI, func(c *gin.Context) {
 			chatHandler.Chat(c, OfficeFrom(c), TicketFrom(c))
 		})...)
+		// ประวัติของตัวเอง (≤ 7 วัน · session หลังบ้านเดียวกัน)
+		api.GET("/conversations", append(ticketAPI, func(c *gin.Context) {
+			chatHandler.Conversations(c, OfficeFrom(c), TicketFrom(c))
+		})...)
+		api.GET("/conversations/:id", append(ticketAPI, func(c *gin.Context) {
+			chatHandler.ConversationMessages(c, OfficeFrom(c), TicketFrom(c))
+		})...)
 		// ผลจากหลังบ้านได้ถึง 2 MB (+ ซอง JSON)
 		api.POST("/chat/relay/:id", append([]gin.HandlerFunc{LimitBody(service.RelayMaxBody + 64<<10)}, append(ticketAPI, func(c *gin.Context) {
 			chatHandler.Relay(c, OfficeFrom(c), TicketFrom(c))

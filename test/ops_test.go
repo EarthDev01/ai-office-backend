@@ -116,14 +116,14 @@ func TestUsage_RecordedPerAnswerAndVerification(t *testing.T) {
 	ticket := openSession(t, srv.URL, "MEMBER_INFO")
 	runChat(t, srv.URL, ticket, "เช็คยูส somchai01", func(service.FetchCommand) string { return memberBody })
 
-	// fakeLLM: รอบ 1 = 10/5 · รอบ 2 = 20/7
+	// fakeLLM: รอบเลือก tool = 10/5 · รอบถามดึงเพิ่ม (ได้ tool ซ้ำ = พอแล้ว) = 10/5 · รอบเขียนคำตอบ = 20/7
 	u := consoleGet(t, srv.URL, "/api/ai/admin/usage")
 	rows := u["data"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("usage = %v", u)
 	}
 	row := rows[0].(map[string]any)
-	if row["questions"].(float64) != 1 || row["input_tokens"].(float64) != 30 || row["output_tokens"].(float64) != 12 {
+	if row["questions"].(float64) != 1 || row["input_tokens"].(float64) != 40 || row["output_tokens"].(float64) != 17 {
 		t.Fatalf("ตัวนับรายเดือน = %v", row)
 	}
 

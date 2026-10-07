@@ -1,9 +1,9 @@
 import { createShadow, injectFonts } from './shadow'
-import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, el, renderCard, scroll, setOpen, type UI } from './ui'
+import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, el, renderCard, roomItem, formatFetched, scroll, setOpen, type UI } from './ui'
 import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
 import { ChatSession, PageConfigError } from './session'
 import { describeSource, readService } from './page'
-import { runChat, runConsoleChat, ChatError, type ConsoleTurn } from './chat'
+import { runChat, runConsoleChat, listConversations, loadConversation, ChatError, DISABLED_CODES, type ConsoleTurn, type HistoryMessage } from './chat'
 
 // data-* ที่ห้ามมาจากหน้าเว็บ — service ที่เปิดอยู่เราอ่านจาก localStorage ของ office เอง
 // (data-public-key ไม่อยู่ในนี้ เพราะมันระบุแค่ว่าหน้านี้เป็นของ office ไหน)
@@ -76,6 +76,10 @@ interface State {
   busy: boolean
   console: ConsoleOptions | null
   history: ConsoleTurn[]
+  /** ยกเลิกคำตอบที่กำลังส่ง — unmount (สลับเว็บ/ออกจากระบบ) เรียกเสมอ (B-15) */
+  abort: AbortController | null
+  /** กำลังโชว์รายการห้องย้อนหลังแทนห้องคุย */
+  listing: boolean
 }
 
 let state: State | null = null
@@ -89,6 +93,7 @@ let state: State | null = null
  */
 export function unmount(): void {
   window.removeEventListener('message', onPreviewMessage)
+  state?.abort?.abort()
   state?.host.remove()
   state = null
 }
@@ -144,11 +149,17 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
   injectFonts(root)
 
   const ui = buildUI(root)
-  state = { ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false, console: opts.console ?? null, history: [] }
+  state = {
+    ui, host, cfg, preview, apiBase, session, conversationID: '', busy: false,
+    console: opts.console ?? null, history: [], abort: null, listing: false,
+  }
+  // ประวัติฝั่ง server มีเฉพาะแชทหลังบ้านจริง — คอนโซลเก็บห้องในหน้าเว็บ · preview ไม่ยิง API
+  if (preview || opts.console) ui.head.history.style.display = 'none'
 
   render(cfg)
 
   ui.launcher.addEventListener('click', () => toggle())
+  ui.head.history.addEventListener('click', () => void showRooms())
   ui.send.addEventListener('click', () => send(opts))
   ui.input.addEventListener('keydown', (e) => {
     const k = e as KeyboardEvent
@@ -242,8 +253,18 @@ async function fetchBootstrap(apiBase: string, session: ChatSession, onFetch?: M
       return null
     }
     const payload = json?.payload ?? null
-    if (payload && !payload.enabled) {
+    if (!payload) return null
+    if (!payload.enabled) {
       explain(`ยังไม่เปิดใช้งาน (reason: ${payload.reason})`, HINTS[payload.reason ?? ''])
+      return payload
+    }
+    // ขอตั๋วแชทไว้ก่อนโชว์ปุ่ม — ขอไม่ผ่าน = กดแล้วก็ถามไม่ได้ จึงไม่โชว์ (ตั๋วที่ได้ใช้ต่อตอนส่งคำถามแรก)
+    try {
+      await session.ticket(serviceID)
+    } catch (e) {
+      const code = e instanceof ChatError ? e.code : ''
+      explain(`ขอตั๋วแชทไม่สำเร็จ (${code || (e as Error).message})`, HINTS[code])
+      return null
     }
     return payload
   } catch (e) {
@@ -296,6 +317,8 @@ const MESSAGES = {
   preview: 'โหมดตัวอย่าง — ไม่ได้ส่งคำถามจริง',
   unavailable: 'ผู้ช่วยไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ภายหลัง',
   empty: '(ไม่มีคำตอบ)',
+  rooms: 'ห้องแชทย้อนหลัง 7 วัน — แตะเพื่อเปิดคุยต่อ',
+  noRooms: 'ยังไม่มีห้องแชทใน 7 วันนี้ · ห้องจากการล็อกอินครั้งก่อนเปิดจากที่นี่ไม่ได้ (เพื่อความปลอดภัย)',
 }
 
 async function send(opts: MountOptions) {
@@ -316,16 +339,24 @@ async function send(opts: MountOptions) {
     return
   }
 
-  const pc = await loadPageConfig(s.session)
-  const service = pc ? readService(pc.service) : ''
+  const service = await currentService(s)
   if (!service) {
     addBubble(s.ui.log, 'ai', MESSAGES.unavailable, 'err')
     return
+  }
+  if (s.listing) {
+    // พิมพ์ถามระหว่างดูรายการห้อง = เริ่มห้องใหม่
+    s.listing = false
+    s.conversationID = ''
+    render(s.cfg)
+    addBubble(s.ui.log, 'me', text)
   }
   opts.onFetch?.({ url: `${s.apiBase}/api/ai/widget/service/${encodeURIComponent(service)}/chat`, body: { text } })
 
   s.busy = true
   s.ui.send.disabled = true
+  s.ui.head.history.disabled = true
+  const abort = (s.abort = new AbortController())
   const loader = addLoader(s.ui.log, 'กำลังส่งคำถาม…')
   // ฟองคำตอบสร้างเมื่อมีของให้โชว์ครั้งแรก — การ์ดอยู่ในฟองเดียวกับข้อความของ AI
   let txt: HTMLElement | null = null
@@ -344,6 +375,7 @@ async function send(opts: MountOptions) {
       session: s.session,
       conversationID: s.conversationID,
       text,
+      signal: abort.signal,
       on: {
         status: (t) => loader.set(t || 'กำลังทำงาน…'),
         card: (card) => {
@@ -361,13 +393,103 @@ async function send(opts: MountOptions) {
     })
     if (!txt) addBubble(s.ui.log, 'ai', MESSAGES.empty)
   } catch (e) {
+    if (abort.signal.aborted) return // สลับเว็บ/ออกจากระบบกลางคำตอบ — ห้องนี้ถูกถอดไปแล้ว ไม่ต้องแจ้งอะไร
     const msg = e instanceof ChatError ? e.message : MESSAGES.unavailable
     addBubble(s.ui.log, 'ai', msg, 'err')
+    const code = e instanceof ChatError ? e.code : ''
+    // ห้องเดิมหาย (ถูกลบตามคำขอ ฯลฯ) → ข้อความถัดไปเปิดห้องใหม่
+    if (code === 'not_found') s.conversationID = ''
+    if (DISABLED_CODES.has(code)) disable(s)
+  } finally {
+    loader.remove()
+    s.abort = null
+    s.busy = false
+    s.ui.send.disabled = s.ui.input.disabled
+    s.ui.head.history.disabled = false
+  }
+}
+
+async function currentService(s: State): Promise<string> {
+  const pc = await loadPageConfig(s.session)
+  return pc ? readService(pc.service) : ''
+}
+
+/** รายการห้องย้อนหลัง 7 วันของตัวเอง (เฉพาะห้องจากการล็อกอินหลังบ้านครั้งนี้ — KI-A1) */
+async function showRooms() {
+  const s = state
+  if (!s || s.busy || s.preview || s.console) return
+  const service = await currentService(s)
+  if (!service) return
+  s.busy = true
+  s.ui.head.history.disabled = true
+  const loader = addLoader(s.ui.log, 'กำลังโหลดประวัติ…')
+  try {
+    const rooms = await listConversations(s.apiBase, service, s.session, 7)
+    if (state !== s) return
+    s.listing = true
+    s.ui.log.textContent = ''
+    addSys(s.ui.log, MESSAGES.rooms)
+    s.ui.log.appendChild(roomItem('＋ เริ่มห้องใหม่', '', () => newRoom(s)))
+    for (const r of rooms) {
+      s.ui.log.appendChild(roomItem(r.title || '(ไม่มีหัวข้อ)', 'คุยล่าสุด ' + formatFetched(r.updated_at), () => void openRoom(s, service, r.id)))
+    }
+    if (!rooms.length) addSys(s.ui.log, MESSAGES.noRooms)
+    scroll(s.ui.log)
+  } catch (e) {
+    addBubble(s.ui.log, 'ai', e instanceof ChatError ? e.message : MESSAGES.unavailable, 'err')
   } finally {
     loader.remove()
     s.busy = false
-    s.ui.send.disabled = false
+    s.ui.head.history.disabled = false
   }
+}
+
+function newRoom(s: State) {
+  s.listing = false
+  s.conversationID = ''
+  render(s.cfg)
+  s.ui.input.focus()
+}
+
+async function openRoom(s: State, service: string, id: string) {
+  if (s.busy) return
+  s.busy = true
+  try {
+    const room = await loadConversation(s.apiBase, service, s.session, id)
+    if (state !== s) return
+    s.listing = false
+    s.conversationID = room.id
+    s.ui.log.textContent = ''
+    addSys(s.ui.log, `ห้องเดิม: ${room.title} · ตัวเลขในการ์ดเป็นค่า ณ เวลาที่ดึง ถามใหม่เพื่อดูค่าล่าสุด`)
+    for (const m of room.messages) replay(s, m)
+    s.ui.input.focus()
+  } catch (e) {
+    addBubble(s.ui.log, 'ai', e instanceof ChatError ? e.message : MESSAGES.unavailable, 'err')
+  } finally {
+    s.busy = false
+  }
+}
+
+/** วาดข้อความจากประวัติด้วยตัววาดชุดเดียวกับตอนคุยสด */
+function replay(s: State, m: HistoryMessage) {
+  if (m.role === 'user') {
+    addBubble(s.ui.log, 'me', m.text)
+    return
+  }
+  if (!m.text && !m.cards?.length) return
+  const bubble = addBubble(s.ui.log, 'ai', m.text, m.status === 'error' ? 'err' : '')
+  if (m.cards?.length) {
+    const cards = el('div', 'cards')
+    for (const c of m.cards) cards.appendChild(renderCard(c))
+    bubble.appendChild(cards)
+  }
+}
+
+/** ผู้ช่วยของเว็บนี้ใช้ต่อไม่ได้ (ถูกปิด/ไม่มีสิทธิ์) — เก็บปุ่ม ปิดช่องพิมพ์ ข้อความที่แจ้งไปแล้วยังอ่านได้จนปิดกล่อง */
+function disable(s: State) {
+  s.ui.input.disabled = true
+  s.ui.send.disabled = true
+  s.ui.launcher.style.display = 'none'
 }
 
 /** โหมดคอนโซล: ส่งทั้งห้องคุยไปที่ผู้ช่วยของคอนโซล — UI ชุดเดียวกับแชทปกติ */
@@ -465,6 +587,12 @@ function installGlobal() {
     },
     __logText: () => state?.ui.log.textContent ?? '',
     __conversationID: () => state?.conversationID ?? '',
+    __showRooms: () => showRooms(),
+    __openRoom: async (id: string) => {
+      if (!state) return
+      const service = await currentService(state)
+      await openRoom(state, service, id)
+    },
   }
   Object.defineProperty(window, '__aiOffice', { value: Object.freeze(api), configurable: true })
 }
