@@ -1,0 +1,28 @@
+# GET /DepositWalletStatementByUser?username&typename= → กรอง channel ticket_pay (รางวัลกล่องสุ่ม)
+tool: member_randombox
+cases:
+  - name: ได้รางวัลกล่องสุ่ม
+    input: {username: abc123}
+    responses:
+      wl:
+        body:
+          code: 0
+          msg: SUCCESS
+          payload:
+            - {datetime: "2026-09-24T03:00:00Z", username: abc123, amount: 50, type_name: WALLET, type_action: DEPOSIT, type_description: คืนยอดเสีย, channel: ""}
+            - {datetime: "2026-09-23T03:00:00Z", username: abc123, amount: 99, type_name: deposit_one-66ab, type_action: DEPOSIT, type_description: TICKET, channel: ticket_pay}
+            - {datetime: "2026-09-22T03:00:00Z", username: abc123, amount: 1, type_name: deposit_two-66ac, type_action: DEPOSIT, type_description: TICKET, channel: ticket_pay}
+    expect:
+      status: ok
+      calls:
+        wl: {path: /DepositWalletStatementByUser/DEMO-SVC, query: {username: abc123, typename: ""}}
+      fields: {รางวัลรวม: "100.00 บาท", ได้รับ: "2 ครั้ง", ล่าสุด: "23/09/2026 10:00"}
+      table_rows: 2
+      table_cells:
+        - ["23/09/2026 10:00", "99.00"]
+      model_context: {has_box_reward: true}
+  - name: ไม่เคยได้รางวัลกล่องสุ่ม
+    input: {username: abc123}
+    responses:
+      wl: {body: {code: 0, msg: SUCCESS, payload: [{datetime: "2026-09-24T03:00:00Z", amount: 50, type_name: WALLET, type_action: DEPOSIT, channel: ""}]}}
+    expect: {status: not_found}

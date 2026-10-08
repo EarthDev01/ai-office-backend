@@ -31,6 +31,14 @@ export interface PluckSpec {
 }
 
 /** สิ่งที่ backend บอกว่าหลังบ้านชนิดนี้เก็บ login ไว้ที่ไหน ยิง API ที่ไหน และอ่านสิทธิ์จากไหน */
+/** ปุ่ม 1 ปุ่ม: ตั้งได้อย่างเดียว — bv_modal (Nuxt 2 bootstrap-vue) · click (selector ปุ่มที่หน้ามีอยู่) · path (หน้าในเว็บเดียวกัน) */
+export interface PageAction {
+  id: string
+  label: string
+  when?: 'member' | 'guest' | 'any' | ''
+  open: { bv_modal?: string; click?: string; path?: string }
+}
+
 export interface PageConfig {
   kind: string
   mode: string
@@ -39,6 +47,10 @@ export interface PageConfig {
   /** ตัวแปร CSS บน :root ของหน้าเว็บที่เก็บสีของแบรนด์ (ใช้เมื่อ office ตั้ง "ใช้สีของเว็บ") */
   page_colors?: { accent: string; accent_2?: string; on_accent?: string }
   host_api_base: string
+  /** ปุ่มใต้คำตอบที่ connector ประกาศ (หน้าเว็บผู้เล่น) */
+  page_actions?: PageAction[]
+  /** ผู้ที่ยังไม่ล็อกอินคุยได้ — ใช้ guest_id ของเบราว์เซอร์แทน token */
+  guest?: boolean
   token: TokenSource
   service: ServiceSource
   auth_scheme?: string
@@ -171,4 +183,31 @@ export function dig(v: unknown, path: string | undefined): unknown {
     cur = (cur as Record<string, unknown>)[k]
   }
   return cur
+}
+
+const GUEST_KEY = 'ai-office:guest_id'
+let memoryGuest = ''
+
+/**
+ * guest_id ของเบราว์เซอร์นี้ (ผู้ที่ยังไม่ล็อกอินบนหน้าเว็บผู้เล่น) — สุ่มครั้งแรกแล้วเก็บใน localStorage ของเว็บนั้น
+ * ห้อง/โควตาต่อวันผูกกับค่านี้ · storage ใช้ไม่ได้ = ใช้ค่าในหน่วยความจำ (รีเฟรชแล้วได้ใหม่)
+ */
+export function guestID(): string {
+  try {
+    const v = localStorage.getItem(GUEST_KEY)
+    if (v && /^[A-Za-z0-9_-]{16,64}$/.test(v)) return v
+  } catch {
+    /* storage ถูกปิด */
+  }
+  if (!memoryGuest) {
+    const b = new Uint8Array(18)
+    crypto.getRandomValues(b)
+    memoryGuest = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  }
+  try {
+    localStorage.setItem(GUEST_KEY, memoryGuest)
+  } catch {
+    /* storage ถูกปิด */
+  }
+  return memoryGuest
 }

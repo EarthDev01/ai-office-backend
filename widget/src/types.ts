@@ -55,14 +55,32 @@ export const PREVIEW_ALLOWED_FIELDS = [
 export type PreviewField = (typeof PREVIEW_ALLOWED_FIELDS)[number]
 export type PreviewConfig = Partial<Pick<Bootstrap, PreviewField>>
 
+/** ปุ่มใต้คำตอบ (SSE action / ประวัติ) — วิธีสั่งหน้าเว็บหาจาก page-config ตาม id เท่านั้น */
+export interface ChatAction {
+  id: string
+  label: string
+}
+
 /** การ์ดข้อมูลที่ระบบสร้างจากผล API — ค่าทั้งหมดอยู่ที่นี่ ไม่ผ่าน LLM */
+/** ปุ่มถามต่อ — กดแล้วส่ง ask เป็นคำถามใหม่ */
+export interface ChatSuggestion {
+  label: string
+  ask: string
+}
+
+/** แบบการ์ด (connector ตั้งต้น · ผู้ดูแลเปลี่ยนต่อ domain ได้) · ไม่มี = table */
+export type CardStyle = 'stat' | 'list' | 'table' | 'single'
+/** สีป้ายสถานะ */
+export type Tone = 'ok' | 'wait' | 'bad'
+
 export interface Card {
   id: string
   kind: 'ok' | 'not_found' | 'denied' | 'error' | 'reference'
   tool: string
+  style?: CardStyle
   title: string
-  fields: { label: string; display: string }[] | null
-  table?: { columns: { label: string }[]; rows: { display: string }[][] }
+  fields: { label: string; display: string; format?: string; tone?: Tone }[] | null
+  table?: { columns: { label: string; format?: string }[]; rows: { display: string; tone?: Tone }[][] }
   note?: string
   fetched_at: string
   link?: { label: string; path: string }

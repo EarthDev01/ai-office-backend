@@ -5,6 +5,7 @@
 #   อ่านอย่างเดียว (aggregate) — ไม่ใช้ GetDashboardSummary (ไม่มีหน้าจอเรียกแล้ว · last_* ≠ เมื่อวาน KI-1)
 #   ไม่ใช้ GetReportProfitLossQuery / GetDashboardSummaryALLQuery (เขียนตาราง report — F-10)
 questions: [BQ-01, BQ-12]
+keywords: [สรุป, วันนี้, ภาพรวม, ฝากลบถอน, กำไร, ยอดรวม, ยอดฝาก, ยอดถอน, เมื่อวาน, เดือน, ช่วง, dashboard]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: dashboard_today
     description: >-
@@ -56,6 +57,7 @@ tools:
       - {name: deposit_diff, expr: "today_deposit - y_deposit"}
     not_found: {when: "today_rows == 0", message: วันนี้ยังไม่มีเงินเข้าบัญชีฝาก ระบบจึงยังไม่มีสรุปของวันนี้}
     card:
+      style: stat
       title: สรุปยอดวันนี้
       fields:
         - {label: ยอดฝาก, value: today_deposit, format: money, suffix: " บาท"}
@@ -74,6 +76,10 @@ tools:
       - {name: has_yesterday, type: bool, expr: "y_rows > 0"}
       - {name: net_positive, type: bool, expr: "today_net > 0"}
       - {name: note, type: text, text: ตัวเลขทั้งหมดแสดงในการ์ดแล้ว ฝากลบถอนยังไม่หักโบนัส}
+    follow_ups:
+      - {label: "สรุปยอดเมื่อวาน", ask: "สรุปยอดเมื่อวาน"}
+      - {label: "ถอนที่ยังไม่สำเร็จ", ask: "รายการถอนที่ยังไม่สำเร็จวันนี้"}
+      - {label: "รายการฝากตกค้าง", ask: "รายการฝากตกค้างวันนี้"}
 
   - name: dashboard_range
     description: >-
@@ -102,6 +108,7 @@ tools:
       - {name: sum_net, expr: "sum_deposit - sum_withdraw"}
     not_found: {when: "days == 0", message: ไม่มีเงินเข้าบัญชีฝากในช่วงวันที่ถาม ระบบจึงไม่มีสรุปของช่วงนี้}
     card:
+      style: table
       title: สรุปยอดตามช่วงวัน
       fields:
         - {label: จำนวนวันที่มีรายการ, value: days, format: int, suffix: " วัน"}
@@ -122,3 +129,6 @@ tools:
     model_context:
       - {name: net_positive, type: bool, expr: "sum_net > 0"}
       - {name: note, type: text, text: ตัวเลขแสดงในการ์ดแล้ว ไม่ใช่รายงานกำไรขาดทุน}
+    follow_ups:
+      - {label: "สรุปยอดวันนี้", ask: "สรุปยอดวันนี้"}
+      - {label: "สรุปยอดเดือนนี้", ask: "สรุปยอดเดือนนี้"}

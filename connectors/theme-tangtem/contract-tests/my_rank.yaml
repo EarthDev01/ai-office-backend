@@ -1,0 +1,44 @@
+# response ตาม topupserie controller/Ranking.go:23 Ranking + CalculateRankingInfo (Ranking.go:944)
+tool: my_rank
+cases:
+  - name: อยู่แรงก์ Silver กำลังไป Gold
+    username: somchai01
+    responses:
+      r:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            currentValue: {}
+            canUplevel: false
+            MaxLevel: false
+            banner: []
+            currentRank: {title: Silver, ranking: 2, reward: 100}
+            nextRank: {title: Gold, ranking: 3, reward: 300}
+            percent: 62.5
+            lastUpdate: "2026-10-08T03:00:00Z"
+            rankInfo: [{title: Bronze, ranking: 1}, {title: Silver, ranking: 2}, {title: Gold, ranking: 3}]
+    expect:
+      status: ok
+      calls:
+        r: {path: /rankingInfo, body: {username: somchai01}}
+      fields: {แรงก์ปัจจุบัน: Silver, แรงก์ถัดไป: Gold, ความคืบหน้า: "62.5%", อัปแรงก์ได้แล้ว: ไม่ใช่}
+      no_fields: [แรงก์สูงสุดแล้ว]
+      model_context: {can_level_up: false, at_max_rank: false}
+      link: /
+  - name: แรงก์สูงสุดแล้ว
+    responses:
+      r:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data: {canUplevel: false, MaxLevel: true, currentRank: {title: Diamond, ranking: 5}, nextRank: {title: "", ranking: 0}, percent: 100}
+    expect:
+      status: ok
+      fields: {แรงก์ปัจจุบัน: Diamond, แรงก์สูงสุดแล้ว: ใช่}
+      no_fields: [แรงก์ถัดไป, ความคืบหน้า]
+      model_context: {at_max_rank: true}
+  - name: เว็บไม่ได้ตั้งแรงก์ (data null)
+    responses:
+      r: {body: {status: {code: 200, message: ok}, message: {code: 0, message: success}, data: null}}
+    expect: {status: not_found}

@@ -1,0 +1,30 @@
+# GET /DepositWalletStatementByUser?username&typename= (ทุกกระเป๋า · ≤1000 ล่าสุด) · รับเข้า = type_action DEPOSIT · ไม่รวม ticket_pay
+tool: member_wallet
+cases:
+  - name: แยกตามกระเป๋า
+    input: {username: abc123}
+    responses:
+      wl:
+        body:
+          code: 0
+          msg: SUCCESS
+          payload:
+            - {datetime: "2026-09-24T03:00:00Z", username: abc123, amount: 50, type_name: WALLET, type_action: DEPOSIT, type_description: คืนยอดเสีย, channel: ""}
+            - {datetime: "2026-09-23T03:00:00Z", username: abc123, amount: 20, type_name: POINT, type_action: DEPOSIT, type_description: แต้มฝาก, channel: ""}
+            - {datetime: "2026-09-22T03:00:00Z", username: abc123, amount: 30, type_name: WALLET, type_action: WITHDRAW, type_description: ถอนออก, channel: ""}
+            - {datetime: "2026-09-21T03:00:00Z", username: abc123, amount: 99, type_name: deposit_one-66ab, type_action: DEPOSIT, type_description: TICKET, channel: ticket_pay}
+    expect:
+      status: ok
+      calls:
+        wl: {path: /DepositWalletStatementByUser/DEMO-SVC, query: {username: abc123, typename: ""}}
+      fields: {รับเข้ากระเป๋าทั้งหมด: "2 รายการ", กระเป๋าเงินสด: "50.00 บาท", แต้ม: "20 แต้ม"}
+      no_fields: [กงล้อ, แนะนำเพื่อน, คอมมิชชั่น, หมายเหตุ]
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 10:00", "50", WALLET, คืนยอดเสีย]
+      model_context: {has_received: true}
+  - name: ยังไม่ได้รับเข้ากระเป๋า
+    input: {username: abc123}
+    responses:
+      wl: {body: {code: 0, msg: SUCCESS, payload: [{datetime: "2026-09-22T03:00:00Z", amount: 30, type_name: WALLET, type_action: WITHDRAW, channel: ""}]}}
+    expect: {status: not_found}

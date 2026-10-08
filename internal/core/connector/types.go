@@ -17,9 +17,27 @@ type Connector struct {
 	toolIndex   map[string]*Tool
 }
 
+// Reindex สร้างดัชนีชื่อ tool ใหม่จาก c.Tools — ใช้กับ Connector ที่ประกอบเองในโค้ด (test) · Load ทำให้แล้ว
+func (c *Connector) Reindex() {
+	c.toolIndex = make(map[string]*Tool, len(c.Tools))
+	for _, t := range c.Tools {
+		c.toolIndex[t.Name] = t
+	}
+}
+
 func (c *Connector) Tool(name string) (*Tool, bool) {
 	t, ok := c.toolIndex[name]
 	return t, ok
+}
+
+// PageAction หาปุ่มตาม id (host.yaml page_actions)
+func (c *Connector) PageAction(id string) (PageAction, bool) {
+	for _, a := range c.Host.PageActions {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return PageAction{}, false
 }
 
 // Rule หา permission rule ตามชื่อ (permissions.yaml)
@@ -46,6 +64,61 @@ type HostConfig struct {
 	// PageColors = ตัวแปร CSS บนหน้าเว็บที่เก็บสีของแบรนด์ — office ที่ตั้ง "ใช้สีของเว็บ" ให้ widget อ่านสีจากตรงนี้
 	PageColors *PageColors `yaml:"page_colors"`
 	Facts      []Fact      `yaml:"facts"`
+	// PageActions = ปุ่มที่ผู้ช่วยแนบใต้คำตอบได้ (โหมด browser) · กดแล้ว widget ปิดกล่องแชทแล้วสั่งหน้าเว็บตามที่ประกาศ
+	// (เปิด modal / กดปุ่มของหน้า / ไปหน้าอื่น) — โมเดลเลือกได้แค่ id · วิธีสั่งหน้าเว็บมาจากตรงนี้เท่านั้น
+	PageActions []PageAction `yaml:"page_actions"`
+	// Guest = ผู้ที่ยังไม่ล็อกอินคุยได้ (เฉพาะ audience: player) · ไม่ตั้ง = ต้องล็อกอินก่อนปุ่มจะขึ้น
+	Guest *GuestPolicy `yaml:"guest"`
+	// FollowUps = ปุ่มถามต่อตั้งต้น — ใช้เมื่อคำตอบไม่ได้ปุ่มจาก tool ข้อมูล (ทักทาย ถามเมนู ถามสถานะ ฯลฯ) · สูงสุด 3 ปุ่มต่อสถานะผู้ใช้
+	FollowUps []HostFollowUp `yaml:"follow_ups"`
+}
+
+// HostFollowUp — ปุ่มถามต่อตั้งต้น · when: member | guest | any (ค่าเริ่มต้น) ตาม PageAction
+type HostFollowUp struct {
+	Label string `yaml:"label"`
+	Ask   string `yaml:"ask"`
+	When  string `yaml:"when"`
+}
+
+// AvailableTo — ปุ่มนี้ใช้ได้กับผู้ใช้สถานะนี้ไหม
+func (f HostFollowUp) AvailableTo(guest bool) bool {
+	return PageAction{When: f.When}.AvailableTo(guest)
+}
+
+// PageAction = ปุ่ม 1 ปุ่มใต้คำตอบ · when: member (ล็อกอินแล้ว) | guest (ยังไม่ล็อกอิน) | any (ค่าเริ่มต้น)
+type PageAction struct {
+	ID    string           `yaml:"id"    json:"id"`
+	Label string           `yaml:"label" json:"label"`
+	About string           `yaml:"about" json:"-"` // บอกโมเดลว่าปุ่มนี้พาไปไหน (ไม่ส่งลงหน้าเว็บ)
+	When  string           `yaml:"when"  json:"when,omitempty"`
+	Open  PageActionTarget `yaml:"open"  json:"open"`
+}
+
+// PageActionTarget — ตั้งได้อย่างเดียว:
+//
+//	bv_modal : id ของ modal bootstrap-vue (Nuxt 2) → window.$nuxt.$bvModal.show(id)
+//	click    : CSS selector ของปุ่มที่หน้าเว็บมีอยู่แล้ว → กดให้ (ได้เงื่อนไขเดิมของหน้า เช่น ยังไม่ผูกบัญชีก็เด้งหน้าผูกบัญชี)
+//	path     : หน้าในเว็บเดียวกัน (ขึ้นต้นด้วย /) → router ของหน้า หรือเปลี่ยน URL
+type PageActionTarget struct {
+	BVModal string `yaml:"bv_modal" json:"bv_modal,omitempty"`
+	Click   string `yaml:"click"    json:"click,omitempty"`
+	Path    string `yaml:"path"     json:"path,omitempty"`
+}
+
+// AvailableTo — ปุ่มนี้ใช้ได้กับผู้ใช้สถานะนี้ไหม
+func (a PageAction) AvailableTo(guest bool) bool {
+	switch a.When {
+	case "member":
+		return !guest
+	case "guest":
+		return guest
+	}
+	return true
+}
+
+// GuestPolicy — ผู้ไม่ล็อกอินถามได้วันละ DailyLimit ข้อความต่อ guest_id (นับตามวันของ timezone)
+type GuestPolicy struct {
+	DailyLimit int `yaml:"daily_limit"`
 }
 
 // HeaderSource = header ที่ widget แนบเพิ่ม (โหมด browser) เช่น header ที่หลังบ้านเดิมต้องการนอกจาก Authorization
@@ -263,6 +336,19 @@ type StatusEntry struct {
 	Meaning    string   `yaml:"meaning"`
 	NextAction string   `yaml:"next_action"`
 	Final      bool     `yaml:"final"`
+	// Tone = สีป้ายสถานะบนการ์ด: ok (เขียว) | wait (เหลือง) | bad (แดง) · ไม่ตั้ง = final → ok · นอกนั้น wait
+	Tone string `yaml:"tone"`
+}
+
+// ToneOf — สีป้ายของสถานะนี้
+func (e StatusEntry) ToneOf() string {
+	if e.Tone != "" {
+		return e.Tone
+	}
+	if e.Final {
+		return "ok"
+	}
+	return "wait"
 }
 
 func (t StatusTable) Find(code int) (StatusEntry, bool) {
@@ -315,7 +401,9 @@ type Guide struct {
 
 type QuestionFile struct {
 	Questions []string `yaml:"questions"`
-	Tools     []*Tool  `yaml:"tools"`
+	// Keywords = คำที่บอกว่าคำถามอยู่หมวดนี้ (ทุก tool ในไฟล์) — ใช้คัด tool ก่อนส่งให้โมเดล
+	Keywords []string `yaml:"keywords"`
+	Tools    []*Tool  `yaml:"tools"`
 }
 
 // Tool = ความสามารถ 1 อย่างที่โมเดลเรียกได้ (อ่านอย่างเดียว) · นิยามใน connector ไม่ใช่ในโค้ดกลาง
@@ -331,6 +419,14 @@ type Tool struct {
 	NotFound     *NotFoundSpec        `yaml:"not_found"`
 	Card         CardSpec             `yaml:"card"`
 	ModelContext []ContextSpec        `yaml:"model_context"`
+	// FollowUps = ปุ่มถามต่อใต้คำตอบ (กดแล้วส่งเป็นคำถามใหม่) · template {input.<ชื่อ>} ได้ · สูงสุด 3
+	FollowUps []FollowUp `yaml:"follow_ups"`
+	// Keywords = คำที่บอกว่าคำถามเกี่ยวกับ tool นี้ (รวมกับ keywords ของไฟล์) — ใช้คัด tool ก่อนส่งให้โมเดล
+	Keywords []string `yaml:"keywords"`
+	// Chain = ผลของ tool นี้อาจทำให้ต้องดึงต่อ (เช่น ได้รหัสรายการ/ยูสไปค้นต่อ) — เฉพาะ tool นี้ระบบถามโมเดลว่าต้องดึงเพิ่มไหม
+	Chain bool `yaml:"chain"`
+	// Answer = ประโยคตอบเมื่อการ์ดตอบครบแล้ว (ไม่ต้องให้โมเดลเขียน · เร็วขึ้น 1 รอบ) · template {input.<ชื่อ>} ได้ · ไม่ตั้ง = ชื่อการ์ด
+	Answer string `yaml:"answer"`
 
 	File string `yaml:"-"`
 	Line int    `yaml:"-"`
@@ -365,18 +461,21 @@ type Call struct {
 
 // ValueSpec = ค่าที่คำนวณจากผลของ call (ตามลำดับที่ประกาศ)
 type ValueSpec struct {
-	Name    string `yaml:"name"`
-	From    string `yaml:"from"`   // call id
-	Path    string `yaml:"path"`   // path ภายใน data ของ call นั้น ("" = ทั้งก้อน)
-	Filter  string `yaml:"filter"` // expr ต่อ item (ตัวแปร item)
-	SortBy  string `yaml:"sort_by"`
-	Order   string `yaml:"order"` // asc | desc
-	Limit   int    `yaml:"limit"`
-	Agg     string `yaml:"agg"`   // count | sum | min | max | avg | first | last
-	Field   string `yaml:"field"` // field ของ item สำหรับ agg/sort
-	GroupBy string `yaml:"group_by"`
-	Expr    string `yaml:"expr"` // คำนวณจากค่าอื่น ๆ
-	Default any    `yaml:"default"`
+	Name string `yaml:"name"`
+	From string `yaml:"from"` // call id
+	Path string `yaml:"path"` // path ภายใน data ของ call นั้น ("" = ทั้งก้อน)
+	// Paths = ลองทีละ path ใช้ตัวแรกที่มีค่า ("" = ทั้งก้อน) — ใช้แทน path เมื่อรูปข้อมูลของหลังบ้านเปลี่ยนตามการตั้งค่า
+	// (เช่น /bonus ของ topupserie: data เป็นรายการ หรือ data.bonus เมื่อฝากแบบกระเป๋า)
+	Paths   []string `yaml:"paths"`
+	Filter  string   `yaml:"filter"` // expr ต่อ item (ตัวแปร item)
+	SortBy  string   `yaml:"sort_by"`
+	Order   string   `yaml:"order"` // asc | desc
+	Limit   int      `yaml:"limit"`
+	Agg     string   `yaml:"agg"`   // count | sum | min | max | avg | first | last
+	Field   string   `yaml:"field"` // field ของ item สำหรับ agg/sort
+	GroupBy string   `yaml:"group_by"`
+	Expr    string   `yaml:"expr"` // คำนวณจากค่าอื่น ๆ
+	Default any      `yaml:"default"`
 }
 
 type NotFoundSpec struct {
@@ -384,7 +483,23 @@ type NotFoundSpec struct {
 	Message string `yaml:"message"`
 }
 
+// FollowUp — label = ข้อความบนปุ่ม · ask = คำถามที่ส่งเมื่อกด (ไม่ตั้ง = ใช้ label)
+type FollowUp struct {
+	Label string `yaml:"label"`
+	Ask   string `yaml:"ask"`
+}
+
+// CardStyles = แบบการ์ดที่ widget วาดได้ (ผู้ดูแลเปลี่ยนต่อ domain ในคอนโซลได้)
+//
+//	stat   ตัวเลขเด่น — field แรกตัวใหญ่ field ที่เหลือเป็นป้ายเล็ก (ยอดรวม/จำนวน)
+//	list   รายการกะทัดรัด — แถวละรายการ (คอลัมน์ที่เป็นเงินตัวใหญ่ · สถานะเป็นป้ายสี)
+//	table  ตาราง (ค่าเริ่มต้น) — สถานะเป็นป้ายสี
+//	single รายการเดียว — แถวแรกของตาราง: สถานะเป็นหัว + ค่าที่เหลือเป็นช่อง 2 คอลัมน์
+var CardStyles = map[string]bool{"stat": true, "list": true, "table": true, "single": true}
+
 type CardSpec struct {
+	// Style = แบบการ์ดตั้งต้นของ tool นี้ (ดู CardStyles) · ไม่ตั้ง = table
+	Style  string      `yaml:"style"`
 	Title  string      `yaml:"title"`
 	Fields []FieldSpec `yaml:"fields"`
 	Table  *TableSpec  `yaml:"table"`
@@ -398,7 +513,8 @@ type FieldSpec struct {
 	Format string `yaml:"format"`
 	Prefix string `yaml:"prefix"`
 	Suffix string `yaml:"suffix"`
-	When   string `yaml:"when"` // expr: แสดงเมื่อจริง
+	When   string `yaml:"when"`  // expr: แสดงเมื่อจริง
+	Empty  string `yaml:"empty"` // ค่าว่างแสดงเป็นข้อความนี้ (เช่น ผู้ทำรายการว่าง = ระบบอัตโนมัติ)
 }
 
 type TableSpec struct {
@@ -412,6 +528,7 @@ type ColumnSpec struct {
 	Field  string `yaml:"field"` // path ใน item
 	Format string `yaml:"format"`
 	Suffix string `yaml:"suffix"`
+	Empty  string `yaml:"empty"` // ค่าว่างแสดงเป็นข้อความนี้
 }
 
 type LinkSpec struct {

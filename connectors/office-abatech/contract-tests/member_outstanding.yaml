@@ -1,0 +1,30 @@
+# GET /AgentOutstanding?username → payload = OutstandingData[] ของ agent (POST = ลบเกมค้าง ห้ามใช้)
+tool: member_outstanding
+cases:
+  - name: มีเกมค้าง
+    input: {username: abc123}
+    responses:
+      o:
+        body:
+          code: 0
+          msg: สำเร็จ
+          payload:
+            - {Username: abc123, game_id: g1, game_name: PGSOFT, game_list_id: l1, game_list_name: Mahjong Ways, datetime: "2026-09-24T06:00:00Z"}
+    expect:
+      status: ok
+      calls:
+        o: {path: /AgentOutstanding/DEMO-SVC, query: {username: abc123}}
+      fields: {เกมค้าง: "1 เกม"}
+      table_cells:
+        - ["24/09/2026 13:00", PGSOFT, Mahjong Ways]
+      model_context: {has_outstanding: true}
+  - name: ไม่มีเกมค้าง
+    input: {username: abc123}
+    responses:
+      o: {body: {code: 0, msg: สำเร็จ, payload: null}}
+    expect: {status: not_found}
+  - name: เชื่อมต่อระบบเกมไม่ได้
+    input: {username: abc123}
+    responses:
+      o: {body: {code: 1, msg: เกิดข้อผิดพลาด ในการเชื่อมต่อ, payload: null}}
+    expect: {status: error}

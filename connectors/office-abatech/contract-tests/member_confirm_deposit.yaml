@@ -1,0 +1,28 @@
+# GET /GetComfirmStatementList?username → payload []ComfirmStatementModel (ไม่เรียง) · เลขบัญชีต้องไม่ขึ้นการ์ด
+tool: member_confirm_deposit
+cases:
+  - name: มีรายการ (เรียงล่าสุดก่อน)
+    input: {username: abc123}
+    responses:
+      c:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {datetime: "2026-09-20T03:00:00Z", username: abc123, amount: 300, bank_number: "9876543210", acc_bank_number: "1112223334"}
+            - {datetime: "2026-09-24T03:00:00Z", username: abc123, amount: 500, bank_number: "9876543210", acc_bank_number: "1112223334"}
+    expect:
+      status: ok
+      calls:
+        c: {path: /GetComfirmStatementList/DEMO-SVC, query: {username: abc123}}
+      fields: {ยอดที่ยืนยันรวม: "800.00 บาท", ทั้งหมด: "2 รายการ", ล่าสุด: "24/09/2026 10:00"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 10:00", "500.00"]
+        - ["20/09/2026 10:00", "300.00"]
+      model_context: {has_confirm: true}
+  - name: ไม่มีรายการ
+    input: {username: abc123}
+    responses:
+      c: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}

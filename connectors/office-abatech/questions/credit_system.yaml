@@ -5,6 +5,7 @@
 #   provider ยังไม่ตั้งค่า = code 0 payload 0 (แยกจากเหลือ 0 จริงไม่ได้)
 #   frontend: components/Dashboard/Layout/TopNavbar.vue:400-432 (Agent Credit / SMS Credit ทุกหน้า)
 questions: [BQ-41, BQ-42]
+keywords: [เครดิตเอเจ้น, เครดิตเอเย่น, เอเจ้น, เอเย่น, agent, sms, เครดิตระบบ, เครดิตเว็บ, เครดิตคงเหลือ]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: credit_agent_balance
     description: ยอดเครดิตเอเจ้น (Agent Credit) ล่าสุดที่ระบบบันทึกไว้ของเว็บ พร้อมเวลาที่อัปเดต
@@ -31,6 +32,7 @@ tools:
       - {name: recorded, from: a, path: service}
     not_found: {when: "recorded == ''", message: ยังไม่มียอดเครดิตเอเจ้นที่บันทึกไว้ของเว็บนี้ กดไอคอนรีเฟรชข้าง Agent Credit ที่แถบด้านบนเพื่อดึงยอดล่าสุด}
     card:
+      style: stat
       title: เครดิตเอเจ้น
       fields:
         - {label: Agent Credit คงเหลือ, value: amount, format: money}
@@ -39,6 +41,9 @@ tools:
       link: {label: เปิดหลังบ้าน, path: "/DashboardOnce?service={service_b64}"}
     model_context:
       - {name: note, type: text, text: ยอดแสดงในการ์ดแล้ว เป็นยอดล่าสุดที่บันทึกไว้}
+    follow_ups:
+      - {label: "SMS คงเหลือ", ask: "เครดิต SMS เหลือเท่าไหร่"}
+      - {label: "บิลที่ยังไม่ชำระ", ask: "มีบิลค่าใช้จ่ายระบบที่ยังไม่ชำระไหม"}
 
   - name: credit_sms_balance
     description: ยอด SMS Credit คงเหลือของเว็บ (ถามผู้ให้บริการ SMS สด)
@@ -55,6 +60,7 @@ tools:
     values:
       - {name: sms, from: s}
     card:
+      style: stat
       title: SMS Credit
       fields:
         - {label: SMS Credit คงเหลือ, value: sms, format: number}
@@ -63,3 +69,5 @@ tools:
     model_context:
       - {name: is_zero, type: bool, expr: "sms == 0"}
       - {name: note, type: text, text: ยอดแสดงในการ์ดแล้ว ถ้าเป็นศูนย์อาจยังไม่ได้ตั้งค่า}
+    follow_ups:
+      - {label: "เครดิตเอเจ้น", ask: "เครดิตเอเจ้นเหลือเท่าไหร่"}

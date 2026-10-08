@@ -4,6 +4,7 @@
 #   ip = IP ภายในของ server ไม่ใช่ของพนักงาน → ไม่แสดง · detail/change/data_new/data_old มียอดและข้อมูลสมาชิก → ไม่แสดง
 #   ไม่ใช้ GetLogLogin (ต้องรู้ id พนักงาน) · GetWorkingLogByUser (อ่านข้ามทุก service)
 questions: [BQ-35, BQ-50]
+keywords: [พนักงาน, แอดมิน, ประวัติการทำงาน, ใครทำ, ใครแก้, ใครเปลี่ยน, log]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: worklog_search
     description: >-
@@ -43,6 +44,7 @@ tools:
       - {name: rows, from: l, filter: "(empty(input.username) || lower(item.username) == lower(input.username)) && (empty(input.operator) || lower(item.operator_name) == lower(input.operator))", sort_by: datetime, order: desc, limit: 20}
     not_found: {when: "found == 0", message: ไม่พบประวัติการทำงานตามที่ถามในวันนั้น (ค้นได้ทีละวัน)}
     card:
+      style: list
       title: ประวัติการทำงานของพนักงาน
       fields:
         - {label: พบรายการ, value: found, format: int, suffix: " รายการ"}
@@ -57,3 +59,7 @@ tools:
       link: {label: เปิดรายงานการทำงานของพนักงาน, path: /Logs/Working}
     model_context:
       - {name: note, type: text, text: รายการแสดงในการ์ดแล้ว ไม่มีข้อมูล IP ของพนักงาน}
+    follow_ups:
+      - {label: "ประวัติการทำงานวันนี้", ask: "ประวัติการทำงานของพนักงานวันนี้"}
+      - {label: "รายการฝากของ {input.username}", ask: "รายการฝากวันนี้ของยูส {input.username}"}
+      - {label: "รายการถอนของ {input.username}", ask: "รายการถอนวันนี้ของยูส {input.username}"}

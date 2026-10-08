@@ -1,0 +1,26 @@
+# GET /GetEventStatementList?username&type=WHEEL → payload []EventStatementModel (detail.bet = ยอดที่ใช้หมุน · amount = รางวัล)
+tool: member_wheel
+cases:
+  - name: หมุนสองครั้ง
+    input: {username: abc123}
+    responses:
+      wh:
+        body:
+          code: 0
+          msg: SUCCESS
+          payload:
+            - {datetime: "2026-09-24T03:00:00Z", username: abc123, bonus_name: WHEEL, amount: 100, detail: {bet: 10}}
+            - {datetime: "2026-09-23T03:00:00Z", username: abc123, bonus_name: WHEEL, amount: 0, detail: {bet: 10}}
+    expect:
+      status: ok
+      calls:
+        wh: {path: /GetEventStatementList/DEMO-SVC, query: {username: abc123, type: WHEEL}}
+      fields: {รางวัลรวม: "100.00 บาท", หมุนทั้งหมด: "2 ครั้ง", ยอดที่ใช้หมุนรวม: "20", หมุนล่าสุด: "24/09/2026 10:00"}
+      table_cells:
+        - ["24/09/2026 10:00", "100.00", "10"]
+      model_context: {has_spin: true}
+  - name: ไม่เคยหมุน
+    input: {username: abc123}
+    responses:
+      wh: {body: {code: 0, msg: SUCCESS, payload: null}}
+    expect: {status: not_found}

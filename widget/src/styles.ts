@@ -32,6 +32,14 @@ export const CSS = `
   width:58px; height:58px; border-radius:50%; padding:0;
   border:0; cursor:pointer;
   color:var(--on-accent,#fff);
+  background:none; box-shadow:none;
+  display:grid; place-items:center;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+/* วงกลมสีหลัก — วาดเฉพาะปุ่มแบบไอคอนในตัว และตอนเปิด (×) · ปุ่มรูปฟองแชทตอนปิดไม่มีวงกลมเลย
+   (ไม่ใช้วิธีวาดแล้วค่อยซ่อน — บางเครื่องยังเห็นวงกลมโผล่ใต้ฟองแชท) */
+.launcher:not([data-icon]),.launcher[data-open="true"]{
   /* แสงเงาบนสีหลัก — ให้ปุ่มดูนูน ไม่แบน (สีหลักตั้งจากคอนโซลได้) */
   background:
     radial-gradient(120% 90% at 30% 18%, rgba(255,255,255,.34), rgba(255,255,255,0) 58%),
@@ -41,12 +49,9 @@ export const CSS = `
     inset 0 0 0 1px rgba(255,255,255,.22),
     0 2px 4px rgba(19,40,43,.12),
     0 10px 24px -6px var(--accent);
-  display:grid; place-items:center;
-  transition:transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease;
-  -webkit-tap-highlight-color:transparent;
 }
-.launcher:hover{
-  transform:translateY(-2px) scale(1.04);
+.launcher:hover{transform:translateY(-2px) scale(1.04)}
+.launcher:not([data-icon]):hover,.launcher[data-open="true"]:hover{
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.28), 0 4px 8px rgba(19,40,43,.14), 0 16px 30px -8px var(--accent);
 }
 .launcher:active{transform:scale(.95)}
@@ -68,9 +73,8 @@ export const CSS = `
 .launcher[data-open="true"]::after{animation:none; opacity:0}
 .launcher img{width:46px;height:46px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 2px rgba(255,255,255,.55)}
 /* ปุ่มแบบฟองแชท 3D ลอย — ไม่มีวงกลมพื้นหลังตอนปิด · ตอนเปิดกลับเป็นวงกลมสีหลักพร้อม × */
-.launcher[data-icon]:not([data-open="true"]){background:none;box-shadow:none;width:64px;height:64px}
+.launcher[data-icon]:not([data-open="true"]){width:64px;height:64px;border-radius:0}
 .launcher[data-icon]::after{display:none}
-.launcher[data-icon]:not([data-open="true"]):hover{box-shadow:none}
 .licon{position:relative;display:block;width:64px;height:64px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.28));animation:aio-float 3.2s ease-in-out infinite}
 .licon img{width:100%;height:100%;border-radius:0;object-fit:contain;box-shadow:none}
 .licon .tint{position:absolute;inset:0;background:linear-gradient(135deg, var(--accent-stops));mix-blend-mode:color;
@@ -80,6 +84,8 @@ export const CSS = `
 .ico{width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .ico .fill{fill:currentColor;stroke:none}
 .launcher .close.ico{width:24px;height:24px;stroke-width:2.2}
+/* × วางกลางปุ่มเสมอ — รูปฟองแชท (64px) ที่ซ่อนตอนเปิดยังกินช่อง grid ใหญ่กว่าปุ่ม (58px) ทำให้ × เยื้อง */
+.launcher .close{position:absolute;inset:0;margin:auto}
 @media (prefers-reduced-motion: reduce){
   .launcher,.launcher .face,.launcher .close{transition:none}
   .launcher::after{animation:none}
@@ -206,6 +212,61 @@ export const CSS = `
 .datacard .src a{color:var(--accent);text-decoration:none;font-weight:500}
 .datacard.k-error,.datacard.k-denied{border-color:var(--danger);background:var(--danger-soft)}
 .datacard.k-not_found{border-style:dashed}
+/* ป้ายสถานะ — สีจาก tone ของตารางสถานะ (ok เขียว · wait เหลือง · bad แดง) */
+.pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap;line-height:1.6}
+.pill.t-ok{background:#e3f5ec;color:#146c43}
+.pill.t-wait{background:#fdf1dc;color:#8a5300}
+.pill.t-bad{background:#fde7e7;color:#a12626}
+.datacard .dc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.datacard .dc-head .dc-title{margin:0}
+.datacard .dc-meta{font-size:11.5px;color:var(--muted);text-align:right}
+/* stat — ตัวเลขเด่น */
+.datacard .dc-statlabel{font-size:12px;color:var(--muted);font-weight:500}
+.datacard .dc-statval{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:26px;font-weight:500;letter-spacing:-.3px;margin:2px 0 4px;word-break:break-word}
+.datacard .dc-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
+.datacard .chip{background:var(--surface-2,#eef1f0);border-radius:999px;padding:2px 9px;font-size:11.5px;color:var(--ink-2)}
+/* list — แถวละรายการ */
+.datacard .dc-li{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line)}
+.datacard .dc-li:last-of-type{border-bottom:0}
+.datacard .dc-li-time{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);min-width:44px;max-width:96px}
+.datacard .dc-li-main{display:flex;flex-direction:column;flex:1 1 auto;min-width:0}
+.datacard .dc-li-val{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:14px;font-weight:500;word-break:break-word}
+.datacard .dc-li-sub{font-size:11.5px;color:var(--muted);word-break:break-word}
+/* single — รายการเดียว */
+.datacard .dc-single-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.datacard .dc-single-head .dc-title{margin:0}
+.datacard .dc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.datacard .dc-cell{display:flex;flex-direction:column;gap:1px;min-width:0}
+.datacard .dc-cell span{font-size:11px;color:var(--muted)}
+.datacard .dc-cell b{font-weight:500;font-size:13px;font-variant-numeric:tabular-nums;word-break:break-word}
+/* ปุ่มถามต่อ — รองจากปุ่มสั่งหน้าเว็บ (.act) จึงเป็นขอบบาง ไม่ทึบ */
+.sugs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.sug{border:1px solid var(--accent);border-radius:999px;padding:5px 12px;font:inherit;font-size:12.5px;cursor:pointer;
+  color:var(--accent);background:transparent;transition:background .15s ease}
+.sug:hover{background:var(--accent-soft)}
+.sug:focus-visible{outline:2px solid var(--accent-soft);outline-offset:2px}
+.panel[data-bgimg] .sug{color:#e2e8f0;border-color:rgba(255,255,255,.35)}
+.panel[data-bgimg] .sug:hover{background:rgba(255,255,255,.1)}
+/* หน้าเว็บผู้เล่น: ไม่มีกรอบการ์ด — อ่านเป็นข้อความในฟองแชท (ไม่เหมือนการ์ดของหลังบ้าน) */
+.datacard.inline{border:0;background:none;padding:0;margin-top:8px;color:inherit}
+.datacard.inline .dc-title{font-size:13.5px;margin-bottom:6px}
+.datacard.inline .dc-line{font-size:13px;padding:1px 0}
+.datacard.inline .dc-item{padding:5px 0 5px 12px;position:relative;font-size:13px}
+.datacard.inline .dc-item::before{content:"•";position:absolute;left:0;top:5px;opacity:.7}
+.datacard.inline .dc-item+.dc-item{border-top:1px dashed currentColor;border-top-color:color-mix(in srgb, currentColor 22%, transparent)}
+.datacard.inline .dc-sub{font-size:12px;opacity:.8;margin-top:1px}
+.datacard.inline .dc-note{color:inherit;opacity:.75}
+.datacard.inline .src{border:0;padding:0;margin-top:6px;opacity:.7;color:inherit}
+.datacard.inline.k-error,.datacard.inline.k-denied{background:none}
+/* ปุ่มใต้คำตอบ (หน้าเว็บผู้เล่น) — ไม่มีปุ่มแบบนี้ใน widget มาก่อน: เป็นปุ่มเดียวที่สั่งหน้าเว็บ จึงใช้สีไล่ของผู้ช่วยให้เด่นกว่าลิงก์ในการ์ด */
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.act{border:0;border-radius:999px;padding:7px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+  color:var(--on-accent,#fff);background:linear-gradient(135deg, var(--accent-stops));box-shadow:0 2px 8px -2px var(--accent);
+  transition:transform .15s ease, filter .15s ease}
+.act:hover{transform:translateY(-1px);filter:brightness(1.06)}
+.act:active{transform:scale(.97)}
+.act:focus-visible{outline:2px solid var(--accent-soft);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.act{transition:none}}
 .datacard.room{display:block;width:100%;text-align:left;cursor:pointer;font:inherit;margin-top:0}
 .datacard.room:hover,.datacard.room:focus-visible{border-color:var(--accent)}
 

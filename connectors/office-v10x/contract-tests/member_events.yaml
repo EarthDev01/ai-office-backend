@@ -1,0 +1,46 @@
+# response ตาม controller/wallet.go:76-97 GetEventStatementListByUser ({code, data[] EventStatement, count})
+tool: member_events
+cases:
+  - name: ไม่ระบุวัน = ตั้งแต่สมัคร
+    input: {username: user01}
+    responses:
+      e:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          data:
+            - {id: 66f2a1b2c3d4e5f601239001, datetime: "2026-09-23T20:00:00+07:00", username: user01, amount: 50, bonus_name: กงล้อนำโชค, type_name: WHEEL, before_credit: 10, after_credit: 60, comment: "ได้รับจากกงล้อ"}
+            - {id: 66f2a1b2c3d4e5f601239002, datetime: "2026-09-20T08:00:00+07:00", username: user01, amount: 20, bonus_name: เช็คอินรายวัน, type_name: CHECKIN}
+    expect:
+      status: ok
+      calls:
+        e: {path: /eventstatement-list-byusername/DEMO-SVC, query: {username: user01, range_dt: "2000-01-01 00:00:00~2026-09-24 23:59:59", sort: datetime, order: "-1", limit: "50", page: "1"}}
+      fields: {พบ: "2 รายการ", ยอดรวม: "70.00 บาท"}
+      no_fields: [ยอดรวมเฉพาะรายการล่าสุดที่ดึงมา]
+      table_rows: 2
+      table_cells:
+        - ["23/09/2026 20:00", "50.00", กงล้อนำโชค, WHEEL]
+      model_context: {may_have_more: false}
+      link: /member/user01
+  - name: มีมากกว่าที่ดึง → ยอดรวมเฉพาะที่ดึงมา
+    input: {username: user01, date_from: "2026-09-01"}
+    responses:
+      e: {body: {code: 0, count: 120, data: [{datetime: "2026-09-23T20:00:00+07:00", amount: 50, bonus_name: กงล้อนำโชค}]}}
+    expect:
+      status: ok
+      calls:
+        e: {query: {range_dt: "2026-09-01 00:00:00~2026-09-24 23:59:59"}}
+      fields: {ยอดรวมเฉพาะรายการล่าสุดที่ดึงมา: "50.00 บาท"}
+      no_fields: [ยอดรวม]
+      model_context: {may_have_more: true}
+  - name: ไม่พบ
+    input: {username: user01}
+    responses:
+      e: {body: {code: 0, data: [], count: 0}}
+    expect: {status: not_found}
+  - name: DB error (code 1 No Data Member · data null) = ดึงไม่ได้ ไม่ใช่ไม่พบ
+    input: {username: user01}
+    responses:
+      e: {body: {code: 1, message: No Data Member, data: null}}
+    expect: {status: error}

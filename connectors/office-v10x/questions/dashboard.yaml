@@ -4,6 +4,7 @@
 # response data = {dashboard_now, dashboard_before} · ⚠️ dashboard_before.* = ค่าช่วงนี้ − ค่าช่วงก่อน (ส่วนต่าง) ไม่ใช่ยอดช่วงก่อน
 #   ช่วงก่อน = จำนวนวันเท่ากันต่อท้ายก่อนหน้า · profit = ฝาก − ถอน (ไม่หักโบนัส) · อ่าน report_active_user_day อย่างเดียว (แคช Redis ถูก comment)
 questions: [BQ-01, BQ-12]
+keywords: [สรุป, วันนี้, ภาพรวม, ฝากลบถอน, กำไร, ยอดรวม, ยอดฝาก, ยอดถอน, เมื่อวาน, เดือน, ช่วง, dashboard]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: dashboard_summary
     description: >-
@@ -59,6 +60,7 @@ tools:
       - {name: prev_bonus, expr: "cur_bonus - diff_bonus"}
       - {name: prev_profit, expr: "cur_profit - diff_profit"}
     card:
+      style: stat
       title: ภาพรวมยอดฝาก-ถอนของเว็บนี้
       fields:
         - {label: ยอดฝาก, value: cur_deposit, format: money, suffix: " บาท"}
@@ -86,3 +88,7 @@ tools:
       - {name: profit_positive, type: bool, expr: "cur_profit > 0"}
       - {name: profit_up, type: bool, expr: "diff_profit > 0"}
       - {name: note_numbers, type: text, text: ตัวเลขทั้งหมดอยู่ในการ์ดแล้ว กำไรคือฝากลบถอนยังไม่หักโบนัส ช่วงก่อนหน้ายาวเท่าช่วงที่ถาม}
+    follow_ups:
+      - {label: "สรุปรายการฝากวันนี้", ask: "สรุปรายการฝากวันนี้"}
+      - {label: "ถอนที่ยังไม่สำเร็จ", ask: "ตอนนี้มีรายการถอนที่ยังไม่สำเร็จกี่รายการ"}
+      - {label: "จำนวนสมาชิก", ask: "ตอนนี้มีสมาชิกทั้งหมดกี่คน สมัครวันนี้กี่คน"}

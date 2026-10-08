@@ -35,6 +35,8 @@ type Office struct {
 	Accent   string `json:"accent_color"       bson:"accent_color,omitempty"` // สีหลักของ widget #rrggbb · ว่าง = สีตั้งต้น
 	// AccentColors = สีไล่ 2–4 สี (หัวแชท ปุ่มลอย ฟองข้อความผู้ใช้ ปุ่มส่ง) · ว่าง = ใช้ Accent สีเดียว (domain เก่า)
 	AccentColors []string `json:"accent_colors" bson:"accent_colors,omitempty"`
+	// CardStyles = แบบการ์ดต่อคำถาม (ชื่อ tool → stat|list|table|single) ทับค่าตั้งต้นของ connector · ตั้งในคอนโซล
+	CardStyles map[string]string `json:"card_styles,omitempty" bson:"card_styles,omitempty"`
 	// ColorSource = ที่มาของสี: "" (เลือกเองในคอนโซล) | site (widget อ่านสีของแบรนด์จากหน้าเว็บตาม page_colors ของ connector)
 	ColorSource string    `json:"color_source" bson:"color_source,omitempty"`
 	Placement   Placement `json:"placement"          bson:"placement"`

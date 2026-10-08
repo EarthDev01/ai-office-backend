@@ -41,7 +41,8 @@ func (r *ToolRunner) Run(ctx context.Context, conn *connector.Connector, t domai
 
 	// เช็คสิทธิ์ก่อนยิง — ไม่ผ่านไม่ยิง API เลย
 	rule, ok := conn.Rule(tool.Permission)
-	if !ok || !rule.Allows(t.Permissions, int(t.Level)) {
+	// ผู้ที่ยังไม่ล็อกอินไม่มีบัญชี — tool ที่มีกฎสิทธิ์ (ข้อมูลของสมาชิก) ใช้ไม่ได้ทุกตัว
+	if !ok || t.Guest || !rule.Allows(t.Permissions, int(t.Level)) {
 		return ToolRun{Outcome: deniedOutcome(tool, rule, r.now())}
 	}
 

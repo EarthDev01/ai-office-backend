@@ -135,6 +135,10 @@ func ResolveCaller(r port.IdentityResolver) gin.HandlerFunc {
 		cred := domain.Credential{
 			Token: strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")),
 		}
+		// ผู้ที่ยังไม่ล็อกอิน (หน้าเว็บผู้เล่น) — widget ส่ง "Guest <guest_id>" แทน token
+		if g, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Guest "); ok {
+			cred = domain.Credential{GuestID: strings.TrimSpace(g)}
+		}
 
 		caller, err := r.Resolve(c.Request.Context(), office, cred)
 		switch err {

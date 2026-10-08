@@ -9,6 +9,7 @@
 # GET /api/get-credit-real-wallet-list/:service (controller/credit.go GetCreditRealWalletList) — ประวัติจัดการเครดิตกระเป๋าเงินสด
 #   frontend: getCreditWalletList · order ต้องเป็น 1|-1 · limit/page ≥ 1 (binding required) · ไม่มีตัวกรอง username ฝั่ง server → กรองใน values
 questions: [BQ-47, BQ-50]
+keywords: [เครดิต, ยอดเงิน, เงินเหลือ, กระเป๋า, เพิ่มเครดิต, ลดเครดิต, ปรับเครดิต]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: member_credit_live
     description: >-
@@ -38,6 +39,7 @@ tools:
       - {name: user, from: c, path: username}
     not_found: {when: "false", message: เช็คเครดิตไม่ได้ อาจเพราะไม่พบยูสเซอร์เนมนี้ ไม่มีสิทธิ์เช็คเครดิต หรือระบบเกมไม่ตอบ ลองเปิดหน้าข้อมูลสมาชิกเพื่อตรวจ}
     card:
+      style: stat
       title: เครดิตสมาชิก
       fields:
         - {label: Username, value: user, when: "!empty(user)"}
@@ -46,6 +48,10 @@ tools:
       link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
     model_context:
       - {name: has_credit, type: bool, expr: "credit > 0"}
+    follow_ups:
+      - {label: "ประวัติจัดการเครดิตของ {input.username}", ask: "ประวัติการจัดการเครดิตของยูส {input.username}"}
+      - {label: "รายการเล่นของ {input.username}", ask: "ยูส {input.username} วันนี้เล่นไปเท่าไหร่ แพ้ชนะเท่าไหร่"}
+      - {label: "ถอนที่ยังไม่จบของ {input.username}", ask: "ยูส {input.username} มีรายการถอนที่ยังไม่จบไหม"}
 
   - name: credit_history
     description: >-
@@ -100,6 +106,7 @@ tools:
       - {name: shown_count, expr: "len(rows)"}
     not_found: {when: "total_count == 0", message: ไม่พบประวัติจัดการเครดิตในช่วงวันที่ถาม}
     card:
+      style: list
       title: ประวัติจัดการเครดิต
       fields:
         - {label: พบทั้งหมด, value: total_count, format: int, suffix: " รายการ"}
@@ -119,6 +126,10 @@ tools:
       link: {label: เปิดจัดการเครดิต, path: "/transection/managecredit?menu=credit"}
     model_context:
       - {name: more_than_shown, type: bool, expr: "total_count > shown_count"}
+    follow_ups:
+      - {label: "เครดิตของ {input.username}", ask: "เช็คเครดิตคงเหลือของยูส {input.username}"}
+      - {label: "กระเป๋าเงินสดของ {input.username}", ask: "ประวัติจัดการเครดิตกระเป๋าเงินสดของยูส {input.username}"}
+      - {label: "ประวัติการทำงานพนักงาน", ask: "ประวัติการทำงานของพนักงานวันนี้"}
 
   - name: credit_wallet_history
     description: >-
@@ -153,6 +164,7 @@ tools:
       - {name: fetched_count, from: w, path: data, agg: count}
     not_found: {when: "empty(rows)", message: ไม่พบประวัติจัดการเครดิตกระเป๋าเงินสดในช่วงวันที่ถาม}
     card:
+      style: list
       title: ประวัติจัดการเครดิตกระเป๋าเงินสด
       fields:
         - {label: ทั้งช่วงวัน (ทุกยูส), value: total_count, format: int, suffix: " รายการ"}
@@ -172,3 +184,6 @@ tools:
       link: {label: เปิดจัดการเครดิต, path: "/transection/managecredit?menu=credit"}
     model_context:
       - {name: filtered_partially, type: bool, expr: "total_count > fetched_count"}
+    follow_ups:
+      - {label: "ประวัติจัดการเครดิตของ {input.username}", ask: "ประวัติการจัดการเครดิตของยูส {input.username}"}
+      - {label: "เครดิตของ {input.username}", ask: "เช็คเครดิตคงเหลือของยูส {input.username}"}

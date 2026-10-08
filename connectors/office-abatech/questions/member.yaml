@@ -7,6 +7,7 @@
 #   ⚠️ แถวมี bank_name/bank_number/phone_number → ใช้แค่ count
 # ไม่ใช้ GetMemberByUsername / GetMemberSearch / GetMemberAll / GetMemberExcell — คืน password, otp_code, token, session_id ของสมาชิก (BQ-05, BQ-08 ตอบด้วย fact)
 questions: [BQ-07, BQ-09]
+keywords: [สมาชิก, สมัคร, ยูส, user, รออนุมัติ, รอตรวจ, บัญชีสมาชิก]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: member_stats
     description: จำนวนสมาชิกทั้งหมดของเว็บ และจำนวนสมาชิกที่สมัครวันนี้ (ดูวันอื่นไม่ได้)
@@ -29,6 +30,7 @@ tools:
       - {name: all, from: m, path: all}
       - {name: today_new, from: m, path: current}
     card:
+      style: stat
       title: จำนวนสมาชิก
       fields:
         - {label: สมาชิกทั้งหมด, value: all, format: int, suffix: " คน"}
@@ -38,6 +40,9 @@ tools:
     model_context:
       - {name: has_new_today, type: bool, expr: "today_new > 0"}
       - {name: note, type: text, text: ตัวเลขแสดงในการ์ดแล้ว สมัครใหม่นับเฉพาะวันนี้}
+    follow_ups:
+      - {label: "บัญชีสมาชิกรอตรวจ", ask: "บัญชีธนาคารของสมาชิกที่รอตรวจสอบมีกี่บัญชี"}
+      - {label: "สรุปยอดวันนี้", ask: "สรุปยอดวันนี้"}
 
   - name: bank_member_pending
     description: จำนวนบัญชีธนาคารของสมาชิกที่ยังรอตรวจสอบ แยกตามผลการตรวจ (รอตรวจสอบ ไม่พบธนาคาร ผิดพลาด ชื่อบัญชีซ้ำ)
@@ -58,6 +63,7 @@ tools:
       - {name: dup, from: dup, path: count}
     not_found: {when: "total == 0", message: ไม่มีบัญชีธนาคารของสมาชิกที่รอตรวจสอบ}
     card:
+      style: stat
       title: บัญชีสมาชิกที่รอตรวจสอบ
       fields:
         - {label: ทั้งหมด, value: total, format: int, suffix: " บัญชี"}
@@ -70,3 +76,5 @@ tools:
     model_context:
       - {name: has_pending, type: bool, expr: "total > 0"}
       - {name: note, type: text, text: จำนวนแสดงในการ์ดแล้ว}
+    follow_ups:
+      - {label: "จำนวนสมาชิก", ask: "สมาชิกทั้งหมดกี่คน สมัครใหม่วันนี้กี่คน"}

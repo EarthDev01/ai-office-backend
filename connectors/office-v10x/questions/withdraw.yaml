@@ -9,6 +9,7 @@
 #   frontend: MemberWithdraw2.vue / P2PWithdrawModal.vue · data = withdraw_statement เต็ม รวม comment_time_lime[] (timeline)
 #   ไม่พบ/รหัสผิด → code 1 "No Data Withdraw" / "Invalid withdrawal ID" → not_found_codes [1]
 questions: [BQ-03, BQ-04, BQ-06]
+keywords: [ถอน, โอนออก, ค้าง, รหัสรายการ]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: withdraw_pending_by_status
     description: >-
@@ -66,6 +67,7 @@ tools:
       - {name: bank_check_count, from: p, path: data, filter: "item.status == 13", agg: count}
     not_found: {when: "total_count == 0", message: ไม่มีรายการถอนค้างในช่วงวันที่ถาม}
     card:
+      style: table
       title: รายการถอนที่ยังไม่สำเร็จ
       fields:
         - {label: รายการค้างทั้งหมด, value: total_count, format: int, suffix: " รายการ"}
@@ -85,6 +87,9 @@ tools:
       - {name: counted_partially, type: bool, expr: "total_count > fetched_count"}
       - {name: needs_bank_check, type: bool, expr: "bank_check_count > 0"}
       - {name: statuses, type: labels, from: rows, pluck: key, format: "status:withdraw"}
+    follow_ups:
+      - {label: "ถอนที่ค้างนานสุด", ask: "รายการถอนที่ค้างนานที่สุด"}
+      - {label: "ภาพรวมยอดฝาก-ถอน", ask: "สรุปยอดฝาก ยอดถอน วันนี้"}
 
   - name: withdraw_pending_oldest
     description: >-
@@ -115,6 +120,7 @@ tools:
       - {name: pending_total, from: o, path: count}
     not_found: {when: "empty(rows)", message: ไม่มีรายการถอนค้างในช่วงวันที่ถาม}
     card:
+      style: list
       title: รายการถอนที่ค้างนานสุด
       fields:
         - {label: รายการค้างทั้งหมด, value: pending_total, format: int, suffix: " รายการ"}
@@ -130,6 +136,9 @@ tools:
       link: {label: เปิดรายการถอน, path: /transection/withdraw}
     model_context:
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+    follow_ups:
+      - {label: "ถอนที่ยังไม่สำเร็จแยกสถานะ", ask: "รายการถอนที่ยังไม่สำเร็จแยกตามสถานะ"}
+      - {label: "บัญชีถอนที่เปิดใช้งาน", ask: "บัญชีถอนที่เปิดใช้งานอยู่มีบัญชีไหนบ้าง"}
 
   - name: withdraw_find
     description: >-
@@ -137,6 +146,7 @@ tools:
       · ถ้าต้องการรายการที่จบแล้ว (สำเร็จ ยกเลิก ถูกซ่อน) ใช้ withdraw_history_find · ไม่ระบุวัน = วันนี้ · ไม่แสดง IP
     questions: [BQ-06]
     permission: withdraw
+    chain: true   # ผลมีรหัสรายการ/ยูส ที่อาจต้องค้นต่อ
     freshness: summary
     input:
       username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
@@ -161,6 +171,7 @@ tools:
       - {name: match_count, expr: "len(rows)"}
     not_found: {when: "empty(rows)", message: ไม่พบรายการถอนที่ยังไม่จบของยูสเซอร์เนมนี้ในช่วงวันที่ถาม}
     card:
+      style: list
       title: รายการถอนที่ยังไม่จบของสมาชิก
       fields:
         - {label: พบ, value: match_count, format: int, suffix: " รายการ"}
@@ -179,6 +190,10 @@ tools:
       link: {label: เปิดรายการถอน, path: /transection/withdraw}
     model_context:
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+    follow_ups:
+      - {label: "ประวัติถอนของ {input.username}", ask: "ประวัติถอนที่จบแล้วของยูส {input.username}"}
+      - {label: "รายการฝากของ {input.username}", ask: "รายการฝากของยูส {input.username}"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
 
   - name: withdraw_history_find
     description: >-
@@ -186,6 +201,7 @@ tools:
       แสดงยอด สถานะ ผู้ดำเนินการ หมายเหตุ · ไม่ระบุวัน = วันนี้ · ไม่แสดง IP
     questions: [BQ-06]
     permission: withdraw
+    chain: true   # ผลมีรหัสรายการ/ยูส ที่อาจต้องค้นต่อ
     freshness: summary
     input:
       username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
@@ -211,6 +227,7 @@ tools:
       - {name: match_count, expr: "len(rows)"}
     not_found: {when: "empty(rows)", message: ไม่พบรายการถอนที่จบแล้วของยูสเซอร์เนมนี้ในช่วงวันที่ถาม}
     card:
+      style: list
       title: ประวัติรายการถอนของสมาชิก
       fields:
         - {label: พบ, value: match_count, format: int, suffix: " รายการ"}
@@ -221,11 +238,15 @@ tools:
       link: {label: เปิดรายการถอน, path: /transection/withdraw}
     model_context:
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+    follow_ups:
+      - {label: "ถอนที่ยังไม่จบของ {input.username}", ask: "ยูส {input.username} มีรายการถอนที่ยังไม่จบไหม"}
+      - {label: "รายการฝากของ {input.username}", ask: "รายการฝากของยูส {input.username}"}
 
   - name: withdraw_by_id
     description: รายละเอียดรายการถอน 1 รายการตามรหัสรายการ (ObjectID) พร้อมลำดับการเปลี่ยนสถานะและผู้ดำเนินการแต่ละขั้น
     questions: [BQ-06]
     permission: withdraw
+    answer: llm   # ต้องอธิบาย/ตีความ — ให้ AI เขียนคำตอบ
     freshness: summary
     input:
       id: {type: string, required: true, description: รหัสรายการถอน (ObjectID), pattern: "^[0-9a-fA-F]{24}$"}
@@ -274,6 +295,7 @@ tools:
       - {name: web_bank, from: w, path: acc_bank_code}
       - {name: steps, from: w, path: comment_time_lime, default: []}
     card:
+      style: single
       title: รายละเอียดรายการถอน
       fields:
         - {label: วันที่, value: dt, format: datetime}
@@ -300,3 +322,5 @@ tools:
       - {name: is_cancelled, type: bool, expr: "st == 4"}
       - {name: needs_bank_check, type: bool, expr: "st == 13"}
       - {name: timeline_statuses, type: labels, from: steps, pluck: status, format: "status:withdraw"}
+    follow_ups:
+      - {label: "ถอนที่ยังไม่สำเร็จ", ask: "ตอนนี้มีรายการถอนที่ยังไม่สำเร็จกี่รายการ"}

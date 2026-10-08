@@ -1,0 +1,32 @@
+# response ตาม topupserie controller/member.go:30 Member — ⚠️ มี full_name bank_list ref_link ด้วย (ต้องไม่ขึ้นการ์ด)
+tool: my_points
+cases:
+  - name: มีแต้มและเครดิตกงล้อ
+    username: somchai01
+    responses:
+      m:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            username: somchai01
+            date_regis: "2026-01-02T03:04:05Z"
+            full_name: สมชาย ใจดี
+            bank_list: [{bank_code: KBANK, bank_number: "1234567890", bank_name: สมชาย ใจดี}]
+            is_bonus: 1
+            ref_link: "https://x.example/register?aff=1&token=SECRET"
+            point: 1250
+            wallet: 0
+            wheel: 35.5
+    expect:
+      status: ok
+      calls:
+        m: {path: /member, body: {username: somchai01}}
+      fields: {แต้ม (เพชร): "1,250", เครดิตกงล้อ: "35.50 บาท"}
+      no_fields: [ยอดในกระเป๋าสะสม]
+      model_context: {has_points: true, has_wheel_credit: true}
+      link: /
+  - name: ไม่พบสมาชิก (code 1 userNotFound)
+    responses:
+      m: {body: {status: {code: 200, message: ok}, message: {code: 1, message: ไม่พบผู้ใช้งาน}, data: null}}
+    expect: {status: not_found}

@@ -10,6 +10,7 @@
 # GET /api/bank-member/check-approve/:service (controller/approveBank.go CheckApproveBankNow) · frontend getBankMemberListCount
 #   data = จำนวนบัญชีธนาคารสมาชิกที่ bank_list.status รออนุมัติ (ไม่นับสมาชิกที่ลบ/ปิดกั้น) · ⚠️ DB error ถูกกลืนเป็น 0
 questions: [BQ-05, BQ-07, BQ-08, BQ-09]
+keywords: [สมาชิก, สมัคร, ยูส, user, รออนุมัติ, รอตรวจ, บัญชีสมาชิก]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: member_lookup
     description: >-
@@ -17,6 +18,8 @@ tools:
       · ไม่มีเวลาออนไลน์ล่าสุดแบบนาที · ไม่แสดงเบอร์โทรและเลขบัญชี
     questions: [BQ-05]
     permission: member
+    answer: llm   # ต้องอธิบาย/ตีความ — ให้ AI เขียนคำตอบ
+    chain: true   # ผลมีรหัสรายการ/ยูส ที่อาจต้องค้นต่อ
     freshness: summary
     input:
       username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
@@ -66,6 +69,7 @@ tools:
       - {name: bank_count, expr: "len(m_banks)"}
     not_found: {when: "empty(mem)", message: ไม่พบสมาชิกยูสเซอร์เนมนี้ในเว็บนี้}
     card:
+      style: single
       title: ข้อมูลสมาชิก
       fields:
         - {label: Username, value: m_user}
@@ -87,6 +91,10 @@ tools:
       - {name: blocked, type: bool, expr: "m_active == 99"}
       - {name: has_deposited, type: bool, expr: "m_topup != 0"}
       - {name: has_bank_account, type: bool, expr: "bank_count > 0"}
+    follow_ups:
+      - {label: "เครดิตของ {input.username}", ask: "เช็คเครดิตคงเหลือของยูส {input.username}"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+      - {label: "รายการฝากของ {input.username}", ask: "รายการฝากของยูส {input.username}"}
 
   - name: member_stats
     description: >-
@@ -122,6 +130,7 @@ tools:
       - {name: new_today, from: c, path: current}
       - {name: unverified, from: s, path: uncomfirm_account}
     card:
+      style: stat
       title: จำนวนสมาชิก
       fields:
         - {label: สมาชิกทั้งหมด (ไม่รวมที่ลบ), value: all_members, format: int, suffix: " คน"}
@@ -132,6 +141,9 @@ tools:
     model_context:
       - {name: has_new_today, type: bool, expr: "new_today > 0"}
       - {name: has_unverified, type: bool, expr: "unverified > 0"}
+    follow_ups:
+      - {label: "บัญชีสมาชิกที่รออนุมัติ", ask: "มีบัญชีธนาคารสมาชิกรออนุมัติกี่บัญชี"}
+      - {label: "ภาพรวมยอดฝาก-ถอน", ask: "สรุปยอดฝาก ยอดถอน วันนี้"}
 
   - name: bank_member_pending
     description: จำนวนบัญชีธนาคารของสมาชิกที่รออนุมัติอยู่ตอนนี้ (หน้าอนุมัติบัญชีสมาชิก)
@@ -149,9 +161,12 @@ tools:
       - {name: pending, from: b, path: ""}
     not_found: {when: "pending == 0", message: ไม่มีบัญชีธนาคารของสมาชิกที่รออนุมัติ}
     card:
+      style: stat
       title: บัญชีสมาชิกที่รออนุมัติ
       fields:
         - {label: รออนุมัติ, value: pending, format: int, suffix: " บัญชี"}
       link: {label: เปิดอนุมัติบัญชีสมาชิก, path: /member/approvebank}
     model_context:
       - {name: has_pending, type: bool, expr: "pending > 0"}
+    follow_ups:
+      - {label: "จำนวนสมาชิก", ask: "ตอนนี้มีสมาชิกทั้งหมดกี่คน สมัครวันนี้กี่คน"}

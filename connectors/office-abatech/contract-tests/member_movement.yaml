@@ -1,0 +1,28 @@
+# GET /GetStatementRealWallet?username → {code, msg, payload[] | null} · แถวมี bank_number (ต้องไม่ขึ้นการ์ด)
+tool: member_movement
+cases:
+  - name: มีรายการ
+    input: {username: abc123}
+    responses:
+      m:
+        body:
+          code: 0
+          msg: สำเร็จ
+          payload:
+            - {datetime: "2026-09-24T02:10:11Z", username: abc123, amount: 500, bonus: 50, bonus_name: ฝากแรก, status: 1, bank_number: "9876543210"}
+            - {datetime: "2026-09-23T02:00:00Z", username: abc123, amount: 300, bonus: 0, bonus_name: "", status: 5}
+    expect:
+      status: ok
+      calls:
+        m: {path: /GetStatementRealWallet/DEMO-SVC, query: {username: abc123}}
+      fields: {รายการทั้งหมด: "2 รายการ", ยอดฝากเข้าสำเร็จ: "500.00 บาท", โบนัสที่ได้: "50.00 บาท", ยังไม่สำเร็จ: "1 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 09:10", "500.00", "50.00", ฝากแรก, สำเร็จ]
+        - ["23/09/2026 09:00", "300.00", "0.00", "-", ติดกิจกรรม]
+      model_context: {has_not_ok: true}
+  - name: ไม่มีรายการ
+    input: {username: nobody}
+    responses:
+      m: {body: {code: 0, msg: สำเร็จ, payload: null}}
+    expect: {status: not_found}

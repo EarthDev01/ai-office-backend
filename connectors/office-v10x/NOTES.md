@@ -30,6 +30,7 @@
 | 47 | `member_credit_live` | `POST /credit-check/{service}` body `{username}` |
 | 48 · 49 · 51 | guide `add_credit` · `manage_turn_bonus_point` · `refuse_add_credit` | — |
 | 50 | `credit_history` · `credit_wallet_history` + guide | `GET /get-credit-list/{service}` · `GET /get-credit-real-wallet-list/{service}` |
+| 05 · 06 (รายยูส · `questions/member_profile.yaml` · 08/10) | `member_alltime` · `member_summary_range` · `member_deposits` · `member_withdraws` · `member_games` · `member_cashback_commission` · `member_affiliate` · `member_events` · `member_overdue` | `GetMemberAlltimebyUser` · `user-summaryv2` · `GetDepositStatement` (v1) · `GetWithdrawStatement` (v1) · `POST member-transection-gamev2` (แทน game-detail ซึ่งเป็นรายรอบ) · `GetMemberTotalCommissionCashback` (V3) · `aff-member-parent-byusername-count` + `referral-income-affiliate` · `eventstatement-list-byusername` · `member-overdue-list` ×2 (is_check=1 = ยอดคงเหลือ) — สิทธิ์ใช้ `member` (ยังไม่มี rule MEMBER_HISTORY_*) |
 | 52–54 · 56 | fact `assistant_scope` | — |
 | 55 | fact `emergency_page` + เมนู `emergency` (อธิบายตามจริง ไม่แนะนำให้กด) | — |
 

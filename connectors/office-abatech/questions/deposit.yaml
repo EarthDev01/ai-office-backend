@@ -8,6 +8,7 @@
 #   status แปลงฐาน 6: "0" = ทุกสถานะ · "2" = รอคิว · envelope {code, msg, payload[], count} (count ตันที่ 5000) → envelope raw
 #   search = regex บน username/operator_name/comment ฯลฯ → กรองยูสตรงตัวซ้ำใน values · ค้นได้ทีละวัน · ค้นด้วยรหัสรายการไม่ได้
 questions: [BQ-02, BQ-06]
+keywords: [ฝาก, เติม, ตกค้าง, เงินเข้า, ไม่เข้า]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: deposit_summary
     description: >-
@@ -72,6 +73,7 @@ tools:
       - {name: queue_count, from: queue, path: count}
     not_found: {when: "accounts == 0 && all_count == 0", message: ไม่พบบัญชีฝากที่เปิดใช้งานและไม่มีรายการฝากในวันที่ถาม}
     card:
+      style: table
       title: สรุปยอดฝาก
       fields:
         - {label: ยอดฝากสำเร็จ (ทุกบัญชี), value: sum_deposit, format: money, suffix: " บาท"}
@@ -91,6 +93,10 @@ tools:
       - {name: has_remain, type: bool, expr: "sum_remain > 0"}
       - {name: has_queue, type: bool, expr: "queue_count > 0"}
       - {name: note, type: text, text: ยอดและจำนวนแสดงในการ์ดแล้ว}
+    follow_ups:
+      - {label: "รายการฝากตกค้าง", ask: "รายการฝากตกค้างวันนี้"}
+      - {label: "บัญชีฝากของเว็บ", ask: "บัญชีฝากของเว็บมีบัญชีไหนบ้าง"}
+      - {label: "สรุปยอดวันนี้", ask: "สรุปยอดวันนี้"}
 
   - name: deposit_remain_list
     description: >-
@@ -126,6 +132,7 @@ tools:
       - {name: latest, from: r, agg: first, field: datetime}
     not_found: {when: "total_count == 0", message: ไม่มีรายการตกค้างในวันที่ถาม}
     card:
+      style: list
       title: รายการฝากตกค้าง
       fields:
         - {label: รายการตกค้าง, value: total_count, format: int, suffix: " รายการ"}
@@ -142,10 +149,14 @@ tools:
     model_context:
       - {name: has_remain, type: bool, expr: "total_count > 0"}
       - {name: note, type: text, text: สาเหตุและยอดแสดงในการ์ดแล้ว แก้ได้ที่แท็บรายการตกค้าง}
+    follow_ups:
+      - {label: "สรุปยอดฝากวันนี้", ask: "สรุปยอดฝากวันนี้แยกตามบัญชี"}
+      - {label: "บัญชีฝากของเว็บ", ask: "บัญชีฝากของเว็บมีบัญชีไหนบ้าง"}
 
   - name: deposit_find
     description: >-
-      ค้นรายการฝากของสมาชิก 1 ยูสในวันที่ถาม (ไม่ระบุ = วันนี้) บอกเวลา ยอด โบนัส สถานะ และผู้ทำรายการ
+      ค้นรายการฝากของสมาชิก 1 ยูสในวันที่ถาม บอกเวลา ยอด โบนัส สถานะ
+      · ใช้เมื่อผู้ใช้ระบุวัน หรือถามรายการฝากวันนี้ · ถามยอดฝากรวม/ฝากมาเท่าไหร่โดยไม่ระบุวัน ให้ใช้ deposit_total แทน
       · ค้นได้ทีละวัน และค้นด้วยรหัสรายการฝากไม่ได้
     questions: [BQ-06]
     permission: deposit_list
@@ -187,6 +198,7 @@ tools:
       - {name: found, from: l, path: payload, filter: "lower(item.username) == lower(input.username)", agg: count}
     not_found: {when: "found == 0", message: ไม่พบรายการฝากของยูสนี้ในวันที่ถาม (ค้นได้ทีละวัน ลองระบุวันอื่น)}
     card:
+      style: list
       title: รายการฝากของสมาชิก
       fields:
         - {label: พบรายการฝาก, value: found, format: int, suffix: " รายการ"}
@@ -197,10 +209,79 @@ tools:
           - {label: ยอดฝาก, field: amount, format: money}
           - {label: โบนัส, field: bonus, format: money}
           - {label: สถานะ, field: status, format: "status:deposit"}
-          - {label: ช่องทาง, field: channel}
-          - {label: ผู้ทำรายการ, field: operator_name}
-      note: ผู้ทำรายการว่าง = ระบบอัตโนมัติ
       link: {label: เปิดรายการฝาก, path: "/Deposit?service={service_b64}"}
     model_context:
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
       - {name: note, type: text, text: รายการแสดงในการ์ดแล้ว}
+    follow_ups:
+      - {label: "รายการถอนของ {input.username}", ask: "รายการถอนวันนี้ของยูส {input.username}"}
+      - {label: "ยอดฝากทั้งหมดของ {input.username}", ask: "ยูส {input.username} ฝากมาทั้งหมดเท่าไหร่"}
+      - {label: "สรุป {input.username} เดือนนี้", ask: "สรุปยูส {input.username} เดือนนี้"}
+
+  # GET /api/DepositByUsername/:service?username&start_date&end_date&page&limit (GOTOPOPOFFICE deposit/route.go:32 · AuthRequiredDB)
+  #   page ส่งมา = โหมดแบ่งหน้า (route.go:107-123): {code, msg, payload[≤200 ล่าสุดก่อน], count/total = จำนวนทั้งช่วง, sum_amount = ยอดรวมทุกสถานะ}
+  #   ไม่ระบุวัน = ตั้งแต่ 2000-01-01 (D-30 "ตั้งแต่สมัคร") · ยอดที่โชว์นับเฉพาะ status 1 จาก payload (≤200 รายการล่าสุด) — sum_amount รวมรายการไม่สำเร็จด้วยจึงไม่ใช้
+  - name: deposit_total
+    description: >-
+      ยอดฝากสำเร็จรวมของสมาชิก 1 ยูส ตั้งแต่สมัคร (หรือช่วงวันที่ระบุ) พร้อมจำนวนรายการ
+      · ใช้เมื่อถามว่ายูสนี้ฝากมาเท่าไหร่/ฝากรวมเท่าไหร่ โดยไม่ระบุวันเดียว
+    questions: [BQ-06]
+    permission: deposit_list
+    freshness: summary
+    input:
+      username: {type: string, required: true, pattern: "^[A-Za-z0-9_.@-]{2,40}$", description: ยูสเซอร์เนมของสมาชิก}
+      date_from: {type: date, description: วันแรก YYYY-MM-DD (ไม่ระบุ = ตั้งแต่สมัคร)}
+      date_to: {type: date, description: วันสุดท้าย YYYY-MM-DD (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: d
+        method: GET
+        path: /DepositByUsername/{service}
+        query:
+          username: "{input.username}"
+          start_date: "{date:input.date_from|date:beginning} 00:00:00"
+          end_date: "{date:input.date_to|date:today} 23:59:00"
+          page: "1"
+          limit: "200"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [code]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            payload:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [amount, status]
+                properties:
+                  datetime: {type: string}
+                  amount: {type: number}
+                  status: {type: integer}
+    values:
+      - {name: ok_sum, from: d, path: payload, filter: "item.status == 1", agg: sum, field: amount, default: 0}
+      - {name: ok_count, from: d, path: payload, filter: "item.status == 1", agg: count}
+      - {name: all_count, from: d, path: count, default: 0}
+      - {name: last_at, from: d, path: payload, agg: first, field: datetime}
+      - {name: partial_note, expr: "'นับจาก 200 รายการล่าสุด'"}
+    not_found: {when: "all_count == 0", message: ยูสนี้ยังไม่มีรายการฝากในช่วงที่ถาม}
+    card:
+      style: stat
+      title: ยอดฝากสำเร็จของสมาชิก
+      fields:
+        - {label: ยอดฝากสำเร็จ, value: ok_sum, format: money, suffix: " บาท"}
+        - {label: สำเร็จ, value: ok_count, format: int, suffix: " รายการ"}
+        - {label: ทั้งหมด, value: all_count, format: int, suffix: " รายการ"}
+        - {label: ล่าสุด, value: last_at, format: datetime}
+        - {label: หมายเหตุ, value: partial_note, when: "all_count > 200"}
+      link: {label: เปิดรายการฝาก, path: "/Deposit?service={service_b64}"}
+    model_context:
+      - {name: has_deposit, type: bool, expr: "ok_count > 0"}
+      - {name: note, type: text, text: ยอดและจำนวนแสดงในการ์ดแล้ว}
+    follow_ups:
+      - {label: "ยอดถอนทั้งหมดของ {input.username}", ask: "ยูส {input.username} ถอนไปทั้งหมดเท่าไหร่"}
+      - {label: "รายการเล่นของ {input.username}", ask: "ยูส {input.username} เล่นเกมอะไร ยอดเดิมพันเท่าไหร่"}
+      - {label: "ฝากวันนี้ของ {input.username}", ask: "วันนี้ยูส {input.username} ฝากกี่รายการ"}

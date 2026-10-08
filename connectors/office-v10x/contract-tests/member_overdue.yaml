@@ -1,0 +1,44 @@
+# response ตาม controller/member.go:3500-3514 GetMemberOverDueList (helper.Response {code, data[] MemberOverdue, count})
+tool: member_overdue
+cases:
+  - name: มียอดค้าง
+    input: {username: user01}
+    responses:
+      cur: {body: {code: 0, message: Success, count: 1, data: [{id: 66f2a1b2c3d4e5f60123a001, datetime: "2026-09-22T10:00:00+07:00", username: user01, amount: 300, balance: 800, type_action: add, operator_name: admin_a, comment: "ยืมเครดิต 0812345678", is_check: 1}]}}
+      h:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          data:
+            - {datetime: "2026-09-22T10:00:00+07:00", username: user01, amount: 300, balance: 800, type_action: add, operator_name: admin_a, is_check: 1}
+            - {datetime: "2026-09-01T10:00:00+07:00", username: user01, amount: 500, balance: 500, type_action: add, operator_name: "", is_check: 0}
+    expect:
+      status: ok
+      calls:
+        cur: {path: /member-overdue-list/DEMO-SVC, query: {username: user01, is_check: "1", limit: "1", page: "1"}}
+        h: {path: /member-overdue-list/DEMO-SVC, query: {username: user01, range_dt: "2000-01-01 00:00:00~2026-09-24 23:59:59", limit: "50"}}
+      fields: {ยอดค้างคงเหลือ: "800.00 บาท", ประวัติในช่วงที่ถาม: "2 รายการ"}
+      table_rows: 2
+      table_cells:
+        - ["22/09/2026 10:00", "300.00", "800.00", add, admin_a]
+        - ["01/09/2026 10:00", "500.00", "500.00", add, "—"]
+      model_context: {has_overdue: true}
+      link: /member/user01
+  - name: ชำระครบแล้ว (คงเหลือศูนย์ แต่มีประวัติ)
+    input: {username: user01, date_from: "2026-09-01", date_to: "2026-09-24"}
+    responses:
+      cur: {body: {code: 0, count: 1, data: [{datetime: "2026-09-23T10:00:00+07:00", amount: 800, balance: 0, type_action: delete, is_check: 1}]}}
+      h: {body: {code: 0, count: 1, data: [{datetime: "2026-09-23T10:00:00+07:00", amount: 800, balance: 0, type_action: delete, is_check: 1}]}}
+    expect:
+      status: ok
+      calls:
+        h: {query: {range_dt: "2026-09-01 00:00:00~2026-09-24 23:59:59"}}
+      fields: {ยอดค้างคงเหลือ: "0.00 บาท"}
+      model_context: {has_overdue: false}
+  - name: ไม่เคยมียอดค้าง
+    input: {username: user02}
+    responses:
+      cur: {body: {code: 0, data: [], count: 0}}
+      h: {body: {code: 0, data: [], count: 0}}
+    expect: {status: not_found}

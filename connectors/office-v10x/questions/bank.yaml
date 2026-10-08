@@ -5,6 +5,7 @@
 #      → ขึ้นการ์ดเฉพาะ ธนาคาร สถานะ การแสดง ยอดเงิน (ไม่แสดงเลขบัญชี/ชื่อบัญชี) · แต่ body ทั้งก้อนผ่าน relay ของ backend (NOTES.md §5)
 #   DB error → code 0 + data [] (กลืน error) · count เพดานตาม CountStatementLimitV2
 questions: [BQ-10]
+keywords: [บัญชีฝาก, บัญชีถอน, บัญชีธนาคาร, บัญชีเว็บ, ธนาคาร, บัญชีที่เปิด]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: bank_accounts_deposit
     description: >-
@@ -41,6 +42,7 @@ tools:
       - {name: by_bank, from: b, path: "", filter: "item.status == 1", group_by: bank_code, field: balance, sort_by: count, order: desc}
     not_found: {when: "empty(all_rows)", message: ยังไม่มีบัญชีฝากของเว็บนี้ในระบบ}
     card:
+      style: table
       title: บัญชีฝากที่เปิดใช้งาน แยกตามธนาคาร
       fields:
         - {label: บัญชีฝากทั้งหมด, value: total, format: int, suffix: " บัญชี"}
@@ -57,6 +59,9 @@ tools:
     model_context:
       - {name: has_active, type: bool, expr: "active_count > 0"}
       - {name: some_hidden, type: bool, expr: "active_count > shown_count"}
+    follow_ups:
+      - {label: "บัญชีถอนที่เปิดใช้งาน", ask: "บัญชีถอนที่เปิดใช้งานอยู่มีบัญชีไหนบ้าง"}
+      - {label: "สรุปรายการฝากวันนี้", ask: "สรุปรายการฝากวันนี้"}
 
   - name: bank_accounts_withdraw
     description: >-
@@ -80,6 +85,7 @@ tools:
       - {name: by_bank, from: b, path: "", filter: "item.status == 1", group_by: bank_code, field: balance, sort_by: count, order: desc}
     not_found: {when: "empty(all_rows)", message: ยังไม่มีบัญชีถอนของเว็บนี้ในระบบ}
     card:
+      style: table
       title: บัญชีถอนที่เปิดใช้งาน แยกตามธนาคาร
       fields:
         - {label: บัญชีถอนทั้งหมด, value: total, format: int, suffix: " บัญชี"}
@@ -91,3 +97,6 @@ tools:
       link: {label: เปิดจัดการบัญชีธนาคาร, path: /statement/managebank}
     model_context:
       - {name: has_active, type: bool, expr: "active_count > 0"}
+    follow_ups:
+      - {label: "บัญชีฝากที่เปิดใช้งาน", ask: "บัญชีฝากที่เปิดใช้งานอยู่มีบัญชีไหนบ้าง"}
+      - {label: "ถอนที่ยังไม่สำเร็จ", ask: "ตอนนี้มีรายการถอนที่ยังไม่สำเร็จกี่รายการ"}

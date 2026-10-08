@@ -118,6 +118,17 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 	}
 	now := s.now().In(loc)
 
+	// 4. ผู้ที่ยังไม่ล็อกอิน — ถามได้วันละ guest.daily_limit ข้อความ (ครบแล้วตอบเองโดยไม่เรียก LLM)
+	if t.Guest {
+		over, err := s.guestOverLimit(ctx, office.ID, svc.ID, conn, t, now)
+		if err != nil {
+			return err
+		}
+		if over {
+			return s.guestLimitReply(conn, t, emit)
+		}
+	}
+
 	// 5. ห้องแชท + ประวัติ
 	conv, history, isNew, err := s.openConversation(ctx, office, svc, t, req.ConversationID, text, st.HistoryTurns*2)
 	if err != nil {
@@ -141,6 +152,17 @@ func (s *ChatService) Handle(ctx context.Context, office domain.Office, svc doma
 	err = s.answer(ctx, office, svc, conn, st, t, history, text, now, ans, emit)
 	if err == nil && ctx.Err() == nil {
 		err = s.ensureSupport(ans, supportMessage(conn, st), emit)
+	}
+	// คำตอบที่ไม่ได้ปุ่มจาก tool ข้อมูล (ทักทาย ถามเมนู ฯลฯ) → ปุ่มตั้งต้นของ connector · ไม่ใช่คำถามเดิมซ้ำ
+	if err == nil && len(ans.Suggestions) == 0 {
+		addHostSuggestions(ans, conn, t, text)
+	}
+	// ปุ่มถามต่อมาหลังคำตอบเสมอ (ไม่แทรกกลาง stream)
+	for _, sg := range ans.Suggestions {
+		if err != nil || ctx.Err() != nil {
+			break
+		}
+		err = emit("suggest", sg)
 	}
 	ans.CreatedAt = s.now()
 	switch {
@@ -297,7 +319,11 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 	msgs := historyMessages(history)
 	msgs = append(msgs, port.LLMMessage{Role: "user",
 		Text: text + "\n\n[ระบบ: วันนี้คือ " + now.Format("2006-01-02") + " ตามเวลาไทย]"})
-	tools := toolDefs(conn)
+	tools := toolDefs(conn, t, relevantTools(conn, text, history))
+
+	// เวลาแต่ละช่วง (log) — ไว้ดูว่าช้าที่ LLM รอบไหนหรือที่หลังบ้าน
+	tm := &chatTiming{start: s.now(), now: s.now}
+	defer func() { tm.log(office.ID, svc.ID) }()
 
 	// ---- รอบ 1: เลือก tool ----
 	r1ctx, cancel := context.WithTimeout(ctx, time.Duration(st.LLMTimeoutSec)*time.Second)
@@ -305,6 +331,7 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 		System: system, Messages: msgs, Tools: tools, ToolChoice: port.ToolChoiceAuto, MaxTokens: round1MaxTokens,
 	})
 	cancel()
+	tm.mark("select")
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -334,34 +361,43 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 		convo := append([]port.LLMMessage{}, msgs...)
 		done := map[string]bool{}
 		var sensitive, categories []string
+		var allUses []port.ToolUse
 		assistantText := r1.Text
 		for round := 1; ; round++ {
 			for _, u := range uses {
 				done[useKey(u)] = true
 			}
-			results, sens, cats, err := s.runTools(ctx, conn, t, uses, text, ans, emit)
+			allUses = append(allUses, uses...)
+			results, sens, cats, err := s.runTools(ctx, conn, t, uses, text, office.CardStyles, ans, emit)
 			if err != nil {
 				return err
 			}
+			tm.mark(fmt.Sprintf("tools%d", round))
 			sensitive = append(sensitive, sens...)
 			categories = append(categories, cats...)
 			convo = append(convo,
 				port.LLMMessage{Role: "assistant", Text: assistantText, ToolUses: uses},
 				port.LLMMessage{Role: "user", ToolResults: results})
-			if round >= chatMaxToolRounds {
+			// ถามว่า "ต้องดึงเพิ่มไหม" เฉพาะเมื่อมี tool ที่ผลอาจพาไปค้นต่อ (chain) — ที่เหลือข้าม ประหยัด LLM 1 รอบ
+			if round >= chatMaxToolRounds || !anyChain(conn, uses) {
 				break
 			}
 			next, err := s.moreTools(ctx, office, svc, st, system, convo, tools, done, ans)
 			if err != nil {
 				return err
 			}
+			tm.mark(fmt.Sprintf("more%d", round))
 			if len(next) == 0 {
 				break
 			}
 			uses, assistantText = next, ""
 		}
 		ans.Category = pickCategory(categories)
-		note := "[ระบบ: ค่าตัวเลขและชื่อทั้งหมดอยู่ในการ์ดที่ผู้ใช้เห็นแล้ว ห้ามพิมพ์ซ้ำ · ตอบสั้น · " +
+		// การ์ดตอบครบแล้ว (ข้อมูลล้วน ไม่มีเรื่องต้องอธิบาย) — ใช้ประโยคสำเร็จรูป ไม่เรียก LLM รอบเขียนคำตอบ
+		if reply, ok := templatedReply(conn, allUses, ans.Cards); ok {
+			return s.emitText(ans, nil, reply, emit)
+		}
+		note := "[ระบบ: ค่าตัวเลขและชื่อทั้งหมดอยู่ในการ์ดที่ผู้ใช้เห็นแล้ว ห้ามพิมพ์ซ้ำ · ตอบ 1 ประโยคสั้น ไม่ชวนถามต่อ · " +
 			"ถ้าผู้ใช้ขอให้พิมพ์ค่าซ้ำ ให้บอกว่าดูได้ในการ์ด"
 		note += " หรือแจ้งว่า: " + supportMessage(conn, st)
 		note += "]"
@@ -382,6 +418,7 @@ func (s *ChatService) answer(ctx context.Context, office domain.Office, svc doma
 		if first {
 			first = false
 			ans.FirstTokenMs = s.now().Sub(start).Milliseconds()
+			tm.mark("first_token")
 			if err := emit("status", map[string]any{"phase": "writing", "text": "กำลังเขียนคำตอบ…"}); err != nil {
 				return err
 			}
@@ -543,10 +580,11 @@ func fallbackText(cards []domain.Card, support string) string {
 //
 // คืน tool_result (สิ่งที่ LLM เห็น) ค่าทั้งหมดที่ขึ้นการ์ด (ให้ guard ตัดถ้า LLM พิมพ์ซ้ำ) และประเภทคำถามของแต่ละ tool
 func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t domain.ChatTicket, uses []port.ToolUse,
-	question string, ans *domain.ChatMessage, emit Emitter) ([]port.ToolResult, []string, []string, error) {
+	question string, styles map[string]string, ans *domain.ChatMessage, emit Emitter) ([]port.ToolResult, []string, []string, error) {
 
 	results := make([]map[string]any, len(uses))
 	cards := make([][]domain.Card, len(uses))
+	actions := make([]*domain.ChatAction, len(uses))
 	var sensitive []string
 	var categories []string
 	var mu sync.Mutex
@@ -573,7 +611,7 @@ func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t
 			if cat == "action_request" || cat == "no_tool" {
 				if menus, card := lookupMenu(conn, t, question, s.now()); menus["status"] == "ok" {
 					res["menu_hints"] = menus
-					if card != nil {
+					if card != nil && !isPlayer(conn) {
 						cards[i] = append(cards[i], *card)
 					}
 				}
@@ -586,8 +624,18 @@ func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t
 			}
 			res, card := lookupMenu(conn, t, q, s.now())
 			results[i] = res
-			if card != nil {
+			// หน้าเว็บผู้เล่นไม่ใช้การ์ด "เมนูที่เกี่ยวข้อง" — พาไปด้วยปุ่ม (show_button) แทน
+			if card != nil && !isPlayer(conn) {
 				cards[i] = append(cards[i], *card)
+			}
+			categories = append(categories, "guide")
+		case "show_button":
+			id, _ := u.Input["id"].(string)
+			res, act := showButton(conn, t, id, ans)
+			results[i] = res
+			if act != nil {
+				ans.Actions = append(ans.Actions, *act)
+				actions[i] = act
 			}
 			categories = append(categories, "guide")
 		case "explain_status":
@@ -595,11 +643,17 @@ func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t
 			categories = append(categories, "guide")
 		case "host_facts":
 			topic, _ := u.Input["topic"].(string)
-			results[i] = hostFacts(conn, topic)
+			res := hostFacts(conn, topic)
+			// โมเดลสรุปหัวข้อเป็นคำของตัวเอง (เช่น "ความสามารถของเว็บ") จนไม่ตรง keyword — ลองด้วยคำถามจริงอีกครั้ง
+			if res["status"] != "ok" {
+				res = hostFacts(conn, question)
+			}
+			results[i] = res
 			categories = append(categories, "guide")
 		default:
 			tool, ok := conn.Tool(u.Name)
-			if !ok {
+			// ผู้ไม่ล็อกอินไม่ได้รับ tool ข้อมูลตั้งแต่แรก — ถ้าโมเดลเรียกมาเองถือว่าไม่มี tool นี้ (ไม่ขึ้นการ์ด)
+			if !ok || t.Guest {
 				results[i] = map[string]any{"status": "error", "error": "unknown_tool"}
 				continue
 			}
@@ -616,8 +670,16 @@ func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t
 					res[k] = v
 				}
 				if !run.NoCard {
-					res["card"] = map[string]any{"title": run.Outcome.Card.Title, "fields_shown": fieldLabels(run.Outcome.Card)}
-					cards[i] = append(cards[i], run.Outcome.Card)
+					card := run.Outcome.Card
+					// แบบการ์ดที่ผู้ดูแลเลือกไว้ใน domain นี้ทับแบบตั้งต้นของ connector
+					if st := styles[tool.Name]; connector.CardStyles[st] {
+						card.Style = st
+					}
+					res["card"] = map[string]any{"title": card.Title, "fields_shown": fieldLabels(card)}
+					cards[i] = append(cards[i], card)
+					if run.Outcome.Status == connector.StatusOK || run.Outcome.Status == connector.StatusNotFound {
+						addSuggestions(ans, tool, u.Input)
+					}
 				}
 				results[i] = res
 				sensitive = append(sensitive, run.Outcome.Sensitive...)
@@ -634,6 +696,11 @@ func (s *ChatService) runTools(ctx context.Context, conn *connector.Connector, t
 		for _, c := range cards[i] {
 			ans.Cards = append(ans.Cards, c)
 			if err := emit("card", c); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		if a := actions[i]; a != nil {
+			if err := emit("action", a); err != nil {
 				return nil, nil, nil, err
 			}
 		}
@@ -712,9 +779,16 @@ func containsString(list []string, s string) bool {
 
 var thaiQueryRe = regexp.MustCompile(`^[\p{Thai}A-Za-z0-9 ._/()-]{1,80}$`)
 
-func toolDefs(conn *connector.Connector) []port.ToolDef {
+func toolDefs(conn *connector.Connector, tk domain.ChatTicket, selected []*connector.Tool) []port.ToolDef {
 	defs := builtinTools(conn)
-	for _, t := range conn.Tools {
+	if d, ok := showButtonTool(conn, tk); ok {
+		defs = append(defs, d)
+	}
+	// ผู้ที่ยังไม่ล็อกอินไม่มีบัญชี — ไม่ให้เห็น tool ข้อมูลเลย (เรียกไปก็ถูกปฏิเสธอยู่ดี)
+	if tk.Guest {
+		return defs
+	}
+	for _, t := range selected {
 		props, req := t.InputSchema()
 		schema := map[string]any{"type": "object", "properties": props}
 		if len(req) > 0 {
@@ -725,16 +799,18 @@ func toolDefs(conn *connector.Connector) []port.ToolDef {
 	return defs
 }
 
+// historyMessages — ประวัติที่ส่งให้โมเดล
+//
+// การ์ด/ปุ่มของคำตอบเก่าบอกโมเดลเป็นหมายเหตุของระบบท้ายคำถามข้อนั้น (ฝั่ง user) ไม่ใส่ในข้อความของผู้ช่วย
+// — เคยใส่หน้าคำตอบแล้วโมเดลลอกรูปแบบ "[แสดงการ์ด: …]" มาพิมพ์ให้ผู้ใช้เห็น
 func historyMessages(h []domain.ChatMessage) []port.LLMMessage {
 	out := make([]port.LLMMessage, 0, len(h))
-	for _, m := range h {
+	for i, m := range h {
 		text := m.Text
-		if m.Role == "assistant" && len(m.Cards) > 0 {
-			titles := make([]string, 0, len(m.Cards))
-			for _, c := range m.Cards {
-				titles = append(titles, c.Title)
+		if m.Role == "user" && i+1 < len(h) && h[i+1].Role == "assistant" {
+			if shown := shownOf(h[i+1]); shown != "" {
+				text += "\n\n[ระบบ: คำตอบของข้อนี้แสดง " + shown + " ให้ผู้ใช้แล้ว]"
 			}
-			text = "[แสดงการ์ด: " + strings.Join(titles, ", ") + "]\n" + text
 		}
 		if strings.TrimSpace(text) == "" {
 			continue
@@ -774,6 +850,11 @@ func systemPrompt(office domain.Office, svc domain.Service, conn *connector.Conn
 		// หน้าเว็บผู้เล่น — ผู้ใช้คือสมาชิก ดูได้เฉพาะบัญชีตัวเอง (API ตรวจซ้ำอีกชั้น)
 		who = fmt.Sprintf(`คุณคือ "%s" ผู้ช่วยของเว็บ %s ผู้ใช้ที่คุยด้วยคือสมาชิกของเว็บ (ยูสเซอร์ %s)
 ดูได้เฉพาะข้อมูลบัญชีของสมาชิกคนนี้เท่านั้น ห้ามพูดถึงระบบหลังบ้าน แอดมินคนใด หรือข้อมูลของสมาชิกคนอื่น`, name, label, t.Username)
+		if t.Guest {
+			who = fmt.Sprintf(`คุณคือ "%s" ผู้ช่วยของเว็บ %s ผู้ใช้ที่คุยด้วยยังไม่ได้เข้าสู่ระบบ (อาจยังไม่เป็นสมาชิก)
+ดูข้อมูลบัญชีใด ๆ ไม่ได้ ถ้าถามเรื่องบัญชี ยอดเงิน หรือรายการของตัวเอง ให้บอกว่าต้องเข้าสู่ระบบก่อน
+ห้ามพูดถึงระบบหลังบ้าน แอดมินคนใด หรือข้อมูลของสมาชิกคนอื่น`, name, label)
+		}
 	}
 	place := placeName(conn)
 	return who + `
@@ -783,13 +864,13 @@ func systemPrompt(office domain.Office, svc domain.Service, conn *connector.Conn
 - ประโยคแรกตอบตรงคำถามเลย ไม่ทวนคำถาม ไม่เกริ่น ไม่พูดซ้ำ
 - ใส่ครบทุกเรื่องที่จำเป็นต่อคำถาม (เช่น ถามว่าทำอะไรได้ ต้องบอกให้ครบทุกเรื่อง) แต่ตัดคำฟุ่มเฟือย คำขอบคุณ และคำอธิบายที่ผู้ใช้ไม่ได้ถามออก
 - ถ้ามีหลายข้อ ขึ้นบรรทัดใหม่ทีละข้อ นำหน้าด้วย "• " ข้อละสั้น ๆ
-- ปิดท้ายด้วยคำชวนถามต่อได้ไม่เกิน 1 ประโยคสั้น หรือไม่ต้องมี
+- ไม่ต้องปิดท้ายด้วยคำชวนถามต่อ (ระบบมีปุ่มถามต่อให้ผู้ใช้แล้ว) และไม่ต้องบอกว่า "ดูในการ์ด" หรือ "ตามที่แสดงในการ์ดแล้ว"
 
-` + capabilities(conn) + `
+` + capabilities(conn, t) + `
 
 วิธีทำงาน:
 - ถ้าคำถามต้องใช้ข้อมูลในระบบ ให้เรียกเครื่องมือที่ตรงที่สุดเสมอ ห้ามตอบจากความจำหรือเดา
-- ถามว่าเมนูอยู่ไหนหรือทำรายการอย่างไร ให้เรียก lookup_menu · ถามความหมายของสถานะ ให้เรียก explain_status
+- ถามว่าเมนูอยู่ไหนหรือทำรายการอย่างไร ให้เรียก lookup_menu · ถามความหมายของสถานะ ให้เรียก explain_status` + buttonRule(conn, t) + `
 - ถามข้อเท็จจริงของ` + place + ` (เช่น ทำอะไรได้บ้าง เรื่องที่ระบบทำให้ไม่ได้) ให้เรียก host_facts
 - ถ้าไม่ต้องใช้ข้อมูล ให้เรียก answer_directly พร้อมระบุประเภทคำถาม
 - ถ้าข้อมูลที่ต้องใช้ค้นยังไม่ครบ (เช่น ไม่มียูสเซอร์เนม) ให้เรียก answer_directly แล้วถามผู้ใช้กลับ
@@ -800,11 +881,24 @@ func systemPrompt(office domain.Office, svc domain.Service, conn *connector.Conn
 - คุณทำรายการแทนผู้ใช้ไม่ได้ (เช่น แก้ไข อนุมัติ โอนเงิน) ทำได้แค่ดูข้อมูลและอธิบาย`
 }
 
+// buttonRule — มีปุ่มสั่งหน้าเว็บให้ใช้ (page_actions) → ให้แนบปุ่มแทนการบอกทางไปเมนู
+func buttonRule(conn *connector.Connector, t domain.ChatTicket) string {
+	if _, ok := showButtonTool(conn, t); !ok {
+		return ""
+	}
+	return `
+- คำถามเกี่ยวกับหน้าหรือเมนูที่มีในรายการของ show_button (เช่น ถามโปรโมชั่น วิธีสมัคร วิธีฝาก) ให้เรียก show_button ด้วยเสมอ แล้วบอกสั้น ๆ ว่ากดปุ่มด้านล่างได้เลย ห้ามบอกให้ผู้ใช้ไปหาเมนูเอง · ถามวิธีทำให้อธิบายขั้นตอนสั้น ๆ คู่กับปุ่ม`
+}
+
 // capabilities — สิ่งที่ผู้ช่วยทำได้จริง (จากเครื่องมือของ connector) · ถูกถามว่าทำอะไรได้ ต้องตอบจากรายการนี้เท่านั้น
-func capabilities(conn *connector.Connector) string {
+// ผู้ที่ยังไม่ล็อกอินไม่ได้ tool ข้อมูลบัญชี จึงไม่อยู่ในรายการ
+func capabilities(conn *connector.Connector, tk domain.ChatTicket) string {
 	var b strings.Builder
 	b.WriteString("สิ่งที่คุณทำได้จริงมีเท่านี้ (ถูกถามว่าทำอะไรได้ ให้ตอบจากรายการนี้เท่านั้น ห้ามอ้างความสามารถอื่น):\n")
 	for _, t := range conn.Tools {
+		if tk.Guest {
+			break
+		}
 		d := t.Description
 		// เอาแค่ประโยคแรกของคำอธิบาย (ส่วนหลัง " · " เป็นคำแนะนำให้โมเดล)
 		if i := strings.Index(d, " · "); i > 0 {
@@ -813,6 +907,9 @@ func capabilities(conn *connector.Connector) string {
 		b.WriteString("- " + strings.TrimSpace(d) + "\n")
 	}
 	b.WriteString("- บอกว่าเมนู/ปุ่มอยู่ตรงไหน และวิธีทำรายการที่ผู้ใช้ต้องกดเอง\n- อธิบายความหมายของสถานะรายการ")
+	if _, ok := showButtonTool(conn, tk); ok {
+		b.WriteString("\n- แนบปุ่มพาไปหน้า/เปิดหน้าต่างของ" + placeName(conn) + " ที่เกี่ยวกับคำถาม")
+	}
 	return b.String()
 }
 
@@ -820,4 +917,246 @@ func newID(prefix string) string {
 	b := make([]byte, 10)
 	_, _ = rand.Read(b)
 	return prefix + "_" + hex.EncodeToString(b)
+}
+
+func isPlayer(conn *connector.Connector) bool { return conn.Host.Audience == "player" }
+
+// guestOverLimit — นับข้อความของผู้ใช้ตั้งแต่ต้นวัน (timezone ของ connector) ในทุกห้องของ guest_id นี้
+//
+// ไม่มีตัวนับแยก: นับจากข้อความที่บันทึกไว้แล้ว (อยู่ใน DB · restart ไม่รีเซ็ต) · ห้องของ guest มีไม่มากเพราะโดนจำกัดรายวันอยู่แล้ว
+func (s *ChatService) guestOverLimit(ctx context.Context, officeID, serviceID string, conn *connector.Connector,
+	t domain.ChatTicket, now time.Time) (bool, error) {
+	if conn.Host.Guest == nil {
+		return true, nil // connector ไม่เปิด guest แต่ได้ตั๋ว guest มา — ไม่ให้ถาม
+	}
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	from := dayStart.AddDate(0, 0, -HistoryMaxDays)
+	list, _, err := s.repo.SearchConversations(ctx, port.ConversationFilter{
+		OfficeID: officeID, ServiceID: serviceID, AdminID: t.AdminID, From: &from, Limit: 500,
+	})
+	if err != nil {
+		return false, fmt.Errorf("นับโควตาผู้ไม่ล็อกอิน: %w", err)
+	}
+	used := 0
+	for _, c := range list {
+		if c.UpdatedAt.Before(dayStart) {
+			continue
+		}
+		msgs, err := s.repo.RecentMessages(ctx, c.ID, historyMaxMessage)
+		if err != nil {
+			return false, fmt.Errorf("นับโควตาผู้ไม่ล็อกอิน: %w", err)
+		}
+		for _, m := range msgs {
+			if m.Role == "user" && !m.CreatedAt.Before(dayStart) {
+				used++
+			}
+		}
+	}
+	return used >= conn.Host.Guest.DailyLimit, nil
+}
+
+// guestLimitReply — ครบโควตาแล้ว: บอกให้สมัคร/เข้าสู่ระบบ + แนบปุ่มที่ผู้ไม่ล็อกอินใช้ได้ · ไม่บันทึกห้อง ไม่เรียก LLM
+func (s *ChatService) guestLimitReply(conn *connector.Connector, t domain.ChatTicket, emit Emitter) error {
+	text := fmt.Sprintf("วันนี้ถามครบ %d ข้อแล้ว สมัครสมาชิกหรือเข้าสู่ระบบเพื่อคุยกับผู้ช่วยต่อได้เลย", conn.Host.Guest.DailyLimit)
+	if err := emit("status", map[string]any{"phase": "writing", "text": "กำลังเขียนคำตอบ…"}); err != nil {
+		return err
+	}
+	if err := emit("token", map[string]any{"text": text}); err != nil {
+		return err
+	}
+	for _, a := range conn.Host.PageActions {
+		if a.When == "guest" {
+			if err := emit("action", domain.ChatAction{ID: a.ID, Label: a.Label}); err != nil {
+				return err
+			}
+		}
+	}
+	return emit("done", map[string]any{})
+}
+
+// shownOf — การ์ด/ปุ่มที่คำตอบนี้แสดงไป (ชื่อเท่านั้น ไม่มีค่า)
+func shownOf(m domain.ChatMessage) string {
+	var parts []string
+	for _, c := range m.Cards {
+		parts = append(parts, "การ์ด "+c.Title)
+	}
+	for _, a := range m.Actions {
+		parts = append(parts, "ปุ่ม "+a.Label)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// chatMaxSuggestions — ปุ่มถามต่อต่อคำตอบ
+const chatMaxSuggestions = 3
+
+// addSuggestions — เติมปุ่มถามต่อของ tool ที่ตอบไป (แทน {input.x} ด้วยค่าที่ผ่านการตรวจ input แล้ว) · ไม่ซ้ำ · ไม่เกิน 3
+// follow-up ที่อ้าง input ที่ไม่ได้ส่งมา (เช่น ไม่ระบุวัน) ถูกข้าม
+func addSuggestions(ans *domain.ChatMessage, tool *connector.Tool, input map[string]any) {
+	fill := func(s string) (string, bool) { return fillInputs(s, input) }
+	for _, fu := range tool.FollowUps {
+		if len(ans.Suggestions) >= chatMaxSuggestions {
+			return
+		}
+		label, ok1 := fill(fu.Label)
+		ask := fu.Ask
+		if ask == "" {
+			ask = fu.Label
+		}
+		ask, ok2 := fill(ask)
+		if !ok1 || !ok2 {
+			continue
+		}
+		dup := false
+		for _, x := range ans.Suggestions {
+			if x.Ask == ask {
+				dup = true
+			}
+		}
+		if !dup {
+			ans.Suggestions = append(ans.Suggestions, domain.ChatSuggestion{Label: label, Ask: ask})
+		}
+	}
+}
+
+var followUpRe = regexp.MustCompile(`\{\s*input\.([A-Za-z0-9_]+)\s*\}`)
+
+// chatTiming — เวลาของแต่ละช่วงในคำถาม 1 ข้อ (log อย่างเดียว ไม่เก็บ DB)
+type chatTiming struct {
+	start, last time.Time
+	now         func() time.Time
+	parts       []string
+}
+
+func (t *chatTiming) mark(name string) {
+	n := t.now()
+	from := t.last
+	if from.IsZero() {
+		from = t.start
+	}
+	t.parts = append(t.parts, fmt.Sprintf("%s=%dms", name, n.Sub(from).Milliseconds()))
+	t.last = n
+}
+
+func (t *chatTiming) log(officeID, serviceID string) {
+	log.Printf("[INFO] chat timing office=%s service=%s %s total=%dms", officeID, serviceID,
+		strings.Join(t.parts, " "), t.now().Sub(t.start).Milliseconds())
+}
+
+// relevantTools — คัด tool ของ connector ที่เกี่ยวกับคำถามก่อนส่งให้โมเดล (คำถามเยอะแล้วโมเดลช้าและเลือกผิดง่าย)
+//
+// เลือกเมื่อ: keyword ของ tool อยู่ในคำถาม · หรือ tool เคยตอบในคำตอบล่าสุด (ถามต่อ เช่น "แล้วถอนล่ะ") ·
+// tool ที่ไม่ได้ตั้ง keyword ส่งเสมอ · ไม่เข้าเลยสักตัว = ส่งทั้งหมด (ไม่ให้ตอบไม่ได้เพราะคัดพลาด)
+func relevantTools(conn *connector.Connector, question string, history []domain.ChatMessage) []*connector.Tool {
+	q := normSearch(question)
+	recent := map[string]bool{}
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "assistant" {
+			for _, c := range history[i].Cards {
+				recent[c.Tool] = true
+			}
+			break
+		}
+	}
+	var out []*connector.Tool
+	matched := false
+	for _, t := range conn.Tools {
+		if len(t.Keywords) == 0 || recent[t.Name] {
+			out = append(out, t)
+			continue
+		}
+		for _, k := range t.Keywords {
+			if n := normSearch(k); n != "" && strings.Contains(q, n) {
+				out = append(out, t)
+				matched = true
+				break
+			}
+		}
+	}
+	if !matched {
+		return conn.Tools
+	}
+	return out
+}
+
+// anyChain — มี tool ในรอบนี้ที่ผลอาจทำให้ต้องดึงต่อไหม
+func anyChain(conn *connector.Connector, uses []port.ToolUse) bool {
+	for _, u := range uses {
+		if t, ok := conn.Tool(u.Name); ok && t.Chain {
+			return true
+		}
+	}
+	return false
+}
+
+// templatedReply — ประโยคตอบสำเร็จรูปเมื่อทุกอย่างที่เรียกเป็น tool ข้อมูล (+ ปุ่ม) และการ์ดเป็นผลปกติ/ไม่พบ
+//
+// มี lookup_menu / host_facts / explain_status / answer_directly / การ์ดไม่มีสิทธิ์-ผิดพลาด / tool ตั้ง answer: llm
+// = ต้องอธิบาย ให้โมเดลเขียนตามเดิม
+func templatedReply(conn *connector.Connector, uses []port.ToolUse, cards []domain.Card) (string, bool) {
+	inputs := map[string]map[string]any{}
+	for _, u := range uses {
+		if u.Name == "show_button" {
+			continue
+		}
+		t, ok := conn.Tool(u.Name)
+		if !ok || t.Answer == "llm" {
+			return "", false
+		}
+		inputs[u.Name] = u.Input
+	}
+	if len(inputs) == 0 || len(cards) == 0 {
+		return "", false
+	}
+	var parts []string
+	for _, c := range cards {
+		switch c.Kind {
+		case connector.StatusOK:
+			t, _ := conn.Tool(c.Tool)
+			line := c.Title
+			if t != nil && t.Answer != "" {
+				if filled, ok := fillInputs(t.Answer, inputs[c.Tool]); ok {
+					line = filled
+				}
+			}
+			parts = append(parts, line)
+		case connector.StatusNotFound:
+			parts = append(parts, c.Note)
+		default:
+			return "", false
+		}
+	}
+	return strings.Join(parts, "\n"), true
+}
+
+// fillInputs — แทน {input.x} ด้วยค่าจริง · ไม่มีค่า = false
+func fillInputs(s string, input map[string]any) (string, bool) {
+	ok := true
+	out := followUpRe.ReplaceAllStringFunc(s, func(m string) string {
+		v, has := input[followUpRe.FindStringSubmatch(m)[1]]
+		str := strings.TrimSpace(fmt.Sprint(v))
+		if !has || v == nil || str == "" {
+			ok = false
+			return ""
+		}
+		return str
+	})
+	return out, ok
+}
+
+// addHostSuggestions — ปุ่มถามต่อตั้งต้นของ connector (host.yaml follow_ups) ตามสถานะผู้ใช้ · ตัดปุ่มที่ถามซ้ำกับคำถามนี้
+func addHostSuggestions(ans *domain.ChatMessage, conn *connector.Connector, t domain.ChatTicket, question string) {
+	q := normQuestion(question)
+	for _, f := range conn.Host.FollowUps {
+		if len(ans.Suggestions) >= chatMaxSuggestions {
+			return
+		}
+		ask := f.Ask
+		if ask == "" {
+			ask = f.Label
+		}
+		if !f.AvailableTo(t.Guest) || normQuestion(ask) == q || normQuestion(f.Label) == q {
+			continue
+		}
+		ans.Suggestions = append(ans.Suggestions, domain.ChatSuggestion{Label: f.Label, Ask: ask})
+	}
 }

@@ -1,0 +1,39 @@
+# response ตาม controller/member.go:2116-2158 GetMemberTotalCommissionCashbackV3 (data ResponseTotal {commission, cashback})
+tool: member_cashback_commission
+cases:
+  - name: มียอดสะสม
+    input: {username: user01}
+    responses:
+      c:
+        body:
+          code: 0
+          message: Success
+          data:
+            commission: {all: 120.5, bcr: 0, slot: 120.5, lotto: 0, fishing: 0, sport: 0, table: 0}
+            cashback: {all: 350, bcr: 200, slot: 150, lotto: 0, fishing: 0, sport: 0, table: 0}
+    expect:
+      status: ok
+      calls:
+        c: {path: /GetMemberTotalCommissionCashback/DEMO-SVC, query: {username: user01}}
+      fields:
+        คืนยอดเสียสะสม (Cashback): "350.00 บาท"
+        ค่าคอมสะสม (Commission): "120.50 บาท"
+        Cashback คาสิโน: "200.00"
+        Cashback สล็อต: "150.00"
+        Commission สล็อต: "120.50"
+      no_fields: [Commission คาสิโน]
+      model_context: {has_cashback: true, has_commission: true}
+      link: /member/user01
+  - name: ไม่มียอดสะสม (ศูนย์จริง)
+    input: {username: user02}
+    responses:
+      c: {body: {code: 0, data: {commission: {all: 0}, cashback: {all: 0}}}}
+    expect:
+      status: ok
+      fields: {คืนยอดเสียสะสม (Cashback): "0.00 บาท"}
+      model_context: {has_cashback: false, has_commission: false}
+  - name: ระบบหน้าบ้านไม่ตอบ (code 1)
+    input: {username: user01}
+    responses:
+      c: {body: {code: 1, message: "connection refused", data: null}}
+    expect: {status: error}

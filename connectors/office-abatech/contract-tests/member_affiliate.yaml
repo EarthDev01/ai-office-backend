@@ -1,0 +1,25 @@
+# GET /GetMemberAffiliateParentByUsername?username → payload []AffTree {username, datetime, key, level} · ใช้แค่จำนวน
+tool: member_affiliate
+cases:
+  - name: แนะนำสองลำดับ
+    input: {username: abc123}
+    responses:
+      a:
+        body:
+          code: 0
+          msg: ""
+          payload:
+            - {username: friend1, datetime: "2026-09-20T02:00:00Z", key: abc123, level: 1}
+            - {username: friend2, datetime: "2026-09-22T02:00:00Z", key: abc123, level: 1}
+            - {username: friend3, datetime: "2026-09-23T02:00:00Z", key: friend1, level: 2}
+    expect:
+      status: ok
+      calls:
+        a: {path: /GetMemberAffiliateParentByUsername/DEMO-SVC, query: {username: abc123}}
+      fields: {"แนะนำตรง (ลำดับที่ 1)": "2 คน", "เพื่อนของเพื่อน (ลำดับที่ 2)": "1 คน", รวม: "3 คน", แนะนำล่าสุดเมื่อ: "22/09/2026 09:00"}
+      model_context: {has_friends: true}
+  - name: ยังไม่แนะนำใคร
+    input: {username: abc123}
+    responses:
+      a: {body: {code: 0, msg: "", payload: null}}
+    expect: {status: not_found}

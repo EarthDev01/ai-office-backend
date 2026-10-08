@@ -8,7 +8,7 @@ tables:
     source: platform_Tangtem components/Modal/History.vue:285-298
     entries: &entries
       - {code: 1, label: สำเร็จ, meaning: รายการเสร็จเรียบร้อยแล้ว, next_action: ไม่ต้องทำอะไรต่อ, final: true}
-      - {code: 4, label: ไม่สำเร็จ, meaning: รายการไม่สำเร็จ, next_action: ติดต่อแอดมินของเว็บพร้อมรายละเอียดรายการ, final: true}
+      - {code: 4, label: ไม่สำเร็จ, meaning: รายการไม่สำเร็จ, next_action: ติดต่อแอดมินของเว็บพร้อมรายละเอียดรายการ, final: true, tone: bad}
       - {code: 0, label: รอดำเนินการ, meaning: ระบบกำลังดำเนินการ, next_action: รอสักครู่ ถ้านานผิดปกติให้ติดต่อแอดมินของเว็บ}
       - {code: 2, label: รอดำเนินการ, meaning: ระบบกำลังดำเนินการ, next_action: รอสักครู่ ถ้านานผิดปกติให้ติดต่อแอดมินของเว็บ}
       - {code: 3, label: รอดำเนินการ, meaning: ระบบกำลังดำเนินการ, next_action: รอสักครู่ ถ้านานผิดปกติให้ติดต่อแอดมินของเว็บ}
@@ -27,3 +27,21 @@ tables:
     label: สถานะรายการถอน
     source: platform_Tangtem components/Modal/History.vue:285-298
     entries: *entries
+  # เช็คอินรายวัน: topupserie controller/checkin.go:166-169 (accepted) · ป้ายตาม components/Modal/Checkin.vue + plugins/i18n/th.js fixDeposit
+  checkin:
+    label: สถานะเช็คอินรายวัน
+    source: topupserie_mootui controller/checkin.go:166-169
+    entries:
+      - {code: 0, label: ยังไม่ผ่านเงื่อนไข, meaning: วันนั้นยังฝากหรือเล่นไม่ถึงเงื่อนไขเช็คอิน, next_action: ดูเงื่อนไขที่หน้าเช็คอิน, tone: wait}
+      - {code: 1, label: รับได้, meaning: ผ่านเงื่อนไขแล้ว กดรับรางวัลเช็คอินได้, next_action: กดรับที่หน้าเช็คอิน, tone: ok}
+      - {code: 2, label: รับแล้ว, meaning: รับรางวัลเช็คอินของวันนั้นแล้ว, next_action: ไม่ต้องทำอะไรต่อ, final: true}
+      - {code: 3, label: เลยกำหนด, meaning: ไม่ได้รับภายในวันนั้น, next_action: ไม่ต้องทำอะไรต่อ, final: true, tone: bad}
+  # ภารกิจ: topupserie controller/missionReward.go CheckMissionCondition (can_recieve) · ป้ายตาม plugins/i18n/th.js missionReward.canReceive
+  mission:
+    label: สถานะภารกิจ
+    source: topupserie_mootui controller/missionReward.go CheckMissionCondition
+    entries:
+      - {code: 0, label: ทำภารกิจ, meaning: ยังทำภารกิจไม่ครบเงื่อนไข, next_action: ทำภารกิจต่อตามเงื่อนไขที่หน้าภารกิจ, tone: wait}
+      - {code: 1, label: รับรางวัล, meaning: ทำภารกิจครบแล้ว กดรับรางวัลได้, next_action: กดรับรางวัลที่หน้าภารกิจ, tone: ok}
+      - {code: 2, label: รับแล้ว, meaning: รับรางวัลภารกิจนี้แล้ว, next_action: ไม่ต้องทำอะไรต่อ, final: true}
+      - {code: 3, label: รางวัลถูกปิด, meaning: เว็บปิดรางวัลของภารกิจนี้ไว้, next_action: ติดต่อแอดมินของเว็บ, final: true, tone: bad}

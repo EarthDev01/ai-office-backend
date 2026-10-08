@@ -7,6 +7,7 @@
 #   frontend: getCreditSms · Navbar2.vue "เครดิต Sms คงเหลือ" · data = number (ยิงผู้ให้บริการ SMS สด)
 #   ⚠️ ผู้ให้บริการตอบ Code ≠ 200 → หลังบ้านตอบ code 0 + data 0 (ศูนย์ปลอม) · error อื่น → code 1
 questions: [BQ-41, BQ-42, BQ-43]
+keywords: [เครดิตเอเจ้น, เครดิตเอเย่น, เอเจ้น, เอเย่น, agent, sms, เครดิตระบบ, เครดิตเว็บ, เครดิตคงเหลือ]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: credit_agent_balance
     description: >-
@@ -35,6 +36,7 @@ tools:
       - {name: updated, from: a, path: updated_at}
     not_found: {when: "false", message: ยังไม่มียอดเครดิตเอเจ้นที่บันทึกไว้ของเว็บนี้ ลองกดรีเฟรชที่แถบด้านบนของหลังบ้าน}
     card:
+      style: stat
       title: เครดิตเอเจ้นคงเหลือ
       fields:
         - {label: เครดิตเอเจ้นคงเหลือ, value: amount, format: money}
@@ -45,6 +47,9 @@ tools:
     model_context:
       - {name: is_low_or_zero, type: bool, expr: "amount <= 0"}
       - {name: never_updated, type: bool, expr: "updated <= 0"}
+    follow_ups:
+      - {label: "เครดิต SMS", ask: "เครดิต SMS เหลือเท่าไหร่"}
+      - {label: "บิลที่ยังไม่ชำระ", ask: "มีบิลที่ยังไม่ชำระไหม"}
 
   - name: credit_sms_balance
     description: เครดิต Sms คงเหลือของเว็บ (ดึงสดจากผู้ให้บริการ SMS เหมือนแถบด้านบนของหลังบ้าน) · ใช้เมื่อถามว่า SMS เหลือเท่าไหร่
@@ -60,6 +65,7 @@ tools:
     values:
       - {name: sms, from: s, path: ""}
     card:
+      style: stat
       title: เครดิต Sms คงเหลือ
       fields:
         - {label: เครดิต Sms คงเหลือ, value: sms, format: number}
@@ -68,3 +74,5 @@ tools:
     model_context:
       - {name: is_zero, type: bool, expr: "sms <= 0"}
       - {name: unit_note, type: text, text: หลังบ้านไม่ได้ระบุหน่วยของเครดิต Sms จึงไม่ควรบอกว่าเป็นจำนวนข้อความ}
+    follow_ups:
+      - {label: "เครดิตเอเจ้น", ask: "เครดิตเอเจ้นเหลือเท่าไหร่"}

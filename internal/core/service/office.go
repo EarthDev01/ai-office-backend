@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"ai-office-backend/internal/core/connector"
 	"ai-office-backend/internal/core/domain"
 	"ai-office-backend/internal/core/port"
 )
@@ -113,6 +114,9 @@ func (s *officeService) requireGroup(ctx context.Context, groupID string) error 
 	return nil
 }
 
+// toolNameRe — ชื่อ tool ใน connector (key ของ card_styles)
+var toolNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
 func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOffice, actor string) (domain.Office, error) {
 	o, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -204,6 +208,19 @@ func (s *officeService) Update(ctx context.Context, id string, p domain.UpdateOf
 		default:
 			return domain.Office{}, fmt.Errorf("ที่มาของสีต้องเป็น custom หรือ site")
 		}
+	}
+	if p.CardStyles != nil {
+		out := map[string]string{}
+		for tool, st := range *p.CardStyles {
+			if st == "" {
+				continue
+			}
+			if !toolNameRe.MatchString(tool) || !connector.CardStyles[st] {
+				return domain.Office{}, fmt.Errorf("แบบการ์ดต้องเป็น stat, list, table หรือ single (คำถาม %q)", tool)
+			}
+			out[tool] = st
+		}
+		o.CardStyles = out
 	}
 	if p.Placement != nil {
 		if !allowedPositions[p.Placement.Position] {

@@ -8,6 +8,7 @@
 #   frontend: getDepositStatementRemainToday · UI ส่ง range_dt=วันนี้ 00:00:00~พรุ่งนี้ 00:00:00 → data = ผลรวม deposit (number), count
 #   ตกค้าง = bank_statement status ∉ {1,0,99} และ deposit > 0 · DB error → code 0 + data [] (array) → schema ไม่ตรง = "ดึงไม่ได้" (ไม่ใช่ศูนย์)
 questions: [BQ-02, BQ-06]
+keywords: [ฝาก, เติม, ตกค้าง, เงินเข้า, ไม่เข้า]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: deposit_summary
     description: >-
@@ -80,6 +81,7 @@ tools:
       - {name: remain_amount, from: remain, path: data}
     not_found: {when: "all_count == 0 && remain_count == 0", message: ไม่มีรายการฝากและไม่มีธุรกรรมตกค้างในช่วงวันที่ถาม}
     card:
+      style: stat
       title: สรุปรายการฝาก
       fields:
         - {label: รายการฝากทั้งหมด, value: all_count, format: int, suffix: " รายการ"}
@@ -93,6 +95,9 @@ tools:
     model_context:
       - {name: has_remain, type: bool, expr: "remain_count > 0"}
       - {name: has_unsuccessful, type: bool, expr: "all_count > ok_count"}
+    follow_ups:
+      - {label: "ภาพรวมยอดฝาก-ถอน", ask: "สรุปยอดฝาก ยอดถอน วันนี้"}
+      - {label: "บัญชีฝากที่เปิดใช้งาน", ask: "บัญชีฝากที่เปิดใช้งานอยู่มีบัญชีไหนบ้าง"}
 
   - name: deposit_find
     description: >-
@@ -146,6 +151,7 @@ tools:
       - {name: server_count, from: l, path: count}
     not_found: {when: "empty(rows)", message: ไม่พบรายการฝากของยูสเซอร์เนมนี้ในช่วงวันที่ถาม}
     card:
+      style: list
       title: รายการฝากของสมาชิก
       fields:
         - {label: พบ, value: match_count, format: int, suffix: " รายการ"}
@@ -167,3 +173,7 @@ tools:
     model_context:
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
       - {name: may_have_more, type: bool, expr: "server_count > fetched_count"}
+    follow_ups:
+      - {label: "รายการถอนของ {input.username}", ask: "รายการถอนของยูส {input.username}"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+      - {label: "เครดิตของ {input.username}", ask: "เช็คเครดิตคงเหลือของยูส {input.username}"}

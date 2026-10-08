@@ -1,8 +1,9 @@
 import { createShadow, injectFonts } from './shadow'
-import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, readSiteColors, el, renderCard, roomItem, formatFetched, scroll, setOpen, type UI } from './ui'
-import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type PreviewConfig } from './types'
+import { buildUI, addBubble, addLoader, addSys, applyPlacement, applyAppearance, applyAccent, readSiteColors, el, renderActionButton, renderCard, renderSuggestion, roomItem, formatFetched, scroll, setOpen, type UI } from './ui'
+import { PREVIEW_ALLOWED_FIELDS, type Bootstrap, type ChatAction, type ChatSuggestion, type PreviewConfig } from './types'
 import { ChatSession, PageConfigError } from './session'
-import { describeSource, readService } from './page'
+import { describeSource, readService, type PageAction } from './page'
+import { canRun, runPageAction } from './actions'
 import { runChat, runConsoleChat, listConversations, loadConversation, ChatError, DISABLED_CODES, type ConsoleTurn, type HistoryMessage } from './chat'
 
 // data-* ที่ห้ามมาจากหน้าเว็บ — service ที่เปิดอยู่เราอ่านจาก localStorage ของ office เอง
@@ -84,6 +85,10 @@ interface State {
   abort: AbortController | null
   /** กำลังโชว์รายการห้องย้อนหลังแทนห้องคุย */
   listing: boolean
+  /** ปุ่มใต้คำตอบที่หน้านี้ทำได้ (page-config) — server ส่งมาแค่ id */
+  pageActions: PageAction[]
+  /** หน้าเว็บผู้เล่น: การ์ดเป็นข้อความในฟองแชท ไม่ใช่การ์ดแบบหลังบ้าน */
+  inlineCards: boolean
 }
 
 let state: State | null = null
@@ -161,6 +166,8 @@ export async function mount(opts: MountOptions = {}): Promise<void> {
     console: opts.console ?? null, history: [], abort: null, listing: false,
     showSite: pc?.audience !== 'player',
     pageColors: pc?.page_colors,
+    pageActions: pc?.page_actions ?? [],
+    inlineCards: pc?.audience === 'player',
   }
   // ประวัติฝั่ง server มีเฉพาะแชทหลังบ้านจริง — คอนโซลเก็บห้องในหน้าเว็บ · preview ไม่ยิง API
   if (preview || opts.console) ui.head.history.style.display = 'none'
@@ -228,7 +235,8 @@ function onPreviewMessage(ev: MessageEvent) {
 async function fetchBootstrap(apiBase: string, session: ChatSession, onFetch?: MountOptions['onFetch']): Promise<Bootstrap | null> {
   const pc = await loadPageConfig(session)
   if (!pc) return null
-  const token = session.readToken()
+  // หน้าเว็บที่เปิด guest: ยังไม่ล็อกอินก็ได้ credential (guest_id) — ไม่ต้องรอล็อกอิน
+  const token = session.credential()
   const serviceID = readService(pc.service)
 
   // ยังไม่ล็อกอิน หรือยังไม่ได้เลือกเว็บ → ไม่ต้องยิง ไม่ต้องโผล่
@@ -252,8 +260,8 @@ async function fetchBootstrap(apiBase: string, session: ChatSession, onFetch?: M
   onFetch?.({ url })
 
   try {
-    // ไม่ใช้ cookie — หน้า office ส่ง Bearer token เหมือนที่ตัวมันเองเรียก API
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    // ไม่ใช้ cookie — หน้า office ส่ง Bearer token เหมือนที่ตัวมันเองเรียก API (ผู้ไม่ล็อกอิน = Guest <guest_id>)
+    const res = await fetch(url, { headers: { Authorization: token } })
     const json = (await res.json().catch(() => null)) as
       | { message?: string; error?: string; payload?: Bootstrap }
       | null
@@ -411,12 +419,14 @@ async function send(opts: MountOptions) {
   // ฟองคำตอบสร้างเมื่อมีของให้โชว์ครั้งแรก — การ์ดอยู่ในฟองเดียวกับข้อความของ AI
   let txt: HTMLElement | null = null
   let cards: HTMLElement | null = null
+  let acts: HTMLElement | null = null
   const ensure = () => {
     if (txt) return
     const bubble = addBubble(s.ui.log, 'ai', '')
     txt = bubble.querySelector('.txt')
     cards = el('div', 'cards')
-    bubble.appendChild(cards)
+    acts = el('div', 'acts')
+    bubble.append(cards, acts)
   }
   try {
     s.conversationID = await runChat({
@@ -430,7 +440,17 @@ async function send(opts: MountOptions) {
         status: (t) => loader.set(t || 'กำลังทำงาน…'),
         card: (card) => {
           ensure()
-          cards!.appendChild(renderCard(card))
+          cards!.appendChild(renderCard(card, { inline: s.inlineCards }))
+          scroll(s.ui.log)
+        },
+        action: (a) => {
+          ensure()
+          addAction(s, acts!, a)
+          scroll(s.ui.log)
+        },
+        suggest: (sg) => {
+          ensure()
+          addSuggestion(s, acts!.parentElement!, sg, opts)
           scroll(s.ui.log)
         },
         token: (t) => {
@@ -530,9 +550,51 @@ function replay(s: State, m: HistoryMessage) {
   const bubble = addBubble(s.ui.log, 'ai', m.text, m.status === 'error' ? 'err' : '')
   if (m.cards?.length) {
     const cards = el('div', 'cards')
-    for (const c of m.cards) cards.appendChild(renderCard(c))
+    for (const c of m.cards) cards.appendChild(renderCard(c, { inline: s.inlineCards }))
     bubble.appendChild(cards)
   }
+  if (m.actions?.length) {
+    const acts = el('div', 'acts')
+    for (const a of m.actions) addAction(s, acts, a)
+    bubble.appendChild(acts)
+  }
+  for (const sg of m.suggestions ?? []) addSuggestion(s, bubble, sg, {})
+}
+
+/** ปุ่มถามต่อ — กดแล้วส่ง ask เป็นคำถามใหม่ (เหมือนผู้ใช้พิมพ์เอง) */
+function addSuggestion(s: State, bubble: HTMLElement, sg: ChatSuggestion, opts: MountOptions) {
+  let box = bubble.querySelector(':scope > .sugs') as HTMLElement | null
+  if (!box) {
+    box = el('div', 'sugs')
+    bubble.appendChild(box)
+  }
+  box.appendChild(
+    renderSuggestion(sg.label, () => {
+      if (s.busy) return
+      s.ui.input.value = sg.ask
+      void send(opts)
+    }),
+  )
+}
+
+/**
+ * ปุ่มใต้คำตอบ — server ส่งมาแค่ id/label · วิธีสั่งหน้าเว็บหาจาก page-config ของหน้านี้
+ * ไม่รู้จัก id / หน้านี้ไม่มีปุ่มจริงให้กด = ไม่วาด
+ */
+function addAction(s: State, box: HTMLElement, a: ChatAction) {
+  const spec = s.pageActions.find((p) => p.id === a.id)
+  if (!spec || !canRun(spec)) return
+  box.appendChild(
+    renderActionButton(spec.label || a.label, () => {
+      // ปิดกล่องแชทก่อน (จอมือถือแชทเต็มจอ บัง modal) แล้วค่อยสั่งหน้าเว็บ
+      toggle(false)
+      if (!runPageAction(spec)) {
+        toggle(true)
+        addSys(s.ui.log, `เปิด ${spec.label} ไม่ได้ ลองกดเมนูที่หน้าเว็บแทน`)
+        scroll(s.ui.log)
+      }
+    }),
+  )
 }
 
 /** ผู้ช่วยของเว็บนี้ใช้ต่อไม่ได้ (ถูกปิด/ไม่มีสิทธิ์) — เก็บปุ่ม ปิดช่องพิมพ์ ข้อความที่แจ้งไปแล้วยังอ่านได้จนปิดกล่อง */
@@ -677,7 +739,9 @@ if (self) {
         })
         return
       }
-      const sig = session.readToken() ? readService(page.service) || '\0' : ''
+      // Bearer/Guest แยกกัน — ล็อกอินจาก guest ต้อง mount ใหม่ด้วยตัวตนจริง
+      const cred = session.credential()
+      const sig = cred ? cred.slice(0, cred.indexOf(' ')) + ':' + (readService(page.service) || '\0') : ''
       if (sig === lastSig) return
       lastSig = sig
       if (sig === '') unmount() // ออกจากระบบ → เก็บปุ่มทันที ไม่ต้อง refresh

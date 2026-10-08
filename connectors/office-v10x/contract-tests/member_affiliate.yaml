@@ -1,0 +1,41 @@
+# response ตาม controller/member.go:4635-4648 (count) และ 5877-6045 GetReferralIncomeAffiliate (data[] ต่อเพื่อน + count)
+tool: member_affiliate
+cases:
+  - name: มีเพื่อนและค่าแนะนำ (ไม่แสดงยูสเพื่อน)
+    input: {username: user01}
+    responses:
+      n: {body: {code: 0, message: Success, data: null, count: 12}}
+      r:
+        body:
+          code: 0
+          message: Success
+          count: 2
+          data:
+            - {username: friend_a, level: 1, datetime: "2026-05-01T10:00:00+07:00", deposit: 5000, turnover: 20000, winloss: 1500, af_deposit: 50, af_turnover: 20, af_winloss: 30, af_summary: 100}
+            - {username: friend_b, level: 2, datetime: "2026-06-01T10:00:00+07:00", deposit: 1000, turnover: 0, winloss: 0, af_deposit: 10.5, af_turnover: 0, af_winloss: 0, af_summary: 10.5}
+    expect:
+      status: ok
+      calls:
+        n: {path: /aff-member-parent-byusername-count/DEMO-SVC, query: {username: user01}}
+        r: {path: /referral-income-affiliate/DEMO-SVC, query: {username: user01, limit: "500", page: "1"}}
+      fields:
+        ค่าแนะนำรวม: "110.50 บาท"
+        เพื่อนทั้งหมด (ทุกชั้น): "12 คน"
+        เพื่อนที่สร้างรายได้: "2 คน"
+        จากยอดฝาก: "60.50"
+        จากยอดเล่น: "20.00"
+        จากยอดเสีย: "30.00"
+      model_context: {has_friends: true, has_reward: true, counted_partially: false}
+      link: /member/user01
+  - name: ยังไม่มีเพื่อน
+    input: {username: user02}
+    responses:
+      n: {body: {code: 0, message: Success, data: null, count: 0}}
+      r: {body: {code: 0, message: Success, data: [], count: 0}}
+    expect: {status: not_found}
+  - name: referral ล้ม (code 1 data null) = ดึงไม่ได้
+    input: {username: user01}
+    responses:
+      n: {body: {code: 0, data: null, count: 3}}
+      r: {body: {code: 1, message: "aggregate error", data: null}}
+    expect: {status: error}

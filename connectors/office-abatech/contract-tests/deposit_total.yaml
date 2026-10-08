@@ -1,0 +1,38 @@
+# GET /DepositByUsername?page= (โหมดแบ่งหน้า) → {code, msg, payload[≤200], count, total, sum_amount}
+# ยอดที่โชว์นับเฉพาะ status 1 จาก payload · sum_amount (ทุกสถานะ) ไม่ใช้ (D-30)
+tool: deposit_total
+cases:
+  - name: ไม่ระบุวัน = ตั้งแต่สมัคร · นับเฉพาะสำเร็จ
+    input: {username: abc123}
+    responses:
+      d:
+        body:
+          code: 0
+          msg: Success
+          count: 3
+          total: 3
+          sum_amount: 1700
+          payload:
+            - {datetime: "2026-09-24T02:10:11Z", username: abc123, amount: 500, status: 1}
+            - {datetime: "2026-09-20T02:00:00Z", username: abc123, amount: 1000, status: 0}
+            - {datetime: "2026-09-10T02:00:00Z", username: abc123, amount: 200, status: 1}
+    expect:
+      status: ok
+      calls:
+        d: {path: /DepositByUsername/DEMO-SVC, query: {username: abc123, start_date: "2000-01-01 00:00:00", end_date: "2026-09-24 23:59:00", page: "1", limit: "200"}}
+      fields: {ยอดฝากสำเร็จ: "700.00 บาท", สำเร็จ: "2 รายการ", ทั้งหมด: "3 รายการ", ล่าสุด: "24/09/2026 09:10"}
+      model_context: {has_deposit: true}
+  - name: เกิน 200 รายการ บอกว่านับจากล่าสุด
+    input: {username: abc123, date_from: "2026-01-01", date_to: "2026-06-30"}
+    responses:
+      d: {body: {code: 0, msg: Success, count: 250, payload: [{datetime: "2026-06-30T02:00:00Z", amount: 100, status: 1}]}}
+    expect:
+      status: ok
+      calls:
+        d: {query: {start_date: "2026-01-01 00:00:00", end_date: "2026-06-30 23:59:00"}}
+      fields: {ทั้งหมด: "250 รายการ", หมายเหตุ: นับจาก 200 รายการล่าสุด}
+  - name: ยังไม่มีรายการฝาก
+    input: {username: nobody}
+    responses:
+      d: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found}
