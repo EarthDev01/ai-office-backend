@@ -1,0 +1,30 @@
+# response ตาม topupserie controller/randomBox.go:14 RandInfo → service/randomService.go:89 GetRandDetail
+tool: my_randombox
+cases:
+  - name: เหลือตั๋ว 3 ใบ (ซ่อนกล่องที่ปิด)
+    username: somchai01
+    responses:
+      r:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            history: []
+            ticket_left_all: 3
+            ticket_left:
+              - {amount: 2, title: กล่องทอง, ticket_type: deposit_one, enable: true, is_not_show: false}
+              - {amount: 1, title: กล่องเงิน, ticket_type: turnover_cron_job_one, enable: true, is_not_show: false}
+              - {amount: 0, title: กล่องปิด, ticket_type: deposit_two, enable: false, is_not_show: false}
+    expect:
+      status: ok
+      calls:
+        r: {path: /rand, body: {username: somchai01}}
+      fields: {ตั๋วคงเหลือทั้งหมด: "3 ใบ"}
+      table_rows: 2
+      table_cells: [[กล่องทอง, "2"]]
+      model_context: {has_ticket: true}
+      link: /
+  - name: ระบบล่ม (HTTP 500)
+    responses:
+      r: {status: 500, body: {status: {code: 500, message: server error}, message: {code: 1, message: cannotConnectServer}, data: null}}
+    expect: {status: error}

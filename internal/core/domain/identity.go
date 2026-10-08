@@ -1,6 +1,9 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"regexp"
+)
 
 var (
 	ErrNotAuthenticated  = errors.New("NOT_AUTHENTICATED")
@@ -32,7 +35,15 @@ func (e *OriginTakenError) Error() string {
 // ไม่ใช่ cookie
 type Credential struct {
 	Token string
+	// GuestID = ผู้ที่ยังไม่ล็อกอินบนหน้าเว็บผู้เล่น (header Authorization: Guest <id>) · id สุ่มโดย widget เก็บใน localStorage
+	GuestID string
 }
+
+// GuestIDRe — guest_id ที่ widget สร้าง (สุ่ม base64url)
+var GuestIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
+
+// GuestAdminID — ใส่ prefix ให้ไม่ชนกับยูสจริงของหลังบ้าน
+func GuestAdminID(guestID string) string { return "guest:" + guestID }
 
 // Caller คือตัวตนที่อ่านได้จาก token ของหน้า office
 //
@@ -51,6 +62,8 @@ type Caller struct {
 	AllServices bool
 	// ServicesStrict = รายชื่อว่างแปลว่าเข้าไม่ได้สักเว็บ (services_empty: none) · false = ว่างแปลว่าไม่จำกัด
 	ServicesStrict bool
+	// Guest = ผู้ที่ยังไม่ล็อกอิน (หน้าเว็บผู้เล่น) · AdminID = guest:<guest_id> · ไม่มี Username
+	Guest bool
 }
 
 // ServiceAllowed — ตัดสินว่าแอดมินคนนี้เปิด service นี้ได้ไหม (ตามกติกาของหลังบ้านชนิดนั้น)

@@ -1,0 +1,43 @@
+# response ตาม controller/member.go:3597-3801 GetMemberTransectionGameV2 (helper.Response · data {SummaryAmountData, TransactionData[]} · count = paginate.total)
+tool: member_games
+cases:
+  - name: วันนี้ (ไม่ระบุวัน)
+    input: {username: user01}
+    responses:
+      g:
+        body:
+          code: 0
+          message: Success
+          count: 154
+          data:
+            SummaryAmountData: {BetAmount: 25300, RefundAmount: 0, WinAmount: 23100, WinlossAmount: -2200}
+            TransactionData:
+              - {Id: tx-1, GameName: PGSOFT, GameType: SLOT, TransactionBetAmount: 50, UserName: user01, CreatedAt: 1790234400}
+    expect:
+      status: ok
+      calls:
+        g: {path: /member-transection-gamev2/DEMO-SVC, body: {username: user01, start_date: "2026-09-24 00:00:00", end_date: "2026-09-24 23:59:59", page: 1, limit: 1, order: "-1", game_type: ALL}}
+      fields:
+        ยอดเล่น: "25,300.00 บาท"
+        แพ้ / ชนะ: "-2,200.00 บาท"
+        จำนวนรายการเล่น: "154 รายการ"
+      model_context: {has_play: true}
+      link: /member/user01
+  - name: ช่วงวัน · ไม่มีรายการเล่น
+    input: {username: user01, date_from: "2026-09-01", date_to: "2026-09-10"}
+    responses:
+      g: {body: {code: 0, message: Success, count: 0, data: {SummaryAmountData: {BetAmount: 0, RefundAmount: 0, WinAmount: 0, WinlossAmount: 0}, TransactionData: null}}}
+    expect:
+      status: not_found
+      calls:
+        g: {body: {username: user01, start_date: "2026-09-01 00:00:00", end_date: "2026-09-10 23:59:59", page: 1, limit: 1, order: "-1", game_type: ALL}}
+  - name: ระบบเกมไม่ตอบ (code 1 data null)
+    input: {username: user01}
+    responses:
+      g: {body: {code: 1, message: "dial tcp: i/o timeout", data: null}}
+    expect: {status: error}
+  - name: โดน rate limit (HTTP 401)
+    input: {username: user01}
+    responses:
+      g: {status: 401, body: {code: 401, message: too many requests}}
+    expect: {status: error}

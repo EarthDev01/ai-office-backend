@@ -2,6 +2,7 @@
 #   ได้โปรทุกตัวไม่กรอง · status 1 = เปิด (BonusList.vue:174-177) · ช่วงเปิดจริง = start_date+bonus_start_time ถึง end_date+bonus_end_time
 #   ⚠️ ผู้ช่วยกรองแค่ status (ภาษา expression เทียบวันเวลาไม่ได้) — การ์ดแสดงช่วงวันให้ผู้ใช้ตรวจเอง
 questions: [BQ-11]
+keywords: [โปร, โบนัส, promotion]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: promotions_open
     description: โปรโมชั่นที่สถานะเปิดอยู่ของเว็บ พร้อมช่วงวันเวลาที่ตั้งไว้
@@ -35,6 +36,7 @@ tools:
       - {name: rows, from: b, filter: "item.status == 1", limit: 30}
     not_found: {when: "open_count == 0", message: ไม่มีโปรโมชั่นที่เปิดอยู่}
     card:
+      style: list
       title: โปรโมชั่นที่เปิดอยู่
       fields:
         - {label: โปรที่เปิดอยู่, value: open_count, format: int, suffix: " รายการ"}
@@ -53,3 +55,5 @@ tools:
     model_context:
       - {name: has_open, type: bool, expr: "open_count > 0"}
       - {name: note, type: text, text: รายชื่อโปรแสดงในการ์ดแล้ว}
+    follow_ups:
+      - {label: "สรุปยอดวันนี้", ask: "สรุปยอดวันนี้"}

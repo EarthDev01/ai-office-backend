@@ -1,0 +1,500 @@
+# กิจกรรม/รางวัลของผู้เล่น — เส้นที่หน้าเว็บ platform_Tangtem เรียกจริง (plugins/topupserie-controller/promotions/**, member/index.js)
+# ทุกเส้นอ่านอย่างเดียว · body {username} ต้องตรง token (ไม่ตรง = HTTP 200 body ว่าง = ดึงไม่ได้) · scope: office (1 โดเมน = 1 แบรนด์)
+# ตรวจกับโค้ดจริง topupserie_mootui 08/10/2026:
+#   POST /cashback        controller/cashbackSelfStat.go:34 CashbackSelfStat · body game บังคับ — เว็บที่ไม่ใช่ agent ใช้ "manual" (หน้าเว็บ EventType.vue:289)
+#                         ⚠️ คำนวณอย่างเดียว (pointCashbackSelfStat action "" ไม่บวกแต้ม) · error = message.code 1 พร้อมเหตุผล
+#   POST /cashback_all    controller/cashbackSelfStat.go:86 CashbackAllSelfStat · ไม่ต้องส่ง game · เฉพาะเว็บแบบ agent (ไม่ใช่ agent → HTTP 400 invalidData)
+#                         → my_cashback ยิงทั้งสองเส้นแบบ optional แล้วใช้ตัวที่ได้ (รหัสประเภทเกมต่างกันทุกแบรนด์ โมเดลไม่รู้)
+#   POST /commission_all  controller/commissionSelfStat.go:1786 CommissionSelfStatAll · ไม่ต้องส่ง game (/commission ต้องรู้รหัสเกมของแบรนด์)
+#                         pointCommission bonusID 0 = คำนวณอย่างเดียว · ปิดกิจกรรม/ยังไม่ถึงเงื่อนไข = HTTP 400
+#   POST /rankingInfo     controller/Ranking.go:23 · data = {currentRank, nextRank, percent (0-100), canUplevel, MaxLevel} · ไม่มีการตั้งแรงก์ = data null
+#                         (แคช ranking config/สถิติใน redis เหมือนตอนหน้าเว็บเปิด — ไม่เขียน DB)
+#   POST /member          controller/member.go:30 · ⚠️ ตอบ full_name bank_list ref_link(token) ด้วย → values เลือกแค่ point wheel wallet
+#                         wheel = เครดิตกงล้อ (Wheel.vue:83 labelWheelCredit) ไม่ใช่จำนวนครั้งที่หมุนได้
+#   POST /checkin         controller/checkin.go:23 · data = รายวันของเดือนนี้ {day, accepted 0-3} · ปิดกิจกรรม = HTTP 400 checkinEventNotEnable
+#   POST /rand            controller/randomBox.go:14 · ไม่ส่ง ticket_type/type_history = ไม่ดึงประวัติ · data {ticket_left[], ticket_left_all}
+#   POST /bonus_free      controller/bonusFree.go:21 · member_bonus ที่ยังไม่รับและยังไม่หมดเวลา · condition.is_check true = ยังไม่ผ่านเงื่อนไข
+#   POST /mission-reward  controller/missionReward.go:40 · ⚠️ ห้ามส่ง ?reward_id (= กดรับรางวัล AddReward) — ไม่มี query เลย · ปิดภารกิจ = HTTP 500 MissionDisable
+#   POST /affiliate       controller/affiliate.go:29 · ไม่ส่งวัน = ย้อนหลัง 1 เดือน · ⚠️ ตอบ tree/history (ยูสเพื่อน) + token_aff ด้วย
+#                         → values เลือกแค่ยอดรวม dashboard + จำนวนเพื่อนต่อชั้น (friend[].total) · ไม่ได้เปิดระบบแนะนำ = message.code 1
+# ไม่ทำ: ประวัติรับคืนยอดเสีย/คอม (/history_event controller/history.go:100) — รับวันแบบ DD-MM-YYYY (template ของ connector ออกได้แค่ YYYY-MM-DD
+#        → ถามได้แค่ "วันนี้") และต้องส่งรหัสประเภทเกมของแบรนด์ · รอ core รองรับรูปแบบวัน
+# ⚠️ ห้ามใช้ /get/cashback /get/commission /get/checkin /get/rand /get/affiliate /get/bonus_free /commissioncashback /game/history_wheel (เขียนข้อมูล)
+keywords: [คืนยอดเสีย, ยอดเสีย, แคชแบ็ก, แคชแบค, cashback, เงินคืน, คอม, คอมมิชชั่น, commission, แรงก์, แรงค์, ranking, rank, vip, เลเวล, ระดับ,
+           แต้ม, เพชร, กงล้อ, วงล้อ, เช็คอิน, checkin, กล่องสุ่ม, ตั๋ว, ภารกิจ, มิชชั่น, mission, โบนัสฟรี, เครดิตฟรี,
+           แนะนำ, เพื่อน, ชวน, ค่าแนะนำ, affiliate, กิจกรรม, รางวัล]
+tools:
+  - name: my_cashback
+    description: >-
+      ยอดคืนยอดเสีย (แคชแบ็ก) ที่สมาชิกที่ล็อกอินอยู่รับได้ตอนนี้ · ใช้เมื่อถามว่าได้คืนยอดเสียเท่าไหร่ รับเงินคืนได้ไหม
+      · เรียกคู่กับ show_button cashback เสมอ (กดรับที่หน้านั้น ผู้ช่วยรับแทนไม่ได้)
+    permission: member
+    freshness: summary
+    calls:
+      - id: one
+        method: POST
+        path: /cashback
+        scope: office
+        body: {username: "{user.username}", game: manual}
+        timeout_ms: 15000
+        cache_ttl: 30
+        optional: true
+        schema:
+          type: object
+          required: [cashback_total]
+          properties:
+            cashback_total: {type: number}
+            cashback_current: {type: number}
+            cashback_previous: {type: number}
+            percent: {type: number}
+      - id: all
+        method: POST
+        path: /cashback_all
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 30
+        optional: true
+        schema:
+          type: object
+          required: [cashback_total]
+          properties:
+            cashback_total: {type: number}
+            cashback_detail: {type: array, nullable: true}
+    values:
+      - {name: one_total, from: one, path: cashback_total}
+      - {name: one_current, from: one, path: cashback_current}
+      - {name: one_previous, from: one, path: cashback_previous}
+      - {name: one_percent, from: one, path: percent}
+      - {name: all_total, from: all, path: cashback_total}
+      - {name: rows, from: all, path: cashback_detail, limit: 10}
+      - {name: total, expr: "coalesce(all_total, one_total)"}
+    not_found: {when: "total == null", message: ตอนนี้ยังไม่มียอดคืนยอดเสียให้รับ (เว็บอาจยังไม่เปิดกิจกรรม ยังไม่ถึงวันรับ หรือรับครบแล้ววันนี้) ดูเงื่อนไขได้ที่หน้ารับเงินคืน}
+    card:
+      style: stat
+      title: คืนยอดเสีย (แคชแบ็ก)
+      fields:
+        - {label: ยอดที่รับได้ตอนนี้, value: total, format: money, suffix: " บาท"}
+        - {label: ยอดรอบนี้, value: one_current, format: money, when: "one_current != null"}
+        - {label: ยอดสะสมก่อนหน้า, value: one_previous, format: money, when: "one_previous != null && one_previous > 0"}
+        - {label: อัตราคืน, value: one_percent, format: ratio_percent, when: "one_percent != null"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: ประเภทเกม, field: type_game}
+          - {label: ยอดคืน, field: cashback, format: money}
+          - {label: อัตราคืน, field: percent, format: ratio_percent}
+      note: กดรับได้ที่ปุ่ม รับเงินคืน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือยอดคืนยอดเสียที่คุณรับได้ตอนนี้ กดรับได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: คอมมิชชั่น, ask: ตอนนี้ฉันได้ค่าคอมมิชชั่นเท่าไหร่}
+      - {label: ประวัติรับคืนยอดเสีย, ask: เดือนนี้ฉันรับคืนยอดเสียไปเท่าไหร่แล้ว}
+    model_context:
+      - {name: has_cashback, type: bool, expr: "total > 0"}
+
+  - name: my_commission
+    description: >-
+      ค่าคอมมิชชั่นจากยอดเล่นที่สมาชิกที่ล็อกอินอยู่รับได้ตอนนี้ (รวมทุกประเภทเกม) · ใช้เมื่อถามว่าได้คอมเท่าไหร่
+      · เรียกคู่กับ show_button commission เสมอ
+    permission: member
+    freshness: summary
+    calls:
+      - id: c
+        method: POST
+        path: /commission_all
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 30
+        not_found_codes: [400]
+        schema:
+          type: object
+          required: [commission_total]
+          properties:
+            commission_total: {type: number}
+            commission_current: {type: number}
+            commission_detail: {type: array, nullable: true}
+    values:
+      - {name: total, from: c, path: commission_total}
+      - {name: rows, from: c, path: commission_detail, filter: "item.commission_total > 0", limit: 10}
+    card:
+      style: stat
+      title: คอมมิชชั่น
+      fields:
+        - {label: ค่าคอมที่รับได้ตอนนี้, value: total, format: money, suffix: " บาท"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: ประเภทเกม, field: type_game}
+          - {label: ค่าคอม, field: commission_total, format: money}
+          - {label: อัตรา, field: percent, format: ratio_percent}
+      note: กดรับได้ที่ปุ่ม คอมมิชชั่น
+      link: {label: ไปหน้าหลัก, path: "/"}
+    not_found: {when: "total == null", message: ตอนนี้ยังไม่มีค่าคอมให้รับ หรือเว็บยังไม่เปิดกิจกรรมนี้ ดูเงื่อนไขได้ที่หน้าคอมมิชชั่น}
+    answer: นี่คือค่าคอมมิชชั่นที่คุณรับได้ตอนนี้ กดรับได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: คืนยอดเสีย, ask: ตอนนี้ฉันได้คืนยอดเสียเท่าไหร่}
+      - {label: ประวัติรับคอม, ask: เดือนนี้ฉันรับค่าคอมไปเท่าไหร่แล้ว}
+    model_context:
+      - {name: has_commission, type: bool, expr: "total > 0"}
+
+  - name: my_rank
+    description: >-
+      แรงก์ (Ranking/VIP) ปัจจุบันของสมาชิกที่ล็อกอินอยู่ แรงก์ถัดไป และความคืบหน้า · ใช้เมื่อถามว่าอยู่แรงก์ไหน อีกเท่าไหร่จะอัปแรงก์
+      · เรียกคู่กับ show_button rank
+    permission: member
+    freshness: summary
+    calls:
+      - id: r
+        method: POST
+        path: /rankingInfo
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 60
+        schema:
+          type: object
+          nullable: true
+          properties:
+            currentRank: {type: object}
+            nextRank: {type: object}
+            percent: {type: number}
+            canUplevel: {type: boolean}
+            MaxLevel: {type: boolean}
+    values:
+      - {name: rank_title, from: r, path: currentRank.title, default: ""}
+      - {name: next_title, from: r, path: nextRank.title, default: ""}
+      - {name: progress, from: r, path: percent}
+      - {name: can_up, from: r, path: canUplevel, default: false}
+      - {name: is_max, from: r, path: MaxLevel, default: false}
+    not_found: {when: "empty(rank_title) && empty(next_title)", message: เว็บนี้ยังไม่เปิดระบบแรงก์ หรือยังไม่มีข้อมูลแรงก์ของคุณ}
+    card:
+      style: stat
+      title: แรงก์ของฉัน
+      fields:
+        - {label: แรงก์ปัจจุบัน, value: rank_title, empty: ยังไม่มีแรงก์}
+        - {label: แรงก์ถัดไป, value: next_title, when: "!is_max"}
+        - {label: ความคืบหน้า, value: progress, format: percent, when: "!is_max"}
+        - {label: อัปแรงก์ได้แล้ว, value: can_up, format: bool, when: "!is_max"}
+        - {label: แรงก์สูงสุดแล้ว, value: is_max, format: bool, when: "is_max"}
+      note: เงื่อนไขและรางวัลแต่ละแรงก์ดูได้ที่ปุ่ม Ranking
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือแรงก์ของคุณตอนนี้ ดูเงื่อนไขและรางวัลได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: คืนยอดเสีย, ask: ตอนนี้ฉันได้คืนยอดเสียเท่าไหร่}
+      - {label: แต้มและเครดิตกงล้อ, ask: ฉันมีแต้มและเครดิตกงล้อเท่าไหร่}
+    model_context:
+      - {name: can_level_up, type: bool, expr: "can_up"}
+      - {name: at_max_rank, type: bool, expr: "is_max"}
+
+  - name: my_points
+    description: >-
+      แต้ม (เพชร) และเครดิตกงล้อ ของสมาชิกที่ล็อกอินอยู่ · ใช้เมื่อถามว่ามีแต้มเท่าไหร่ เครดิตกงล้อเท่าไหร่
+      · ไม่มีจำนวนครั้งที่หมุนกงล้อได้ (ขึ้นกับเงื่อนไขของเว็บ ดูที่หน้ากงล้อ) · เรียกคู่กับ show_button wheel
+    permission: member
+    freshness: summary
+    calls:
+      - id: m
+        method: POST
+        path: /member
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 20
+        not_found_codes: [1]
+        schema:
+          type: object
+          required: [point]
+          properties:
+            point: {type: number}
+            wheel: {type: number}
+            wallet: {type: number}
+    values:
+      - {name: point, from: m, path: point}
+      - {name: wheel, from: m, path: wheel, default: 0}
+      - {name: wallet, from: m, path: wallet, default: 0}
+    not_found: {when: "false", message: ไม่พบข้อมูลสมาชิก ลองออกจากระบบแล้วเข้าใหม่ หรือติดต่อแอดมินของเว็บ}
+    card:
+      style: stat
+      title: แต้มและเครดิตกงล้อ
+      fields:
+        - {label: แต้ม (เพชร), value: point, format: number}
+        - {label: เครดิตกงล้อ, value: wheel, format: money, suffix: " บาท"}
+        - {label: ยอดในกระเป๋าสะสม, value: wallet, format: money, suffix: " บาท", when: "wallet > 0"}
+      note: จำนวนครั้งที่หมุนกงล้อได้ดูได้ที่หน้ากงล้อ
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือแต้มและเครดิตกงล้อของคุณตอนนี้
+    follow_ups:
+      - {label: กล่องสุ่ม, ask: ฉันเหลือตั๋วกล่องสุ่มกี่ใบ}
+      - {label: เช็คอิน, ask: เดือนนี้ฉันเช็คอินไปกี่วันแล้ว}
+      - {label: ภารกิจ, ask: ภารกิจไหนที่ฉันรับรางวัลได้บ้าง}
+    model_context:
+      - {name: has_points, type: bool, expr: "point > 0"}
+      - {name: has_wheel_credit, type: bool, expr: "wheel > 0"}
+
+  - name: my_checkin
+    description: >-
+      การเช็คอินรายวันของเดือนนี้ของสมาชิกที่ล็อกอินอยู่ (รับไปแล้วกี่วัน วันไหนรับได้) · ใช้เมื่อถามว่าเช็คอินไปกี่วันแล้ว วันนี้รับเช็คอินได้ไหม
+      · เรียกคู่กับ show_button checkin
+    permission: member
+    freshness: summary
+    calls:
+      - id: c
+        method: POST
+        path: /checkin
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 30
+        not_found_codes: [400]
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [day, accepted]
+            properties:
+              day: {type: integer}
+              accepted: {type: integer}
+    values:
+      - {name: rows, from: c, path: "", filter: "item.accepted > 0", sort_by: day, order: desc, limit: 10}
+      - {name: received, from: c, path: "", filter: "item.accepted == 2", agg: count}
+      - {name: claimable, from: c, path: "", filter: "item.accepted == 1", agg: count}
+    not_found: {when: "false", message: เว็บนี้ยังไม่เปิดกิจกรรมเช็คอิน}
+    card:
+      style: stat
+      title: เช็คอินเดือนนี้
+      fields:
+        - {label: รับไปแล้ว, value: received, format: int, suffix: " วัน"}
+        - {label: รับได้ตอนนี้, value: claimable, format: int, suffix: " วัน"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: วันที่, field: day, format: int}
+          - {label: สถานะ, field: accepted, format: "status:checkin"}
+      note: กดรับรางวัลเช็คอินได้ที่ปุ่ม เช็คอิน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือการเช็คอินของคุณเดือนนี้
+    follow_ups:
+      - {label: ภารกิจ, ask: ภารกิจไหนที่ฉันรับรางวัลได้บ้าง}
+      - {label: แต้มและเครดิตกงล้อ, ask: ฉันมีแต้มและเครดิตกงล้อเท่าไหร่}
+    model_context:
+      - {name: can_claim_now, type: bool, expr: "claimable > 0"}
+
+  - name: my_randombox
+    description: >-
+      ตั๋วกล่องสุ่มที่สมาชิกที่ล็อกอินอยู่เหลือ (รวมและแยกตามกล่อง) · ใช้เมื่อถามว่าเหลือตั๋วกล่องสุ่มกี่ใบ เปิดกล่องได้ไหม
+      · เรียกคู่กับ show_button randombox
+    permission: member
+    freshness: summary
+    calls:
+      - id: r
+        method: POST
+        path: /rand
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 20
+        schema:
+          type: object
+          required: [ticket_left_all]
+          properties:
+            ticket_left_all: {type: number}
+            ticket_left: {type: array, nullable: true}
+    values:
+      - {name: total, from: r, path: ticket_left_all}
+      - {name: rows, from: r, path: ticket_left, filter: "item.enable && !item.is_not_show", limit: 10}
+    card:
+      style: stat
+      title: ตั๋วกล่องสุ่ม
+      fields:
+        - {label: ตั๋วคงเหลือทั้งหมด, value: total, format: int, suffix: " ใบ"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: กล่อง, field: title}
+          - {label: ตั๋วคงเหลือ, field: amount, format: int}
+      note: เปิดกล่องได้ที่ปุ่ม กล่องสุ่ม
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือตั๋วกล่องสุ่มที่คุณเหลืออยู่
+    follow_ups:
+      - {label: แต้มและเครดิตกงล้อ, ask: ฉันมีแต้มและเครดิตกงล้อเท่าไหร่}
+      - {label: ภารกิจ, ask: ภารกิจไหนที่ฉันรับรางวัลได้บ้าง}
+    model_context:
+      - {name: has_ticket, type: bool, expr: "total > 0"}
+
+  - name: my_bonus_free
+    description: >-
+      โบนัสฟรีที่แอดมินแจกให้สมาชิกที่ล็อกอินอยู่และยังไม่ได้กดรับ (ยังไม่หมดเวลา) พร้อมสถานะเงื่อนไข · ใช้เมื่อถามว่ามีโบนัสฟรีให้รับไหม
+      · เรียกคู่กับ show_button bonus_free
+    permission: member
+    freshness: summary
+    calls:
+      - id: b
+        method: POST
+        path: /bonus_free
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 20
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [bonus_name]
+            properties:
+              bonus_name: {type: string}
+              bonus: {type: number}
+    values:
+      - {name: rows, from: b, path: "", limit: 10}
+      - {name: open_count, from: b, path: "", agg: count}
+      - {name: ready, from: b, path: "", filter: "!item.condition.is_check", agg: count}
+    not_found: {when: "open_count == 0", message: ตอนนี้ยังไม่มีโบนัสฟรีให้รับ}
+    card:
+      style: list
+      title: โบนัสฟรีที่รอรับ
+      fields:
+        - {label: รับได้ทันที, value: ready, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: หมดเขต, field: end_time, format: datetime}
+          - {label: โบนัส, field: bonus, format: money}
+          - {label: ชื่อโบนัส, field: bonus_name}
+          - {label: เทิร์น, field: turnover, format: number}
+          - {label: ยังติดเงื่อนไข, field: condition.is_check, format: bool}
+      note: กดรับได้ที่ปุ่ม โบนัสฟรี
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือโบนัสฟรีที่รอคุณกดรับ กดรับได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: โปรโมชั่นที่รับได้, ask: ตอนนี้มีโปรโมชั่นอะไรที่ฉันรับได้บ้าง}
+      - {label: ประวัติโบนัส, ask: ฉันได้โบนัสอะไรไปบ้าง}
+    model_context:
+      - {name: has_ready_bonus, type: bool, expr: "ready > 0"}
+
+  - name: my_missions
+    description: >-
+      ภารกิจที่เปิดอยู่ของสมาชิกที่ล็อกอินอยู่ และภารกิจไหนรับรางวัลได้แล้ว · ใช้เมื่อถามว่าภารกิจไหนรับรางวัลได้ ทำภารกิจถึงไหนแล้ว
+      · ผู้ช่วยกดรับรางวัลแทนไม่ได้ · เรียกคู่กับ show_button missions
+    permission: member
+    freshness: summary
+    calls:
+      - id: m
+        method: POST
+        path: /mission-reward
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 20000
+        cache_ttl: 30
+        not_found_codes: [500]
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [title, can_recieve]
+            properties:
+              title: {type: string}
+              can_recieve: {type: integer}
+              reward: {type: number}
+    values:
+      - {name: rows, from: m, path: "", filter: "item.can_recieve != 3", limit: 10}
+      - {name: open_count, from: m, path: "", filter: "item.can_recieve != 3", agg: count}
+      - {name: ready, from: m, path: "", filter: "item.can_recieve == 1", agg: count}
+    not_found: {when: "open_count == 0", message: ตอนนี้ไม่มีภารกิจที่เปิดอยู่ หรือเว็บยังไม่เปิดกิจกรรมภารกิจ}
+    card:
+      style: table
+      title: ภารกิจของฉัน
+      fields:
+        - {label: รับรางวัลได้, value: ready, format: int, suffix: " ภารกิจ"}
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: ภารกิจ, field: title}
+          - {label: รางวัล, field: reward, format: number}
+          - {label: สถานะ, field: can_recieve, format: "status:mission"}
+          - {label: สิ้นสุด, field: end_date, format: date}
+      note: กดรับรางวัลได้ที่ปุ่ม ภารกิจ
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือภารกิจของคุณตอนนี้ กดรับรางวัลได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: เช็คอิน, ask: เดือนนี้ฉันเช็คอินไปกี่วันแล้ว}
+      - {label: กล่องสุ่ม, ask: ฉันเหลือตั๋วกล่องสุ่มกี่ใบ}
+    model_context:
+      - {name: has_ready_mission, type: bool, expr: "ready > 0"}
+      - {name: statuses, type: labels, from: rows, pluck: can_recieve, format: "status:mission"}
+
+  - name: my_affiliate
+    description: >-
+      สรุประบบแนะนำเพื่อนของสมาชิกที่ล็อกอินอยู่: จำนวนเพื่อนที่ชวน (แยกชั้น) รายได้ค่าแนะนำวันนี้/สะสม และยอดในกระเป๋าค่าแนะนำ
+      · ไม่บอกชื่อยูสของเพื่อน · ใช้เมื่อถามว่าชวนเพื่อนได้กี่คน ได้ค่าแนะนำเท่าไหร่ · เรียกคู่กับ show_button affiliate
+    permission: member
+    freshness: summary
+    calls:
+      - id: a
+        method: POST
+        path: /affiliate
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 20000
+        cache_ttl: 60
+        not_found_codes: [1]
+        schema:
+          type: object
+          required: [dashboard]
+          properties:
+            dashboard: {type: object}
+            friend: {type: array, nullable: true}
+            wallet: {type: object}
+    values:
+      # dashboard มี 5 แบบตามวิธีคิดค่าแนะนำของแบรนด์ (AffiliateType.vue:144 เลือก 1 แบบ) — แบบที่ไม่ได้ใช้เป็น 0 จึงรวมกันได้
+      - {name: d_all, from: a, path: dashboard.dividend.all, default: 0}
+      - {name: w_all, from: a, path: dashboard.winloss.all, default: 0}
+      - {name: p_all, from: a, path: dashboard.deposit.all, default: 0}
+      - {name: t_all, from: a, path: dashboard.turnover.all, default: 0}
+      - {name: s_all, from: a, path: dashboard.staking.all, default: 0}
+      - {name: d_today, from: a, path: dashboard.dividend.today, default: 0}
+      - {name: w_today, from: a, path: dashboard.winloss.today, default: 0}
+      - {name: p_today, from: a, path: dashboard.deposit.today, default: 0}
+      - {name: t_today, from: a, path: dashboard.turnover.today, default: 0}
+      - {name: s_today, from: a, path: dashboard.staking.today, default: 0}
+      - {name: income_all, expr: "d_all + w_all + p_all + t_all + s_all"}
+      - {name: income_today, expr: "d_today + w_today + p_today + t_today + s_today"}
+      - {name: aff_wallet, from: a, path: wallet.wallet, default: 0}
+      - {name: levels, from: a, path: friend, filter: "item.can_use", limit: 10}
+      - {name: friend_total, from: a, path: friend, filter: "item.can_use", agg: sum, field: total}
+      - {name: friend_today, from: a, path: friend, filter: "item.can_use", agg: sum, field: total_today}
+    not_found: {when: "false", message: เว็บนี้ยังไม่เปิดระบบแนะนำเพื่อน}
+    card:
+      style: stat
+      title: แนะนำเพื่อน
+      fields:
+        - {label: เพื่อนที่ชวนทั้งหมด, value: friend_total, format: int, suffix: " คน"}
+        - {label: สมัครวันนี้, value: friend_today, format: int, suffix: " คน"}
+        - {label: ค่าแนะนำวันนี้, value: income_today, format: money}
+        - {label: ค่าแนะนำสะสม, value: income_all, format: money}
+        - {label: ยอดในกระเป๋าค่าแนะนำ, value: aff_wallet, format: money}
+      table:
+        rows: levels
+        max_rows: 10
+        columns:
+          - {label: ชั้น, field: level, format: int}
+          - {label: จำนวนเพื่อน, field: total, format: int}
+          - {label: สมัครวันนี้, field: total_today, format: int}
+      note: ลิงก์ชวนเพื่อนและการถอนค่าแนะนำอยู่ที่ปุ่ม ช่องทางรวย
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือสรุปการแนะนำเพื่อนของคุณ
+    follow_ups:
+      - {label: คอมมิชชั่น, ask: ตอนนี้ฉันได้ค่าคอมมิชชั่นเท่าไหร่}
+      - {label: คืนยอดเสีย, ask: ตอนนี้ฉันได้คืนยอดเสียเท่าไหร่}
+    model_context:
+      - {name: has_friends, type: bool, expr: "friend_total > 0"}
+      - {name: has_income, type: bool, expr: "income_all > 0"}

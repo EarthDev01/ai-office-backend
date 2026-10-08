@@ -1,6 +1,6 @@
 import { apiError, ChatError } from './chat'
 import { hostFetch } from './hostfetch'
-import { decodeJWT, dig, pluck, readToken, type PageConfig } from './page'
+import { decodeJWT, dig, guestID, pluck, readToken, type PageConfig } from './page'
 
 export type { PageConfig } from './page'
 
@@ -16,7 +16,7 @@ const RENEW_BEFORE_MS = 3 * 60 * 1000
 export class ChatSession {
   private cfg: PageConfig | null = null
   private loading: Promise<PageConfig> | null = null
-  private cur: { service: string; ticket: string; expiresAt: number } | null = null
+  private cur: { service: string; cred: string; ticket: string; expiresAt: number } | null = null
 
   /** hostAPIBase = ค่าจาก data-host-api-base ของ snippet (ทับค่าจาก backend) */
   constructor(
@@ -32,6 +32,20 @@ export class ChatSession {
   /** token ของแอดมินในหน้านี้ ตามที่ page-config บอก ('' = ยังไม่รู้/ยังไม่ล็อกอิน) */
   readToken(): string {
     return readToken(this.cfg?.token)
+  }
+
+  /**
+   * ตัวตนที่ใช้ขอตั๋ว: token ของหน้า (Bearer) · ยังไม่ล็อกอินบนหน้าเว็บที่เปิด guest = guest_id ของเบราว์เซอร์ (Guest)
+   * '' = ยังไม่รู้/ยังไม่ล็อกอินและหน้านี้ไม่เปิด guest
+   */
+  credential(): string {
+    const token = this.readToken()
+    if (token) return `Bearer ${token}`
+    return this.cfg?.guest ? `Guest ${guestID()}` : ''
+  }
+
+  isGuest(): boolean {
+    return this.credential().startsWith('Guest ')
   }
 
   authScheme(): string {
@@ -55,20 +69,22 @@ export class ChatSession {
 
   /** ตั๋วที่ยังเหลืออายุพอสำหรับคำตอบ 1 ข้อ */
   async ticket(service: string): Promise<string> {
-    if (this.cur && this.cur.service === service && this.cur.expiresAt - Date.now() > RENEW_BEFORE_MS) {
+    const cfg = await this.pageConfig()
+    // ตั๋วผูกกับตัวตนที่ใช้ขอ — ล็อกอินจาก guest แล้วต้องขอใหม่ ห้ามใช้ตั๋ว guest ต่อ
+    const cred = this.credential()
+    if (this.cur && this.cur.service === service && this.cur.cred === cred && this.cur.expiresAt - Date.now() > RENEW_BEFORE_MS) {
       return this.cur.ticket
     }
-    const cfg = await this.pageConfig()
-    const permissions = await this.readPermissions(cfg, service)
+    const permissions = cred.startsWith('Guest ') ? [] : await this.readPermissions(cfg, service)
     const res = await fetch(`${this.apiBase}/api/ai/widget/service/${encodeURIComponent(service)}/browser-session`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.readToken()}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: cred, 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissions }),
     })
     if (!res.ok) throw await apiError(res, `ขอสิทธิ์ใช้งานผู้ช่วยไม่สำเร็จ (${res.status})`)
     const json = (await res.json().catch(() => null)) as { payload?: { ticket: string; expires_in: number } } | null
     if (!json?.payload?.ticket) throw new ChatError(`ขอสิทธิ์ใช้งานผู้ช่วยไม่สำเร็จ (${res.status})`)
-    this.cur = { service, ticket: json.payload.ticket, expiresAt: Date.now() + json.payload.expires_in * 1000 }
+    this.cur = { service, cred, ticket: json.payload.ticket, expiresAt: Date.now() + json.payload.expires_in * 1000 }
     return this.cur.ticket
   }
 

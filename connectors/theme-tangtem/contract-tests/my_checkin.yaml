@@ -1,0 +1,29 @@
+# response ตาม topupserie controller/checkin.go:23 CheckIn (respap.PayloadCheckIn · accepted 0-3)
+tool: my_checkin
+cases:
+  - name: รับแล้ว 2 วัน รับได้ 1 วัน
+    username: somchai01
+    responses:
+      c:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            - {day: 1, reward: 10, accepted: 2, deposit_con: true}
+            - {day: 2, reward: 10, accepted: 3, deposit_con: false}
+            - {day: 3, reward: 10, accepted: 2, deposit_con: true}
+            - {day: 4, reward: 10, accepted: 1, deposit_con: true}
+            - {day: 5, reward: 10, accepted: 0, deposit_con: false}
+    expect:
+      status: ok
+      calls:
+        c: {path: /checkin, body: {username: somchai01}}
+      fields: {รับไปแล้ว: "2 วัน", รับได้ตอนนี้: "1 วัน"}
+      table_rows: 4
+      table_cells: [["4", รับได้], ["3", รับแล้ว], ["2", เลยกำหนด]]
+      model_context: {can_claim_now: true}
+      link: /
+  - name: ปิดกิจกรรมเช็คอิน (HTTP 400)
+    responses:
+      c: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: checkinEventNotEnable}, data: null}}
+    expect: {status: not_found}

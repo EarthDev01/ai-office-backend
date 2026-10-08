@@ -1,0 +1,44 @@
+# response ตาม topupserie controller/bonus.go GetBonus · 2 รูปข้อมูล (D-26)
+tool: list_promotions
+cases:
+  - name: data เป็นรายการ (ฝากปกติ) · ตัด BonusID 104
+    username: somchai01
+    responses:
+      b:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data:
+            - {bonus_name: โบนัสทุกยอดฝาก, BonusID: 7, bonus_percent: 10, fix_deposit: 100, bonus_limit: 1000, fix_multiple: 3, can_take: true}
+            - {bonus_name: ไม่รับโบนัส, BonusID: 104, bonus_percent: 0, fix_deposit: 0, bonus_limit: 0, fix_multiple: 0, can_take: true}
+    expect:
+      status: ok
+      calls:
+        b: {path: /bonus, body: {username: somchai01}}
+      model_context: {has_promotions: true}
+      link: /
+  - name: data.bonus (ฝากแบบกระเป๋า)
+    responses:
+      b:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data:
+            balance_realcash: 50
+            bonus:
+              - {bonus_name: สมาชิกใหม่ 50%, BonusID: 9, bonus_percent: 50, fix_deposit: 100, bonus_limit: 500, fix_multiple: 5, can_take: true}
+    expect:
+      status: ok
+      model_context: {has_promotions: true}
+  - name: ยังไม่ผูกบัญชีธนาคาร (code 1)
+    responses:
+      b: {body: {status: {code: 200, message: ok}, message: {code: 1, message: userNotFound}, data: null}}
+    expect: {status: not_found}
+  - name: มีแต่ไม่รับโบนัส
+    responses:
+      b:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data: [{bonus_name: ไม่รับโบนัส, BonusID: 104}]
+    expect: {status: not_found}

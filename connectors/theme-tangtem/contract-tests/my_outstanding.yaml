@@ -1,0 +1,27 @@
+# response ตาม topupserie controller/agent.go:10 GetAgentOutstanding → service/agentService.go:321 (GameDataResp)
+tool: my_outstanding
+cases:
+  - name: มีเกมค้าง 1 เกม
+    username: somchai01
+    responses:
+      o:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data: [{game_id: pg, game_name: PG SOFT, game_list_id: "1001", game_list_name: Mahjong Ways, game_image: "", game_type: SLOT}]
+    expect:
+      status: ok
+      calls:
+        o: {path: /outstanding, body: {username: somchai01}}
+      table_rows: 1
+      table_cells: [[PG SOFT, Mahjong Ways]]
+      model_context: {has_outstanding: true}
+      link: /
+  - name: ไม่มีเกมค้าง
+    responses:
+      o: {body: {status: {code: 200, message: ok}, message: {code: 0, message: success}, data: []}}
+    expect: {status: not_found}
+  - name: ระบบเกมไม่ตอบ (HTTP 500)
+    responses:
+      o: {status: 500, body: {status: {code: 500, message: server error}, message: {code: 1, message: ไม่สามารถตรวจสอบรายการเล่นเกมได้}, data: null}}
+    expect: {status: error}

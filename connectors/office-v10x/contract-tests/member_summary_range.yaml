@@ -1,0 +1,25 @@
+# response ตาม controller/member.go:1600-1641 MemberSummaryV2 (data MemberAlltime)
+tool: member_summary_range
+cases:
+  - name: ไม่ระบุวัน = ย้อนหลังประมาณ 6 เดือน
+    input: {username: user01}
+    responses:
+      s: {body: {code: 0, message: Success, data: {deposit: 30000, withdraw: 42000, profit: -12000}}}
+    expect:
+      status: ok
+      calls:
+        s: {path: /user-summaryv2/DEMO-SVC, query: {username: user01, start_date: "2026-03-26", end_date: "2026-09-24"}}
+      fields:
+        ยอดฝาก: "30,000.00 บาท"
+        ยอดถอน: "42,000.00 บาท"
+        กำไร (ฝากลบถอน): "-12,000.00 บาท"
+      model_context: {member_profitable_for_web: false, has_withdraw: true}
+      link: /member/user01
+  - name: ระบุเดือน · ไม่มียอด
+    input: {username: user01, date_from: "2026-09-01", date_to: "2026-09-24"}
+    responses:
+      s: {body: {code: 0, message: Success, data: {deposit: 0, withdraw: 0, profit: 0}}}
+    expect:
+      status: not_found
+      calls:
+        s: {query: {start_date: "2026-09-01", end_date: "2026-09-24"}}

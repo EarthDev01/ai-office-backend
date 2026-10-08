@@ -29,6 +29,8 @@ type UpdateOffice struct {
 	AccentColors   *[]string  `json:"accent_colors"`
 	ColorSource    *string    `json:"color_source"`
 	Placement      *Placement `json:"placement"`
+	// CardStyles — ส่งมาทั้งชุด (แทนของเดิม) · ค่าว่าง = กลับไปใช้แบบตั้งต้นของ connector
+	CardStyles *map[string]string `json:"card_styles"`
 }
 
 type UpdateService struct {

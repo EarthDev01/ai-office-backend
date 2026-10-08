@@ -106,6 +106,18 @@ func (f Formatter) StatusLabel(table string, v any) string {
 	return fmt.Sprintf("สถานะ %v (ยังไม่มีคำอธิบาย)", v)
 }
 
+// StatusTone — สีป้ายของสถานะ (ok | wait | bad) · ไม่รู้จัก = wait
+func (f Formatter) StatusTone(table string, v any) string {
+	if t, ok := f.Statuses.Tables[table]; ok {
+		if n, ok := ToFloat(v); ok {
+			if e, ok := t.Find(int(n)); ok {
+				return e.ToneOf()
+			}
+		}
+	}
+	return "wait"
+}
+
 func (f Formatter) loc() *time.Location {
 	if f.Loc != nil {
 		return f.Loc

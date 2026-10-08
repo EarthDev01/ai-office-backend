@@ -5,6 +5,12 @@
 #   ⚠️ bank_number ไม่ได้ปิดบัง — ห้ามขึ้นการ์ด (ไม่ได้ประกาศใน values)
 # POST /get/turnover (controller/withdraw.go 443-565) — body {username} · data RespST {is_withdraw, bonus_name, message, turntotal…}
 #   HTTP 400 bankNotVerified = ยังไม่ได้ยืนยันบัญชีธนาคาร → ถือเป็น "ไม่พบ" พร้อมข้อความ
+#   ยอดเทิร์นตามหน้าถอน (components/Modal/Withdraw/Withdraw.vue:131-149): turnover_slot true = นับจากเครดิต (amount) · false = ยอดเล่น (turnagent)
+#   turntotal = Withdrawfix = ยอดที่ต้องถึงก่อนถอน (withdraw.go:539-541)
+# POST /outstanding (controller/agent.go:10 GetAgentOutstanding → service/agentService.go:321) — body {username}
+#   ถามระบบเกมว่ามีเกมที่ยังเล่นค้าง (บิลยังไม่จบ) ไหม · data = [{game_name, game_list_name, game_type…}] · ว่าง = ไม่มีค้าง
+#   หน้าเว็บใช้ก่อนเปิดหน้าถอน (plugins/topupserie-controller/config/index.js:170 · Withdraw.vue loadData)
+keywords: [เครดิต, ยอดเงิน, เงินเหลือ, ฝาก, ถอน, ประวัติ, เทิร์น, รายการ, เกมค้าง, ค้าง]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: my_balance
     description: ยอดเครดิตคงเหลือของสมาชิกที่ล็อกอินอยู่ (ดึงสดจากระบบเกม) · ใช้เมื่อถามว่ามีเครดิตเท่าไหร่ เงินเหลือเท่าไหร่
@@ -30,6 +36,11 @@ tools:
         - {label: เครดิตคงเหลือ, value: credit, format: money, suffix: " บาท"}
       note: ดึงสดจากระบบเกม ณ เวลาที่ถาม
       link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือยอดเครดิตคงเหลือของคุณตอนนี้
+    follow_ups:
+      - {label: ถอนได้หรือยัง, ask: ตอนนี้ฉันถอนเงินได้หรือยัง}
+      - {label: ฝากล่าสุด, ask: รายการฝากล่าสุดของฉันเข้าหรือยัง}
+      - {label: โปรที่ติดอยู่, ask: ตอนนี้ฉันติดโปรอะไรอยู่}
     model_context:
       - {name: has_credit, type: bool, expr: "credit > 0"}
 
@@ -79,6 +90,11 @@ tools:
           - {label: โปรโมชั่น, field: bonus_name}
       note: ดูทั้งหมดได้ที่ ประวัติการใช้งาน
       link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือรายการฝากล่าสุดของคุณ
+    follow_ups:
+      - {label: เครดิตคงเหลือ, ask: ตอนนี้ฉันมีเครดิตเหลือเท่าไหร่}
+      - {label: โปรที่ติดอยู่, ask: ตอนนี้ฉันติดโปรอะไรอยู่}
+      - {label: ถอนล่าสุด, ask: รายการถอนล่าสุดของฉันเข้าหรือยัง}
     model_context:
       - {name: has_pending, type: bool, expr: "pending > 0"}
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
@@ -112,14 +128,20 @@ tools:
           - {label: สถานะ, field: status, format: "status:withdraw"}
       note: ดูทั้งหมดได้ที่ ประวัติการใช้งาน
       link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือรายการถอนล่าสุดของคุณ
+    follow_ups:
+      - {label: ถอนได้หรือยัง, ask: ตอนนี้ฉันถอนเงินได้หรือยัง}
+      - {label: เครดิตคงเหลือ, ask: ตอนนี้ฉันมีเครดิตเหลือเท่าไหร่}
     model_context:
       - {name: has_pending, type: bool, expr: "pending > 0"}
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
 
   - name: my_withdraw_check
     description: >-
-      ตอนนี้สมาชิกที่ล็อกอินอยู่ถอนเงินได้หรือยัง และโปรโมชั่นที่ติดอยู่ (ถ้ามี) · ใช้เมื่อถามว่าถอนได้ไหม ทำไมถอนไม่ได้ ติดเทิร์นไหม
+      ตอนนี้สมาชิกที่ล็อกอินอยู่ถอนเงินได้หรือยัง โปรโมชั่นที่ติดอยู่ (ถ้ามี) และยอดเทิร์นที่ต้องทำ/ทำแล้ว (ตามหน้าถอนเงิน)
+      · ใช้เมื่อถามว่าถอนได้ไหม ทำไมถอนไม่ได้ ติดเทิร์นไหม ต้องทำเทิร์นอีกเท่าไหร่ · เรียกคู่กับ show_button withdraw
     permission: member
+    answer: llm   # ต้องอธิบาย/ตีความ — ให้ AI เขียนคำตอบ
     freshness: live
     calls:
       - id: t
@@ -136,10 +158,21 @@ tools:
             is_withdraw: {type: boolean}
             bonus_name: {type: string}
             message: {type: string}
+            amount: {type: number}
+            turntotal: {type: number}
+            turnagent: {type: number}
+            turnover_slot: {type: boolean}
     values:
       - {name: can_withdraw, from: t, path: is_withdraw}
       - {name: promo, from: t, path: bonus_name, default: ""}
       - {name: reason, from: t, path: message, default: ""}
+      - {name: credit_now, from: t, path: amount}
+      - {name: turn_target, from: t, path: turntotal, default: 0}
+      - {name: turn_played, from: t, path: turnagent, default: 0}
+      - {name: by_credit, from: t, path: turnover_slot, default: false}
+      # ยอดที่ทำแล้วตามหน้าถอน: by_credit = เครดิตปัจจุบัน · ไม่ใช่ = ยอดเล่น
+      - {name: turn_left_credit, expr: "turn_target - coalesce(credit_now, 0)"}
+      - {name: turn_left_play, expr: "turn_target - turn_played"}
     not_found: {when: "false", message: ตรวจเงื่อนไขถอนไม่ได้ อาจเพราะบัญชีธนาคารยังไม่ได้ยืนยัน ลองเปิดหน้าถอนเงิน หรือติดต่อแอดมินของเว็บ}
     card:
       title: เงื่อนไขการถอน
@@ -147,8 +180,62 @@ tools:
         - {label: ถอนได้ตอนนี้, value: can_withdraw, format: bool}
         - {label: ชื่อโปรโมชั่น, value: promo, when: "!empty(promo)"}
         - {label: ข้อความจากระบบ, value: reason, when: "!empty(reason)"}
+        - {label: เครดิตปัจจุบัน, value: credit_now, format: money, when: "credit_now != null"}
+        - {label: ยอดเทิร์นที่ต้องถึง, value: turn_target, format: money, when: "turn_target > 0"}
+        - {label: ยอดเล่นที่ทำแล้ว, value: turn_played, format: money, when: "turn_target > 0 && !by_credit"}
+        - {label: ยอดเทิร์นที่ขาดอีก, value: turn_left_play, format: money, when: "turn_target > 0 && !by_credit && turn_left_play > 0"}
+        - {label: เครดิตที่ขาดอีก, value: turn_left_credit, format: money, when: "turn_target > 0 && by_credit && turn_left_credit > 0"}
       note: ยอดเทิร์นและเงื่อนไขละเอียดดูได้ที่หน้าถอนเงิน
       link: {label: ไปหน้าหลัก, path: "/"}
+    follow_ups:
+      - {label: เกมค้าง, ask: ตอนนี้ฉันมีเกมค้างอยู่ไหม}
+      - {label: โปรที่ติดอยู่, ask: ตอนนี้ฉันติดโปรอะไรอยู่}
     model_context:
       - {name: can_withdraw_now, type: bool, expr: "can_withdraw"}
       - {name: has_promotion, type: bool, expr: "!empty(promo)"}
+      - {name: has_turnover_target, type: bool, expr: "turn_target > 0"}
+      - {name: turnover_counts_credit, type: bool, expr: "by_credit"}
+      - {name: turnover_not_reached, type: bool, expr: "(by_credit && turn_left_credit > 0) || (!by_credit && turn_left_play > 0)"}
+
+  - name: my_outstanding
+    description: >-
+      สมาชิกที่ล็อกอินอยู่มีเกมที่ยังเล่นค้าง (บิลยังไม่จบ) อยู่ไหม — เกมค้างทำให้ถอนเงินหรือย้ายเครดิตไม่ได้ชั่วคราว
+      · ใช้เมื่อถามว่ามีเกมค้างไหม ทำไมถอนไม่ได้ทั้งที่ทำเทิร์นครบ
+    keywords: [เกมค้าง, ค้างในเกม, บิลค้าง, outstanding]
+    permission: member
+    freshness: live
+    calls:
+      - id: o
+        method: POST
+        path: /outstanding
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        schema:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              game_name: {type: string}
+              game_list_name: {type: string}
+    values:
+      - {name: rows, from: o, path: "", limit: 10}
+      - {name: open_count, from: o, path: "", agg: count}
+    not_found: {when: "open_count == 0", message: ตอนนี้ไม่มีเกมค้างอยู่}
+    card:
+      title: เกมที่ยังเล่นค้าง
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: ค่ายเกม, field: game_name}
+          - {label: เกม, field: game_list_name}
+      note: เล่นเกมที่ค้างให้จบ (หรือรอให้รอบเกมปิด) แล้วจึงถอนเงินได้
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: ตอนนี้คุณมีเกมที่ยังเล่นค้างอยู่ตามรายการนี้
+    follow_ups:
+      - {label: ถอนได้หรือยัง, ask: ตอนนี้ฉันถอนเงินได้หรือยัง}
+      - {label: เครดิตคงเหลือ, ask: ตอนนี้ฉันมีเครดิตเหลือเท่าไหร่}
+    model_context:
+      - {name: has_outstanding, type: bool, expr: "open_count > 0"}

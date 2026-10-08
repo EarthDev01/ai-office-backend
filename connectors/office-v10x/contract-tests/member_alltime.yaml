@@ -1,0 +1,27 @@
+# response ตาม controller/member.go:1563-1597 GetMemberAlltimebyUser (helper.Response · data MemberAlltime)
+tool: member_alltime
+cases:
+  - name: มียอดตลอดชีพ
+    input: {username: user01}
+    responses:
+      a: {body: {code: 0, message: Success, data: {deposit: 125000, withdraw: 98000.5, profit: 26999.5}}}
+    expect:
+      status: ok
+      calls:
+        a: {path: /GetMemberAlltimebyUser/DEMO-SVC, query: {username: user01}}
+      fields:
+        ยอดฝากตลอดชีพ: "125,000.00 บาท"
+        ยอดถอนตลอดชีพ: "98,000.50 บาท"
+        กำไรตลอดชีพ (ฝากลบถอน): "26,999.50 บาท"
+      model_context: {member_profitable_for_web: true, has_withdraw: true}
+      link: /member/user01
+  - name: ไม่พบรายงาน (หลังบ้านตอบศูนย์ทั้งหมด)
+    input: {username: nobody}
+    responses:
+      a: {body: {code: 0, message: Success, data: {deposit: 0, withdraw: 0, profit: 0}}}
+    expect: {status: not_found, link: /member/nobody}
+  - name: DB error (code 1)
+    input: {username: user01}
+    responses:
+      a: {body: {code: 1, message: "server selection timeout", data: null}}
+    expect: {status: error}

@@ -1,0 +1,26 @@
+# response ตาม topupserie controller/bonusFree.go:21 BonusFree (model.MemberBonus)
+tool: my_bonus_free
+cases:
+  - name: โบนัสฟรี 2 รายการ รับได้ 1
+    username: somchai01
+    responses:
+      b:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            - {id: a1, username: somchai01, bonus_name: เครดิตฟรีวันเกิด, bonus: 100, turnover: 5, start_time: "2026-10-01T00:00:00Z", end_time: "2026-10-31T16:59:59Z", operator_name: admin01, condition: {is_check: false}}
+            - {id: a2, username: somchai01, bonus_name: แจกฟรีฝากครบ, bonus: 50, turnover: 3, start_time: "2026-10-01T00:00:00Z", end_time: "2026-10-15T16:59:59Z", condition: {is_check: true, min_deposit: 500, current_deposit: 100}}
+    expect:
+      status: ok
+      calls:
+        b: {path: /bonus_free, body: {username: somchai01}}
+      fields: {รับได้ทันที: "1 รายการ"}
+      table_rows: 2
+      table_cells: [["31/10/2026 23:59", "100.00", เครดิตฟรีวันเกิด, "5", ไม่ใช่]]
+      model_context: {has_ready_bonus: true}
+      link: /
+  - name: ไม่มีโบนัสฟรี
+    responses:
+      b: {body: {status: {code: 200, message: ok}, message: {code: 0, message: success}, data: []}}
+    expect: {status: not_found}

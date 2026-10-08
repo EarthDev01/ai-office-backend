@@ -4,6 +4,7 @@
 #   วันที่กิจกรรม (start_date · end_date) · status 1 เปิดใช้งาน / 0 ปิดใช้งาน
 #   ⚠️ DB error เขียน JSON สองก้อน (ไม่มี return) → bad_json = "ดึงไม่ได้" · end_date ที่ไม่ได้ตั้ง = ปีแรกสุด (ไม่ใช่ null)
 questions: [BQ-11]
+keywords: [โปร, โบนัส, promotion]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: promotions_open
     description: >-
@@ -49,6 +50,7 @@ tools:
       - {name: server_count, from: b, path: count}
     not_found: {when: "empty(rows)", message: ตอนนี้ไม่มีโปรโมชั่นที่เปิดใช้งาน}
     card:
+      style: list
       title: โปรโมชั่นที่เปิดใช้งาน
       fields:
         - {label: เปิดใช้งาน, value: open_count, format: int, suffix: " รายการ"}
@@ -69,3 +71,5 @@ tools:
     model_context:
       - {name: has_open, type: bool, expr: "open_count > 0"}
       - {name: may_have_more, type: bool, expr: "server_count > fetched_count"}
+    follow_ups:
+      - {label: "ภาพรวมยอดฝาก-ถอน", ask: "สรุปยอดฝาก ยอดถอน วันนี้"}

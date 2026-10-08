@@ -45,6 +45,7 @@ func (c *Connector) Evaluate(t *Tool, results map[string]*CallResult, rc RenderC
 	base := domain.Card{
 		ID:        domain.NewID(),
 		Tool:      t.Name,
+		Style:     t.Card.Style,
 		Title:     t.Card.Title,
 		FetchedAt: fetchedAt,
 		Fields:    []domain.CardField{},
@@ -128,7 +129,14 @@ func (c *Connector) Evaluate(t *Tool, results map[string]*CallResult, rc RenderC
 		if raw != nil {
 			disp = fs.Prefix + disp + fs.Suffix
 		}
-		card.Fields = append(card.Fields, domain.CardField{Label: fs.Label, Display: disp, Value: raw, Format: fs.Format})
+		if strings.TrimSpace(disp) == "" && fs.Empty != "" {
+			disp = fs.Empty
+		}
+		f := domain.CardField{Label: fs.Label, Display: disp, Value: raw, Format: fs.Format}
+		if strings.HasPrefix(fs.Format, "status:") {
+			f.Tone = fm.StatusTone(strings.TrimPrefix(fs.Format, "status:"), raw)
+		}
+		card.Fields = append(card.Fields, f)
 		sensitive = appendSensitive(sensitive, raw, disp, fs.Format)
 	}
 	if ts := t.Card.Table; ts != nil {
@@ -152,7 +160,13 @@ func (c *Connector) Evaluate(t *Tool, results map[string]*CallResult, rc RenderC
 				if raw != nil {
 					disp += col.Suffix
 				}
+				if strings.TrimSpace(disp) == "" && col.Empty != "" {
+					disp = col.Empty
+				}
 				cells[j] = domain.CardCell{Display: disp, Value: raw}
+				if strings.HasPrefix(col.Format, "status:") {
+					cells[j].Tone = fm.StatusTone(strings.TrimPrefix(col.Format, "status:"), raw)
+				}
 				sensitive = appendSensitive(sensitive, raw, disp, col.Format)
 			}
 			tbl.Rows = append(tbl.Rows, cells)
@@ -248,6 +262,11 @@ func evalValue(v ValueSpec, results map[string]*CallResult, env map[string]any) 
 			return nil, nil
 		}
 		cur = GetPath(r.Data, v.Path)
+		for _, p := range v.Paths {
+			if cur = GetPath(r.Data, p); cur != nil {
+				break
+			}
+		}
 	}
 	if v.Filter != "" {
 		list, _ := cur.([]any)

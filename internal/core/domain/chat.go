@@ -60,15 +60,19 @@ type ChatTicket struct {
 	Permissions []string
 	// Session = ลายนิ้วมือของ token หลังบ้านที่ใช้ขอตั๋ว (SessionFingerprint) — ห้องแชทผูกกับค่านี้
 	// JWT ปลอมที่อ้าง admin_id ของคนอื่นได้ลายนิ้วมือคนละค่า จึงเปิดห้องของเขาไม่ได้ (KI-A1)
-	Session   string
+	Session string
+	// Guest = ตั๋วของผู้ที่ยังไม่ล็อกอิน — ใช้ tool ที่ต้องล็อกอินไม่ได้ + นับโควตาต่อวัน
+	Guest     bool
 	ExpiresAt time.Time
 }
 
 // Card คือข้อมูลที่ระบบสร้างเองจากผล API — ตัวเลข/ชื่อทั้งหมดอยู่ตรงนี้ ไม่ผ่าน LLM
 type Card struct {
-	ID        string      `json:"id"              bson:"id"`
-	Kind      string      `json:"kind"            bson:"kind"` // ok | not_found | error | denied | reference
-	Tool      string      `json:"tool"            bson:"tool"`
+	ID   string `json:"id"              bson:"id"`
+	Kind string `json:"kind"            bson:"kind"` // ok | not_found | error | denied | reference
+	Tool string `json:"tool"            bson:"tool"`
+	// Style = แบบที่ widget วาด: stat | list | table | single ("" = table) · ตั้งต้นจาก connector ทับได้ต่อ domain
+	Style     string      `json:"style,omitempty" bson:"style,omitempty"`
 	Title     string      `json:"title"           bson:"title"`
 	Fields    []CardField `json:"fields"          bson:"fields"`
 	Table     *CardTable  `json:"table,omitempty" bson:"table,omitempty"`
@@ -84,6 +88,7 @@ type CardField struct {
 	Display string `json:"display" bson:"display"`
 	Value   any    `json:"value"   bson:"value"`
 	Format  string `json:"format"  bson:"format"`
+	Tone    string `json:"tone,omitempty" bson:"tone,omitempty"` // สถานะ: ok | wait | bad
 }
 
 type CardTable struct {
@@ -99,6 +104,7 @@ type CardColumn struct {
 type CardCell struct {
 	Display string `json:"display" bson:"display"`
 	Value   any    `json:"value"   bson:"value"`
+	Tone    string `json:"tone,omitempty" bson:"tone,omitempty"` // สถานะ: ok | wait | bad
 }
 
 // CardLink พาไปหน้าจริงของหลังบ้าน (path ของหน้า office ไม่ใช่ API)
@@ -148,22 +154,38 @@ type Conversation struct {
 //
 // Status ของ assistant: ok | aborted | error
 type ChatMessage struct {
-	ID             string     `json:"id"                         bson:"_id"`
-	ConversationID string     `json:"conversation_id"            bson:"conversation_id"`
-	OfficeID       string     `json:"office_id"                  bson:"office_id"`
-	ServiceID      string     `json:"service_id"                 bson:"service_id"`
-	Role           string     `json:"role"                       bson:"role"`
-	Text           string     `json:"text"                       bson:"text"`
-	Cards          []Card     `json:"cards,omitempty"            bson:"cards,omitempty"`
-	ToolCalls      []ToolCall `json:"tool_calls,omitempty"       bson:"tool_calls,omitempty"`
-	Usage          Usage      `json:"usage"                      bson:"usage"`
-	FirstTokenMs   int64      `json:"first_token_ms,omitempty"   bson:"first_token_ms,omitempty"`
-	GuardHits      int        `json:"guard_hits,omitempty"       bson:"guard_hits,omitempty"`
-	Category       string     `json:"category,omitempty"         bson:"category,omitempty"`
-	Status         string     `json:"status,omitempty"           bson:"status,omitempty"`
+	ID             string `json:"id"                         bson:"_id"`
+	ConversationID string `json:"conversation_id"            bson:"conversation_id"`
+	OfficeID       string `json:"office_id"                  bson:"office_id"`
+	ServiceID      string `json:"service_id"                 bson:"service_id"`
+	Role           string `json:"role"                       bson:"role"`
+	Text           string `json:"text"                       bson:"text"`
+	Cards          []Card `json:"cards,omitempty"            bson:"cards,omitempty"`
+	// Actions = ปุ่มสั่งหน้าเว็บที่แนบใต้คำตอบ (id + label จาก connector) — โหลดประวัติแล้ววาดปุ่มเดิมได้
+	Actions []ChatAction `json:"actions,omitempty"          bson:"actions,omitempty"`
+	// Suggestions = ปุ่มถามต่อ (กดแล้วส่งเป็นคำถามใหม่) — จาก follow_ups ของ tool ที่ตอบไป
+	Suggestions  []ChatSuggestion `json:"suggestions,omitempty" bson:"suggestions,omitempty"`
+	ToolCalls    []ToolCall       `json:"tool_calls,omitempty"       bson:"tool_calls,omitempty"`
+	Usage        Usage            `json:"usage"                      bson:"usage"`
+	FirstTokenMs int64            `json:"first_token_ms,omitempty"   bson:"first_token_ms,omitempty"`
+	GuardHits    int              `json:"guard_hits,omitempty"       bson:"guard_hits,omitempty"`
+	Category     string           `json:"category,omitempty"         bson:"category,omitempty"`
+	Status       string           `json:"status,omitempty"           bson:"status,omitempty"`
 	// VerificationStatus — คำตอบที่ตอบสำเร็จเข้าคิวตรวจเป็น pending · ข้อความผู้ใช้/คำตอบที่ล้มไม่ต้องตรวจ ("")
 	VerificationStatus string    `json:"verification_status,omitempty" bson:"verification_status,omitempty"`
 	CreatedAt          time.Time `json:"created_at"                 bson:"created_at"`
+}
+
+// ChatAction = ปุ่ม 1 ปุ่มใต้คำตอบ · วิธีสั่งหน้าเว็บอยู่ใน page-config (ตาม id) ไม่ได้มาจากโมเดล
+type ChatAction struct {
+	ID    string `json:"id"    bson:"id"`
+	Label string `json:"label" bson:"label"`
+}
+
+// ChatSuggestion = ปุ่มถามต่อ 1 ปุ่ม · Ask = ข้อความที่ส่งเมื่อกด
+type ChatSuggestion struct {
+	Label string `json:"label" bson:"label"`
+	Ask   string `json:"ask"   bson:"ask"`
 }
 
 // สถานะการตรวจคำตอบ

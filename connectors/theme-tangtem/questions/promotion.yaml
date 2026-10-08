@@ -1,0 +1,169 @@
+# POST /bonus (topupserie route.go:102 · controller/bonus.go GetBonus) — body {username} ต้องตรง token · อ่านอย่างเดียว
+#   ยังไม่ผูกบัญชีธนาคาร → message.code 1 userNotFound (bonus.go:41) = "ไม่พบ" พร้อมข้อความ
+#   รูปข้อมูลเปลี่ยนตามการตั้งค่าฝากของแบรนด์ (D-26): data = รายการ · หรือ data.bonus เมื่อ deposit_type = 2 (ฝากแบบกระเป๋า)
+#   item BonusToClientST2 (model/BonusConfig.go:68+): bonus_name · BonusID · bonus_percent · bonus_limit · fix_deposit · fix_multiple · can_take · message
+#   BonusID 104 = ตัวเลือก "ไม่รับโบนัส" (หน้าเว็บซ่อนเอง Modal/Promotion/index.vue:147) — ไม่ขึ้นรายการ
+#   ⚠️ ไม่ใช้ /get/bonus (เขียนข้อมูล = กดรับโปร)
+# POST /history (controller/history.go:20 History) — bonus[] = deposit_statement ที่ amount 0 (โบนัส/เครดิตที่ได้โดยไม่ได้ฝาก · bonusLog)
+#   ล่าสุด 20 รายการ · item HistortLogST {datetime, bonus, bonus_name, withdraw_fix, status, …} · ⚠️ bank_number ไม่ขึ้นการ์ด
+# POST /get/check_bonus (controller/bonus.go:1021 CheckBonus) — อ่านอย่างเดียว · โปรที่กดเลือกไว้แล้ว "รอฝาก" (member_promotion status 0)
+#   message.code 0 = ไม่มีโปรรอฝาก (data null) · code 1 + data = BonusToClientST2 ของโปรที่รอ (pendingBonus)
+#   code 1 + data null = ไม่รับโบนัส/ไม่พบยูส · ข้อความถูกแปลภาษา (MessageGlobal) แยกด้วยข้อความไม่ได้ → envelope raw แล้วดูว่ามี data ไหม
+#   คู่กับ /get/turnover (withdraw.go:443) bonus_name = โปรที่เล่นอยู่ (ยอดฝากที่ยังไม่ปลดเทิร์น)
+questions:
+  - มีโปรอะไรบ้าง
+  - โปรโมชั่นแนะนำ
+  - โปรสมาชิกใหม่
+keywords: [โปร, โบนัส, ติดโปร]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
+tools:
+  - name: list_promotions
+    description: >-
+      โปรโมชั่นที่สมาชิกที่ล็อกอินอยู่รับได้ตอนนี้ (ชื่อโปร โบนัส ฝากขั้นต่ำ โบนัสสูงสุด เทิร์น)
+      · ใช้เมื่อถามว่ามีโปรอะไร โปรแนะนำ โปรสมาชิกใหม่ · เรียกคู่กับ show_button promotion เสมอ
+    permission: member
+    freshness: summary
+    calls:
+      - id: b
+        method: POST
+        path: /bonus
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        cache_ttl: 60
+        not_found_codes: [1]
+        schema:
+          type: [array, object]
+          nullable: true
+    values:
+      - {name: rows, from: b, paths: [bonus, ""], filter: "item.BonusID != 104", limit: 10}
+      - {name: open_count, from: b, paths: [bonus, ""], filter: "item.BonusID != 104", agg: count}
+    not_found: {when: "open_count == 0", message: ตอนนี้ยังไม่มีโปรโมชั่นที่รับได้ (หรือยังไม่ได้ผูกบัญชีธนาคาร)}
+    card:
+      title: โปรโมชั่นที่รับได้ตอนนี้
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: โปรโมชั่น, field: bonus_name}
+          - {label: โบนัส, field: bonus_percent, format: number, suffix: "%"}
+          - {label: ฝากขั้นต่ำ, field: fix_deposit, format: money}
+          - {label: โบนัสสูงสุด, field: bonus_limit, format: money}
+          - {label: เทิร์น, field: fix_multiple, format: number, suffix: " เท่า"}
+      note: รายละเอียดและกดรับโปรได้ที่ปุ่ม ดูโปรโมชั่น
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือโปรโมชั่นที่คุณรับได้ตอนนี้ กดรับได้ที่ปุ่มด้านล่าง
+    follow_ups:
+      - {label: โปรที่ติดอยู่, ask: ตอนนี้ฉันติดโปรอะไรอยู่}
+      - {label: โบนัสฟรีที่รับได้, ask: ตอนนี้มีโบนัสฟรีให้ฉันรับไหม}
+      - {label: ประวัติโบนัส, ask: ฉันได้โบนัสอะไรไปบ้าง}
+    model_context:
+      - {name: has_promotions, type: bool, expr: "open_count > 0"}
+
+  - name: my_bonus_history
+    description: >-
+      ประวัติโบนัส/เครดิตฟรีที่สมาชิกที่ล็อกอินอยู่ได้รับ (ล่าสุดสูงสุด 20 รายการ ตามแท็บโบนัสในประวัติการใช้งาน)
+      · ใช้เมื่อถามว่าได้โบนัสอะไรไปบ้าง โบนัสเข้าหรือยัง · โบนัสที่รับตอนฝากดูที่ my_deposits · เรียกคู่กับ show_button history
+    permission: member
+    freshness: summary
+    calls:
+      - id: h
+        method: POST
+        path: /history
+        scope: office
+        body: {username: "{user.username}"}
+        cache_ttl: 20
+        timeout_ms: 15000
+        schema:
+          type: object
+          properties:
+            bonus:
+              type: array
+              nullable: true
+              items:
+                type: object
+                required: [datetime, status]
+                properties:
+                  datetime: {type: string}
+                  bonus: {type: number}
+                  bonus_name: {type: string}
+                  status: {type: integer}
+    values:
+      - {name: rows, from: h, path: bonus, limit: 10}
+    not_found: {when: "empty(rows)", message: ยังไม่มีประวัติโบนัส}
+    card:
+      title: ประวัติโบนัส
+      style: list
+      table:
+        rows: rows
+        max_rows: 10
+        columns:
+          - {label: เวลา, field: datetime, format: datetime}
+          - {label: โบนัส, field: bonus, format: money}
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: ชื่อโบนัส, field: bonus_name}
+          - {label: เทิร์น, field: withdraw_fix, format: money}
+      note: ดูทั้งหมดได้ที่ ประวัติการใช้งาน แท็บโบนัส
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือประวัติโบนัสล่าสุดของคุณ
+    follow_ups:
+      - {label: โปรที่ติดอยู่, ask: ตอนนี้ฉันติดโปรอะไรอยู่}
+      - {label: โปรโมชั่นที่รับได้, ask: ตอนนี้มีโปรโมชั่นอะไรที่ฉันรับได้บ้าง}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
+
+  - name: my_active_promo
+    description: >-
+      โปรโมชั่นที่สมาชิกที่ล็อกอินอยู่ติดอยู่ตอนนี้: โปรที่กดเลือกไว้แล้วรอฝาก และโปรของยอดฝากที่ยังเล่นอยู่ (ยังไม่ปลดเทิร์น)
+      · ใช้เมื่อถามว่าติดโปรอะไรอยู่ เลือกโปรไว้หรือยัง · ยอดเทิร์นที่ต้องทำดูที่ my_withdraw_check · เรียกคู่กับ show_button promotion
+    permission: member
+    freshness: live
+    calls:
+      - id: c
+        method: POST
+        path: /get/check_bonus
+        scope: office
+        body: {username: "{user.username}"}
+        envelope: raw
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [message]
+          properties:
+            message: {type: object, required: [code], properties: {code: {type: integer}}}
+            data: {type: object, nullable: true}
+      - id: t
+        method: POST
+        path: /get/turnover
+        scope: office
+        body: {username: "{user.username}"}
+        timeout_ms: 15000
+        not_found_codes: [400]
+        schema:
+          type: object
+          properties:
+            bonus_name: {type: string}
+    values:
+      - {name: pending_name, from: c, path: data.bonus_name, default: ""}
+      - {name: pending_percent, from: c, path: data.bonus_percent}
+      - {name: pending_min, from: c, path: data.fix_deposit}
+      - {name: pending_turn, from: c, path: data.fix_multiple}
+      - {name: playing_promo, from: t, path: bonus_name, default: ""}
+    not_found: {when: "empty(pending_name) && empty(playing_promo)", message: ตอนนี้คุณไม่ได้ติดโปรโมชั่นอะไรอยู่ (ถ้ายังไม่ได้ยืนยันบัญชีธนาคาร ระบบจะตรวจโปรที่เล่นอยู่ไม่ได้)}
+    card:
+      style: stat
+      title: โปรที่ติดอยู่
+      fields:
+        - {label: โปรที่เล่นอยู่, value: playing_promo, empty: ไม่มี}
+        - {label: โปรที่เลือกไว้รอฝาก, value: pending_name, empty: ไม่มี}
+        - {label: โบนัสของโปรที่รอฝาก, value: pending_percent, format: number, suffix: "%", when: "!empty(pending_name)"}
+        - {label: ฝากขั้นต่ำ, value: pending_min, format: money, when: "!empty(pending_name)"}
+        - {label: เทิร์น, value: pending_turn, format: number, suffix: " เท่า", when: "!empty(pending_name)"}
+      note: รายละเอียดโปรดูได้ที่ปุ่ม ดูโปรโมชั่น · ยอดเทิร์นดูได้ที่หน้าถอนเงิน
+      link: {label: ไปหน้าหลัก, path: "/"}
+    answer: นี่คือโปรโมชั่นที่คุณติดอยู่ตอนนี้
+    follow_ups:
+      - {label: ต้องทำเทิร์นอีกเท่าไหร่, ask: ฉันต้องทำเทิร์นอีกเท่าไหร่ถึงจะถอนได้}
+      - {label: ถอนได้หรือยัง, ask: ตอนนี้ฉันถอนเงินได้หรือยัง}
+    model_context:
+      - {name: has_pending_promo, type: bool, expr: "!empty(pending_name)"}
+      - {name: has_playing_promo, type: bool, expr: "!empty(playing_promo)"}

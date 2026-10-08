@@ -1,11 +1,15 @@
 import { hostFetch, type FetchCommand } from './hostfetch'
 import type { ChatSession } from './session'
-import type { Card } from './types'
+import type { Card, ChatAction, ChatSuggestion } from './types'
 
 export interface ChatHandlers {
   status: (text: string) => void
   card: (card: Card) => void
   token: (text: string) => void
+  /** ปุ่มใต้คำตอบ (หน้าเว็บผู้เล่น) */
+  action?: (a: ChatAction) => void
+  /** ปุ่มถามต่อ (มาหลังคำตอบ) */
+  suggest?: (s: ChatSuggestion) => void
 }
 
 /** code = รหัสจาก server (message ของ envelope หรือ code ของ SSE error) — '' = ไม่รู้สาเหตุ */
@@ -127,6 +131,12 @@ export async function runChat(opts: {
       case 'card':
         on.card(d as unknown as Card)
         break
+      case 'suggest':
+        if (typeof d.label === 'string' && typeof d.ask === 'string') on.suggest?.({ label: d.label, ask: d.ask })
+        break
+      case 'action':
+        if (typeof d.id === 'string' && typeof d.label === 'string') on.action?.({ id: d.id, label: d.label })
+        break
       case 'token':
         on.token(String(d.text ?? ''))
         break
@@ -151,6 +161,8 @@ export interface HistoryMessage {
   role: 'user' | 'assistant'
   text: string
   cards?: Card[]
+  actions?: ChatAction[]
+  suggestions?: ChatSuggestion[]
   status?: string
 }
 

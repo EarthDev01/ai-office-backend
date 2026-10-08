@@ -1,0 +1,29 @@
+# GET /GetAffStatementDay?limit&page&username → {code, msg, payload[], count} (envelope raw) · username_child ต้องไม่ขึ้นการ์ด
+tool: member_aff_income
+cases:
+  - name: มีรายได้สองประเภท
+    input: {username: abc123}
+    responses:
+      i:
+        body:
+          code: 0
+          msg: Success
+          count: 2
+          payload:
+            - {datetime: "2026-09-24T00:00:00Z", username: abc123, username_child: friend1, reward: 120.5, type: winloss, level: 1, status: 1}
+            - {datetime: "2026-09-23T00:00:00Z", username: abc123, username_child: friend2, reward: 30, type: turnover, level: 2, status: 1}
+    expect:
+      status: ok
+      calls:
+        i: {path: /GetAffStatementDay/DEMO-SVC, query: {limit: "100", page: "1", username: abc123}}
+      fields: {รายได้แนะนำรวม: "150.50 บาท", จากยอดเสีย: "120.50 บาท", จากยอดเล่น: "30.00 บาท"}
+      no_fields: [จากยอดฝาก, หมายเหตุ]
+      table_rows: 2
+      table_cells:
+        - ["24/09/2026 07:00", "120.50", "1"]
+      model_context: {has_income: true, counted_partially: false}
+  - name: ไม่มีรายได้
+    input: {username: abc123}
+    responses:
+      i: {body: {code: 0, msg: Success, count: 0, payload: []}}
+    expect: {status: not_found}

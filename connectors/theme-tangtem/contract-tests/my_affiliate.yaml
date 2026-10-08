@@ -1,0 +1,38 @@
+# response ตาม topupserie controller/affiliate.go:29 Affiliate (respap.AffRespToClient) — ⚠️ tree/history มียูสเพื่อน + token_aff (ต้องไม่ขึ้นการ์ด)
+tool: my_affiliate
+cases:
+  - name: ชวนเพื่อน 2 ชั้น (แบบยอดเสีย)
+    username: somchai01
+    responses:
+      a:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: ตรวจสอบการแนะนำสำเร็จ}
+          data:
+            dashboard:
+              dividend: {all: 0, today: 0, yesterday: 0}
+              winloss: {all: 1520, today: 40, yesterday: 60}
+              deposit: {all: 0, today: 0, yesterday: 0}
+              turnover: {all: 0, today: 0, yesterday: 0}
+              staking: {all: 0, today: 0, yesterday: 0}
+            history: [{datetime: "2026-10-07T03:00:00Z", amount: 40, username_child: friend_aaa, level: 1}]
+            friend:
+              - {level: 1, total: 5, total_today: 1, can_use: true, message: ""}
+              - {level: 2, total: 2, total_today: 0, can_use: true, message: ""}
+              - {level: 3, total: 0, total_today: 0, can_use: false, message: ""}
+            information: {link_aff: "https://x.example/?aff=SECRET", token_aff: SECRET, click_traffic: 12}
+            tree: [{username: friend_aaa, level: 1}, {username: friend_bbb, level: 2}]
+            wallet: {wallet: 250, detail: {}}
+    expect:
+      status: ok
+      calls:
+        a: {path: /affiliate, body: {username: somchai01}}
+      fields: {เพื่อนที่ชวนทั้งหมด: "7 คน", สมัครวันนี้: "1 คน", ค่าแนะนำวันนี้: "40.00", ค่าแนะนำสะสม: "1,520.00", ยอดในกระเป๋าค่าแนะนำ: "250.00"}
+      table_rows: 2
+      table_cells: [["1", "5", "1"], ["2", "2", "0"]]
+      model_context: {has_friends: true, has_income: true}
+      link: /
+  - name: เว็บไม่เปิดระบบแนะนำ (code 1)
+    responses:
+      a: {body: {status: {code: 200, message: ok}, message: {code: 1, message: suggestNotActivate}, data: {}}}
+    expect: {status: not_found}

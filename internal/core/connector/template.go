@@ -18,7 +18,8 @@ import (
 //	{date:today}              YYYY-MM-DD ตาม timezone/day_cutoff ของ connector
 //	{datetime:today}          YYYY-MM-DD 00:00:00  · {datetime_end:today} → 23:59:59
 //	{month:today}             YYYY-MM · {unix:now} วินาที
-//	spec: today yesterday tomorrow today+N today-N month_start month_end prev_month_start prev_month_end now input.<key>
+//	spec: today yesterday tomorrow today+N today-N month_start month_end prev_month_start prev_month_end beginning now input.<key>
+//	      beginning = 2000-01-01 (ไม่ระบุวัน = ตั้งแต่สมัคร · ใช้เป็นวันแรกของช่วง)
 //	a|b                       ใช้ a ถ้ามีค่า ไม่งั้น b (เช่น {date:input.date_from|date:today})
 
 var placeholderRe = regexp.MustCompile(`\{([^{}]+)\}`)
@@ -171,6 +172,8 @@ func (rc RenderContext) day(spec string) (time.Time, bool, error) {
 		return rc.Now.In(loc), true, nil
 	case "month_start":
 		return time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location()), true, nil
+	case "beginning":
+		return time.Date(2000, 1, 1, 0, 0, 0, 0, today.Location()), true, nil
 	case "month_end":
 		return time.Date(today.Year(), today.Month()+1, 0, 0, 0, 0, 0, today.Location()), true, nil
 	case "prev_month_start":

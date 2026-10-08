@@ -1,4 +1,4 @@
-import type { Bootstrap, Card } from './types'
+import type { Bootstrap, Card, Tone } from './types'
 
 export interface UI {
   launcher: HTMLButtonElement
@@ -177,8 +177,26 @@ export function roomItem(title: string, when: string, onOpen: () => void): HTMLB
 /**
  * การ์ดข้อมูล — ค่าจากระบบตรง ๆ ไม่ผ่านโมเดล
  * บอกเวลาที่ดึงเสมอ และมีลิงก์ไปหน้าจริงถ้า connector ให้มา
+ *
+ * inline (หน้าเว็บผู้เล่น) = ไม่มีกรอบการ์ด อ่านเป็นข้อความในฟองแชท: ตารางเป็นรายการทีละบรรทัด · ไม่มีลิงก์ (พาไปด้วยปุ่มแทน)
  */
-export function renderCard(card: Card): HTMLDivElement {
+export function renderCard(card: Card, opts: { inline?: boolean } = {}): HTMLDivElement {
+  if (opts.inline) return renderInlineCard(card)
+  // แบบการ์ดใช้กับผลที่มีข้อมูลเท่านั้น — ไม่พบ/ผิดพลาด/ไม่มีสิทธิ์ ใช้กรอบเดิม (มีแค่หัว + หมายเหตุ)
+  const style = card.kind === 'ok' ? card.style : undefined
+  if (style === 'stat' || style === 'list' || style === 'single') {
+    const box = el('div', `datacard s-${style} k-${safeClass(card.kind)}`) as HTMLDivElement
+    if (style === 'stat') renderStat(box, card)
+    else if (style === 'list') renderList(box, card)
+    else renderSingle(box, card)
+    if (card.note) {
+      const n = el('div', 'dc-note')
+      n.textContent = card.note
+      box.appendChild(n)
+    }
+    box.appendChild(cardSource(card))
+    return box
+  }
   const box = el('div', 'datacard k-' + safeClass(card.kind)) as HTMLDivElement
   if (card.title) {
     const t = el('div', 'dc-title')
@@ -208,9 +226,10 @@ export function renderCard(card: Card): HTMLDivElement {
     const tbody = el('tbody')
     for (const row of card.table.rows) {
       const tr = el('tr')
-      for (const cell of row) {
+      for (const [i, cell] of row.entries()) {
         const td = el('td')
-        td.textContent = cell?.display ?? ''
+        if (isStatus(card.table.columns[i]?.format)) td.appendChild(pill(cell?.display ?? '', cell?.tone))
+        else td.textContent = cell?.display ?? ''
         tr.appendChild(td)
       }
       tbody.appendChild(tr)
@@ -224,6 +243,12 @@ export function renderCard(card: Card): HTMLDivElement {
     n.textContent = card.note
     box.appendChild(n)
   }
+  box.appendChild(cardSource(card))
+  return box
+}
+
+/** แถบล่างของการ์ด: เวลาที่ดึง + ลิงก์ไปหน้าจริง */
+function cardSource(card: Card): HTMLElement {
   const src = el('div', 'src')
   const at = el('span')
   at.textContent = card.kind === 'reference' ? 'จากคู่มือของระบบ' : 'ข้อมูล ณ ' + formatFetched(card.fetched_at) + (card.cached ? ' · ค่าที่ดึงไว้ไม่เกิน 1 นาที' : '')
@@ -237,8 +262,191 @@ export function renderCard(card: Card): HTMLDivElement {
     a.rel = 'noopener'
     src.appendChild(a)
   }
+  return src
+}
+
+const isStatus = (format?: string) => !!format && format.startsWith('status:')
+const isMoney = (format?: string) => format === 'money'
+
+/** ป้ายสถานะ — สีจาก tone ที่ server ตัดสินจากตารางสถานะของ connector */
+function pill(text: string, tone?: Tone): HTMLElement {
+  const p = el('span', 'pill t-' + safeClass(tone ?? 'wait'))
+  p.textContent = text
+  return p
+}
+
+function cardTitle(box: HTMLElement, card: Card, right = '') {
+  const h = el('div', 'dc-head')
+  const t = el('span', 'dc-title')
+  t.textContent = card.title
+  h.appendChild(t)
+  if (right) {
+    const r = el('span', 'dc-meta')
+    r.textContent = right
+    h.appendChild(r)
+  }
+  box.appendChild(h)
+}
+
+/** stat — field แรกตัวใหญ่ · field ที่เหลือเป็นป้ายเล็ก · ตาราง (ถ้ามี) ต่อท้ายแบบรายการ */
+function renderStat(box: HTMLElement, card: Card) {
+  const [main, ...rest] = card.fields ?? []
+  const lbl = el('div', 'dc-statlabel')
+  lbl.textContent = main ? `${main.label} · ${card.title}` : card.title
+  box.appendChild(lbl)
+  if (main) {
+    const v = el('div', 'dc-statval')
+    v.textContent = main.display
+    box.appendChild(v)
+  }
+  if (rest.length) {
+    const chips = el('div', 'dc-chips')
+    for (const f of rest) {
+      if (isStatus(f.format)) {
+        chips.appendChild(pill(f.display, f.tone))
+        continue
+      }
+      const c = el('span', 'chip')
+      c.textContent = `${f.label} ${f.display}`
+      chips.appendChild(c)
+    }
+    box.appendChild(chips)
+  }
+  if (card.table?.rows?.length) listRows(box, card)
+}
+
+/** list — หัว + ค่าสรุป (fields) · แถวละรายการ: เวลา | เงินตัวใหญ่ + ค่าอื่นบรรทัดเล็ก | สถานะเป็นป้าย */
+function renderList(box: HTMLElement, card: Card) {
+  cardTitle(box, card, (card.fields ?? []).map((f) => `${f.label} ${f.display}`).join(' · '))
+  listRows(box, card)
+}
+
+function listRows(box: HTMLElement, card: Card) {
+  const cols = card.table?.columns ?? []
+  const timeIdx = cols.findIndex((c) => c.format === 'datetime' || c.format === 'time' || c.format === 'date')
+  const moneyIdx = cols.findIndex((c) => isMoney(c.format))
+  const mainIdx = moneyIdx >= 0 ? moneyIdx : cols.findIndex((_, i) => i !== timeIdx && !isStatus(cols[i]?.format))
+  for (const row of card.table?.rows ?? []) {
+    const r = el('div', 'dc-li')
+    if (timeIdx >= 0) {
+      const t = el('span', 'dc-li-time')
+      t.textContent = row[timeIdx]?.display ?? ''
+      r.appendChild(t)
+    }
+    const mid = el('div', 'dc-li-main')
+    const big = el('span', 'dc-li-val')
+    big.textContent = mainIdx >= 0 ? (row[mainIdx]?.display ?? '') : ''
+    mid.appendChild(big)
+    const subs: string[] = []
+    let status: HTMLElement | null = null
+    row.forEach((cell, i) => {
+      if (i === timeIdx || i === mainIdx || !cell?.display) return
+      if (isStatus(cols[i]?.format)) status = pill(cell.display, cell.tone)
+      else subs.push(`${cols[i]?.label ?? ''} ${cell.display}`.trim())
+    })
+    if (subs.length) {
+      const s = el('span', 'dc-li-sub')
+      s.textContent = subs.join(' · ')
+      mid.appendChild(s)
+    }
+    r.appendChild(mid)
+    if (status) r.appendChild(status)
+    box.appendChild(r)
+  }
+}
+
+/** single — รายการเดียว: สถานะเป็นหัวการ์ด · ค่าที่เหลือเป็นช่อง 2 คอลัมน์ (แถวแรกของตาราง + fields) */
+function renderSingle(box: HTMLElement, card: Card) {
+  const cols = card.table?.columns ?? []
+  const row = card.table?.rows?.[0] ?? []
+  const items: { label: string; display: string; format?: string; tone?: Tone }[] = [
+    ...(card.fields ?? []),
+    ...row.map((cell, i) => ({ label: cols[i]?.label ?? '', display: cell?.display ?? '', format: cols[i]?.format, tone: cell?.tone })),
+  ]
+  const st = items.find((x) => isStatus(x.format))
+  const head = el('div', 'dc-single-head')
+  if (st) {
+    head.appendChild(pill(st.display, st.tone))
+  }
+  const t = el('span', 'dc-title')
+  t.textContent = card.title
+  head.appendChild(t)
+  box.appendChild(head)
+  const grid = el('div', 'dc-grid')
+  for (const x of items) {
+    if (x === st || !x.display) continue
+    const c = el('div', 'dc-cell')
+    const l = el('span')
+    l.textContent = x.label
+    const v = el('b')
+    v.textContent = x.display
+    c.append(l, v)
+    grid.appendChild(c)
+  }
+  box.appendChild(grid)
+  // ตารางมีหลายแถว (เช่น ประวัติการเปลี่ยนสถานะ) — แถวที่เหลือต่อท้ายแบบรายการ
+  if ((card.table?.rows?.length ?? 0) > 1) {
+    listRows(box, { ...card, table: { columns: cols, rows: card.table!.rows.slice(1) } })
+  }
+}
+
+/** ปุ่มถามต่อ — กดแล้วส่ง ask เป็นคำถามใหม่ */
+export function renderSuggestion(label: string, onClick: () => void): HTMLButtonElement {
+  const b = el('button', 'sug') as HTMLButtonElement
+  b.type = 'button'
+  b.textContent = label
+  b.addEventListener('click', onClick)
+  return b
+}
+
+function renderInlineCard(card: Card): HTMLDivElement {
+  const box = el('div', 'datacard inline k-' + safeClass(card.kind)) as HTMLDivElement
+  if (card.title) {
+    const t = el('div', 'dc-title')
+    t.textContent = card.title
+    box.appendChild(t)
+  }
+  for (const f of card.fields ?? []) {
+    const r = el('div', 'dc-line')
+    r.textContent = `${f.label}: ${f.display}`
+    box.appendChild(r)
+  }
+  // แถวละรายการ: คอลัมน์แรกเป็นหัว (ตัวหนา) · คอลัมน์ที่เหลือ "ชื่อ ค่า" คั่นด้วย ·
+  const cols = card.table?.columns ?? []
+  for (const row of card.table?.rows ?? []) {
+    const r = el('div', 'dc-item')
+    const head = el('b')
+    head.textContent = row[0]?.display ?? ''
+    r.appendChild(head)
+    const rest = row
+      .slice(1)
+      .map((cell, i) => (cell?.display ? `${cols[i + 1]?.label ?? ''} ${cell.display}`.trim() : ''))
+      .filter(Boolean)
+    if (rest.length) {
+      const d = el('div', 'dc-sub')
+      d.textContent = rest.join(' · ')
+      r.appendChild(d)
+    }
+    box.appendChild(r)
+  }
+  if (card.note) {
+    const n = el('div', 'dc-note')
+    n.textContent = card.note
+    box.appendChild(n)
+  }
+  const src = el('div', 'src')
+  src.textContent = card.kind === 'reference' ? 'จากคู่มือของเว็บ' : 'ข้อมูลจากระบบจริง ' + formatFetched(card.fetched_at)
   box.appendChild(src)
   return box
+}
+
+/** ปุ่มใต้คำตอบ (หน้าเว็บผู้เล่น) — label มาจาก connector · กดแล้วทำ onClick (ปิดแชท + สั่งหน้าเว็บ) */
+export function renderActionButton(label: string, onClick: () => void): HTMLButtonElement {
+  const b = el('button', 'act') as HTMLButtonElement
+  b.type = 'button'
+  b.textContent = label
+  b.addEventListener('click', onClick)
+  return b
 }
 
 /** เวลาไทยเสมอ (หลังบ้านทุกตัวตัดวันตาม Asia/Bangkok) · วันนี้โชว์แค่เวลา */

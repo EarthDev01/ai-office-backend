@@ -2,6 +2,7 @@
 #   ใช้แทน GetBankAll เพราะ GetBankAll คืน citizen_id / birthdate / refresh_token / token_proxy_bank / api_auth / phone_number ของบัญชีบริษัทโดยไม่ล้าง
 #   ⚠️ ได้เฉพาะบัญชีฝาก (บัญชีถอนต้องใช้ GetBankAll?type=withdraw ซึ่งไม่ใช้) · number = เลขบัญชีบริษัท ไม่ขึ้นการ์ด
 questions: [BQ-10]
+keywords: [บัญชีฝาก, บัญชีถอน, บัญชีธนาคาร, บัญชีเว็บ, ธนาคาร, บัญชีที่เปิด]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: bank_accounts_deposit
     description: บัญชีฝากของเว็บทั้งหมด (เปิดและปิด) พร้อมสถานะ ยอดคงเหลือล่าสุด และยอดฝากวันนี้ต่อบัญชี · ไม่รวมบัญชีถอน
@@ -35,6 +36,7 @@ tools:
       - {name: rows, from: s, sort_by: status, order: desc}
     not_found: {when: "total == 0", message: ไม่พบบัญชีฝากของเว็บนี้}
     card:
+      style: table
       title: บัญชีฝากของเว็บ
       fields:
         - {label: บัญชีฝากทั้งหมด, value: total, format: int, suffix: " บัญชี"}
@@ -53,3 +55,6 @@ tools:
     model_context:
       - {name: has_open, type: bool, expr: "open_count > 0"}
       - {name: has_closed, type: bool, expr: "open_count < total"}
+    follow_ups:
+      - {label: "สรุปยอดฝากต่อบัญชี", ask: "สรุปยอดฝากวันนี้แยกตามบัญชี"}
+      - {label: "รายการฝากตกค้าง", ask: "รายการฝากตกค้างวันนี้"}

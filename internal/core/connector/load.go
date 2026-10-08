@@ -10,13 +10,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
 
 // ReservedToolNames = tool กลางที่ core ให้ทุก kind (อ่านจาก menus/statuses/facts ของ connector)
 var ReservedToolNames = map[string]bool{
-	"lookup_menu": true, "explain_status": true, "host_facts": true, "answer_directly": true,
+	"lookup_menu": true, "explain_status": true, "host_facts": true, "answer_directly": true, "show_button": true,
 }
 
 var (
@@ -168,6 +169,7 @@ func decodeQuestionFile(path string) ([]*Tool, error) {
 		if len(t.Questions) == 0 {
 			t.Questions = qf.Questions
 		}
+		t.Keywords = append(append([]string{}, qf.Keywords...), t.Keywords...)
 	}
 	return qf.Tools, nil
 }
@@ -194,6 +196,62 @@ type addFn func(file string, line int, format string, a ...any)
 
 var cssVarRe = regexp.MustCompile(`^--[A-Za-z0-9_-]{1,60}$`)
 
+var (
+	actionIDRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+	bvModalRe  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+	// selector ธรรมดา (#id .class [attr] > ช่องว่าง) — กันใส่ของแปลก ๆ ลงหน้าเว็บ
+	clickSelRe = regexp.MustCompile(`^[A-Za-z0-9_#.\[\]="':> -]{1,200}$`)
+	pagePathRe = regexp.MustCompile(`^/[A-Za-z0-9_./?=&%-]{0,200}$`)
+)
+
+// validatePageActions — ปุ่มใต้คำตอบ (host.yaml page_actions)
+func (c *Connector) validatePageActions(file string, add addFn) {
+	seen := map[string]bool{}
+	for i, a := range c.Host.PageActions {
+		where := fmt.Sprintf("page_actions[%d] %q", i, a.ID)
+		if !c.Host.IsBrowser() {
+			add(file, 0, "%s: ใช้ได้เฉพาะ mode: browser", where)
+		}
+		if !actionIDRe.MatchString(a.ID) || seen[a.ID] {
+			add(file, 0, "%s: id ต้องเป็น a-z 0-9 _ และไม่ซ้ำ", where)
+		}
+		seen[a.ID] = true
+		if n := utf8.RuneCountInString(strings.TrimSpace(a.Label)); n == 0 || n > 30 {
+			add(file, 0, "%s: label ต้องมี 1–30 ตัวอักษร", where)
+		}
+		if strings.TrimSpace(a.About) == "" {
+			add(file, 0, "%s: about ว่าง (โมเดลใช้เลือกปุ่ม)", where)
+		}
+		switch a.When {
+		case "", "any", "member", "guest":
+		default:
+			add(file, 0, "%s: when ต้องเป็น any|member|guest", where)
+		}
+		o, set := a.Open, 0
+		if o.BVModal != "" {
+			set++
+			if !bvModalRe.MatchString(o.BVModal) {
+				add(file, 0, "%s: open.bv_modal ต้องเป็น A-Z a-z 0-9 _ -", where)
+			}
+		}
+		if o.Click != "" {
+			set++
+			if !clickSelRe.MatchString(o.Click) {
+				add(file, 0, "%s: open.click ต้องเป็น CSS selector ธรรมดา", where)
+			}
+		}
+		if o.Path != "" {
+			set++
+			if !pagePathRe.MatchString(o.Path) || strings.HasPrefix(o.Path, "//") {
+				add(file, 0, "%s: open.path ต้องเป็นหน้าในเว็บเดียวกัน ขึ้นต้นด้วย /", where)
+			}
+		}
+		if set != 1 {
+			add(file, 0, "%s: open ต้องตั้ง bv_modal | click | path อย่างใดอย่างหนึ่ง", where)
+		}
+	}
+}
+
 func (c *Connector) validateHost(file string, add addFn) {
 	h := &c.Host
 	if !kindRe.MatchString(c.Kind) {
@@ -216,6 +274,28 @@ func (c *Connector) validateHost(file string, add addFn) {
 	case "", "admin", "player":
 	default:
 		add(file, 0, "audience ต้องเป็น admin|player")
+	}
+	c.validatePageActions(file, add)
+	for i, f := range h.FollowUps {
+		if n := utf8.RuneCountInString(strings.TrimSpace(f.Label)); n == 0 || n > 40 {
+			add(file, 0, "follow_ups[%d]: label ต้องมี 1–40 ตัวอักษร", i)
+		}
+		if len(placeholders(f.Label)) > 0 || len(placeholders(f.Ask)) > 0 {
+			add(file, 0, "follow_ups[%d]: ปุ่มตั้งต้นใช้ {…} ไม่ได้ (ไม่มี input)", i)
+		}
+		switch f.When {
+		case "", "any", "member", "guest":
+		default:
+			add(file, 0, "follow_ups[%d]: when ต้องเป็น any|member|guest", i)
+		}
+	}
+	if g := h.Guest; g != nil {
+		if h.Audience != "player" {
+			add(file, 0, "guest ใช้ได้เฉพาะ audience: player")
+		}
+		if g.DailyLimit < 1 || g.DailyLimit > 100 {
+			add(file, 0, "guest.daily_limit ต้องอยู่ระหว่าง 1–100")
+		}
 	}
 	pa := h.PageAuth
 	if pa.Token.Format == "" {
@@ -322,6 +402,11 @@ func (c *Connector) validateStatuses(file string, add addFn) {
 			seen[e.Code] = true
 			if e.Label == "" {
 				add(file, 0, "ตาราง %q: code %d ไม่มี label", name, e.Code)
+			}
+			switch e.Tone {
+			case "", "ok", "wait", "bad":
+			default:
+				add(file, 0, "ตาราง %q: code %d tone ต้องเป็น ok|wait|bad", name, e.Code)
 			}
 		}
 	}
@@ -488,6 +573,9 @@ func (c *Connector) validateTool(t *Tool, add addFn) {
 		if v.From != "" && !callIDs[v.From] {
 			add(f, ln, "tool %q value %q: from %q ไม่ใช่ call id", t.Name, v.Name, v.From)
 		}
+		if len(v.Paths) > 0 && (v.Path != "" || v.From == "") {
+			add(f, ln, "tool %q value %q: paths ใช้คู่กับ from และห้ามตั้ง path พร้อมกัน", t.Name, v.Name)
+		}
 		if !validAgg[v.Agg] {
 			add(f, ln, "tool %q value %q: agg %q ไม่รู้จัก", t.Name, v.Name, v.Agg)
 		}
@@ -518,6 +606,39 @@ func (c *Connector) validateTool(t *Tool, add addFn) {
 	card := t.Card
 	if strings.TrimSpace(card.Title) == "" {
 		add(f, ln, "tool %q: card.title ว่าง", t.Name)
+	}
+	if card.Style != "" && !CardStyles[card.Style] {
+		add(f, ln, "tool %q: card.style ต้องเป็น stat|list|table|single", t.Name)
+	}
+	if card.Style == "stat" && len(card.Fields) == 0 {
+		add(f, ln, "tool %q: card.style stat ต้องมี fields (field แรก = ตัวเลขเด่น)", t.Name)
+	}
+	if (card.Style == "list" || card.Style == "single") && card.Table == nil {
+		add(f, ln, "tool %q: card.style %s ต้องมี table", t.Name, card.Style)
+	}
+	for _, p := range placeholders(t.Answer) {
+		if !strings.HasPrefix(p, "input.") {
+			add(f, ln, "tool %q answer: ใช้ได้แค่ {input.<ชื่อ>} (เจอ {%s})", t.Name, p)
+		} else if _, ok := t.Input[strings.TrimPrefix(p, "input.")]; !ok {
+			add(f, ln, "tool %q answer: ไม่มี input %q", t.Name, strings.TrimPrefix(p, "input."))
+		}
+	}
+	if len(t.FollowUps) > 3 {
+		add(f, ln, "tool %q: follow_ups ได้ไม่เกิน 3", t.Name)
+	}
+	for _, fu := range t.FollowUps {
+		if n := utf8.RuneCountInString(strings.TrimSpace(fu.Label)); n == 0 || n > 40 {
+			add(f, ln, "tool %q: follow_ups label ต้องมี 1–40 ตัวอักษร", t.Name)
+		}
+		for _, s := range []string{fu.Label, fu.Ask} {
+			for _, p := range placeholders(s) {
+				if !strings.HasPrefix(p, "input.") {
+					add(f, ln, "tool %q follow_ups: ใช้ได้แค่ {input.<ชื่อ>} (เจอ {%s})", t.Name, p)
+				} else if _, ok := t.Input[strings.TrimPrefix(p, "input.")]; !ok {
+					add(f, ln, "tool %q follow_ups: ไม่มี input %q", t.Name, strings.TrimPrefix(p, "input."))
+				}
+			}
+		}
 	}
 	if card.Link == nil || !strings.HasPrefix(card.Link.Path, "/") || card.Link.Label == "" {
 		add(f, ln, "tool %q: การ์ดต้องมี link (label + path ขึ้นต้นด้วย /) ไปหน้าจริงเสมอ", t.Name)

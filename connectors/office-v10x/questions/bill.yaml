@@ -5,6 +5,7 @@
 #   data[] {billpayment_id, title, billpayment_name, total, overdue_amount, status 1-6, end_date, service, created_at, ...} · ว่าง = null
 #   ⚠️ ไม่ใช้ GET /bill-payment-status-update/:service (ยืนยันบิลจริง = เส้นเขียน)
 questions: [BQ-44, BQ-46]
+keywords: [บิล, ค่าบริการ, ชำระ, ค้างจ่าย, ค้างชำระ, คอนเฟิร์ม]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
 tools:
   - name: bills_unpaid
     description: >-
@@ -43,6 +44,7 @@ tools:
       - {name: overdue_count, from: b, path: "", filter: "item.status == 5", agg: count}
     not_found: {when: "empty(rows)", message: ไม่มีบิลที่รอจ่ายหรือค้างชำระ}
     card:
+      style: list
       title: บิลที่ยังไม่ได้ชำระ
       fields:
         - {label: บิลที่ยังไม่ชำระ, value: unpaid_count, format: int, suffix: " บิล"}
@@ -65,6 +67,9 @@ tools:
       - {name: has_unpaid, type: bool, expr: "unpaid_count > 0"}
       - {name: has_overdue, type: bool, expr: "overdue_count > 0"}
       - {name: statuses, type: labels, from: rows, pluck: status, format: "status:bill"}
+    follow_ups:
+      - {label: "บิลที่จ่ายแล้วรอคอนเฟิร์ม", ask: "มีบิลที่จ่ายแล้วรอคอนเฟิร์มไหม"}
+      - {label: "เครดิตเอเจ้น", ask: "เครดิตเอเจ้นเหลือเท่าไหร่"}
 
   - name: bills_pending_confirm
     description: >-
@@ -86,6 +91,7 @@ tools:
       - {name: waiting_count, expr: "len(rows)"}
     not_found: {when: "empty(rows)", message: ไม่มีบิลที่รอคอนเฟิร์ม}
     card:
+      style: table
       title: บิลที่จ่ายแล้ว รอคอนเฟิร์ม
       fields:
         - {label: รอคอนเฟิร์ม, value: waiting_count, format: int, suffix: " บิล"}
@@ -97,3 +103,5 @@ tools:
       link: {label: เปิดบิลค่าใช้จ่าย, path: /bill}
     model_context:
       - {name: has_waiting, type: bool, expr: "waiting_count > 0"}
+    follow_ups:
+      - {label: "บิลที่ยังไม่ชำระ", ask: "มีบิลที่ยังไม่ชำระไหม"}

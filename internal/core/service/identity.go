@@ -39,6 +39,9 @@ func NewIdentityResolver(ttl time.Duration, conns connector.Set) port.IdentityRe
 }
 
 func (r *identityResolver) Resolve(ctx context.Context, office domain.Office, cred domain.Credential) (domain.Caller, error) {
+	if cred.GuestID != "" {
+		return r.resolveGuest(office, cred.GuestID)
+	}
 	if cred.Token == "" {
 		return domain.Caller{}, domain.ErrNotAuthenticated
 	}
@@ -150,4 +153,14 @@ func claimStr(v any) string {
 func claimNum(v any) float64 {
 	f, _ := v.(float64)
 	return f
+}
+
+// resolveGuest — ผู้ที่ยังไม่ล็อกอิน · ได้เฉพาะ connector ที่เปิด guest (หน้าเว็บผู้เล่น)
+// ไม่มีตัวตนจริง: ห้อง/โควตาผูกกับ guest_id ที่ widget สุ่มไว้ในเบราว์เซอร์ (ลบ storage = เริ่มใหม่)
+func (r *identityResolver) resolveGuest(office domain.Office, guestID string) (domain.Caller, error) {
+	conn, ok := r.conns.For(office.Kind)
+	if !ok || conn.Host.Guest == nil || !domain.GuestIDRe.MatchString(guestID) {
+		return domain.Caller{}, domain.ErrNotAuthenticated
+	}
+	return domain.Caller{AdminID: domain.GuestAdminID(guestID), OfficeID: office.ID, AllServices: true, Guest: true}, nil
 }

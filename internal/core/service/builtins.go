@@ -30,6 +30,44 @@ var refusalCategories = map[string]bool{
 	"technical": true, "out_of_scope": true, "action_request": true, "cross_service": true, "no_tool": true,
 }
 
+// showButtonTool — มีเฉพาะเมื่อ connector ประกาศ page_actions ที่ผู้ใช้คนนี้ใช้ได้
+func showButtonTool(conn *connector.Connector, t domain.ChatTicket) (port.ToolDef, bool) {
+	var ids []any
+	var lines []string
+	for _, a := range conn.Host.PageActions {
+		if a.AvailableTo(t.Guest) {
+			ids = append(ids, a.ID)
+			lines = append(lines, a.ID+" = "+a.Label+": "+a.About)
+		}
+	}
+	if len(ids) == 0 {
+		return port.ToolDef{}, false
+	}
+	return port.ToolDef{
+		Name: "show_button",
+		Description: "แนบปุ่มใต้คำตอบ ให้ผู้ใช้กดแล้วไปหน้า/เปิดหน้าต่างนั้นของ" + placeName(conn) + "ได้ทันที — " +
+			"เรียกทุกครั้งที่คำถามเกี่ยวกับหน้าหรือเมนูในรายการนี้ (เรียกได้หลายปุ่ม) แทนการบอกให้ผู้ใช้ไปหาเมนูเอง:\n" +
+			strings.Join(lines, "\n"),
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"id": map[string]any{"type": "string", "enum": ids, "description": "ปุ่มที่จะแนบ"},
+		}, "required": []string{"id"}},
+	}, true
+}
+
+// showButton — ตรวจ id กับ connector + สถานะผู้ใช้ · ปุ่มเดียวกันแนบครั้งเดียวต่อคำตอบ
+func showButton(conn *connector.Connector, t domain.ChatTicket, id string, ans *domain.ChatMessage) (map[string]any, *domain.ChatAction) {
+	a, ok := conn.PageAction(id)
+	if !ok || !a.AvailableTo(t.Guest) {
+		return map[string]any{"status": "not_found", "message": "ไม่มีปุ่มนี้สำหรับผู้ใช้คนนี้"}, nil
+	}
+	for _, x := range ans.Actions {
+		if x.ID == id {
+			return map[string]any{"status": "ok", "button": a.Label}, nil
+		}
+	}
+	return map[string]any{"status": "ok", "button": a.Label}, &domain.ChatAction{ID: a.ID, Label: a.Label}
+}
+
 func builtinTools(conn *connector.Connector) []port.ToolDef {
 	place := placeName(conn)
 	tables := make([]any, 0, len(conn.Statuses.Tables))
@@ -139,7 +177,7 @@ func canAccess(conn *connector.Connector, rule string, t domain.ChatTicket) (boo
 		return true, connector.PermissionRule{}
 	}
 	r, ok := conn.Rule(rule)
-	if !ok {
+	if !ok || t.Guest {
 		return false, r
 	}
 	return r.Allows(t.Permissions, int(t.Level)), r
@@ -314,6 +352,9 @@ func allowWords(conn *connector.Connector, svc domain.Service) []string {
 	}
 	for _, f := range conn.Host.Facts {
 		out = append(out, f.Title, f.Text)
+	}
+	for _, a := range conn.Host.PageActions {
+		out = append(out, a.Label)
 	}
 	for _, r := range conn.Permissions.Rules {
 		out = append(out, r.Menu, r.GrantHint)

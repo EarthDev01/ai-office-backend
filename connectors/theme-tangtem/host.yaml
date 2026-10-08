@@ -45,8 +45,8 @@ facts:
   - id: assistant_scope
     title: ผู้ช่วยทำอะไรได้บ้าง
     text: >-
-      ผู้ช่วยเป็นระบบอัตโนมัติ ดูข้อมูลบัญชีของคุณเองได้อย่างเดียว เช่น ยอดเครดิต รายการฝาก รายการถอน และถอนได้หรือยัง
-      แต่ฝาก ถอน รับโปรโมชั่น หรือแก้ข้อมูลแทนไม่ได้ ต้องทำเองที่หน้าเว็บ เรื่องที่ผู้ช่วยตอบไม่ได้ให้ติดต่อแอดมินของเว็บ
+      ผู้ช่วยเป็นระบบอัตโนมัติ ดูข้อมูลบัญชีของคุณเองได้อย่างเดียว เช่น ยอดเครดิต รายการฝาก รายการถอน ถอนได้หรือยัง โปรที่ติดอยู่ คืนยอดเสีย คอมมิชชั่น แรงก์ แต้ม เช็คอิน กล่องสุ่ม ภารกิจ และการแนะนำเพื่อน
+      แต่ฝาก ถอน รับโปรโมชั่น กดรับรางวัล หรือแก้ข้อมูลแทนไม่ได้ ต้องทำเองที่หน้าเว็บ เรื่องที่ผู้ช่วยตอบไม่ได้ให้ติดต่อแอดมินของเว็บ
     keywords: [ทำอะไรได้, เป็นใคร, คุยกับคน, ติดต่อแอดมิน, ช่วยอะไรได้]
   - id: deposit_not_arrived
     title: ฝากเงินแล้วยอดยังไม่เข้า
@@ -58,3 +58,66 @@ facts:
     title: ข้อมูลของคนอื่น
     text: ผู้ช่วยดูได้เฉพาะข้อมูลบัญชีของคุณที่ล็อกอินอยู่เท่านั้น ดูข้อมูลของสมาชิกคนอื่นไม่ได้
     keywords: [บัญชีคนอื่น, ยูสคนอื่น, เพื่อน]
+# ผู้ที่ยังไม่ล็อกอินคุยได้ (D-20 · D-24) — ถามได้วันละ 6 ข้อความต่อ guest_id (widget สุ่มเก็บใน localStorage)
+# ดูข้อมูลบัญชีไม่ได้ · ใช้ได้แค่ตอบทั่วไป + ปุ่ม when: guest/any
+guest: {daily_limit: 6}
+# ปุ่มใต้คำตอบ (D-22 · D-23) — กดแล้ว widget ปิดกล่องแชทแล้วสั่งหน้าเว็บ (ตรวจกับโค้ดจริง platform_Tangtem 08/10/2026):
+#   bv_modal : modal ของ bootstrap-vue → $nuxt.$bvModal.show(id) · modal ฝั่งสมาชิกอยู่ใน <div v-if="$auth.loggedIn"> (layouts/default.vue:9-47)
+#              จึงเป็น when: member · register/login/forgot-password/download มีทุกคน (layouts/default.vue:50-56)
+#   click    : ปุ่มแถบล่าง #buttonFooter<name> (components/Layout/Footer.vue:6) — กดให้แทนการเปิด modal ตรง
+#              เพื่อได้เงื่อนไขเดิมของหน้า (ยังไม่ยืนยัน OTP → otpverify · ยังไม่ผูกบัญชี → addbank · ถอนแบบ P2P → withdraw-transaction)
+#              ปุ่มที่แบรนด์ปิดไว้ (enable: false) กดแล้วไม่มีอะไรเกิดขึ้น — หน้าเว็บโชว์แม่กุญแจเอง
+#   path     : /guide = หน้าคู่มือ (pages/guide/index.vue)
+#   ชื่อปุ่มตาม plugins/i18n/th.js
+page_actions:
+  - {id: promotion, label: ดูโปรโมชั่น, when: member, open: {bv_modal: bv-modal-promotion},
+     about: "หน้าต่างโปรโมชั่นของเว็บ ดูรายละเอียดและกดรับโปรได้"}
+  - {id: deposit, label: ฝากเงิน, when: member, open: {click: "#buttonFooterdeposit a"},
+     about: "หน้าฝากเงิน (ถ้ายังไม่ผูกบัญชี/ยืนยันเบอร์ หน้าเว็บจะพาไปทำก่อนเอง)"}
+  - {id: withdraw, label: ถอนเงิน, when: member, open: {click: "#buttonFooterwithdraw a"},
+     about: "หน้าถอนเงิน ดูยอดเทิร์นและเงื่อนไขก่อนถอน"}
+  - {id: history, label: ประวัติการใช้งาน, when: member, open: {bv_modal: bv-modal-history},
+     about: "ประวัติฝาก ถอน โบนัส และการเล่นเกม"}
+  - {id: bonus_free, label: โบนัสฟรี, when: member, open: {bv_modal: bv-modal-bonus},
+     about: "โบนัสฟรีที่กดรับได้"}
+  - {id: event, label: กิจกรรม, when: member, open: {bv_modal: bv-modal-event},
+     about: "กิจกรรมของเว็บ"}
+  - {id: wheel, label: กงล้อ, when: member, open: {click: "#buttonFooterwheel a"},
+     about: "หมุนกงล้อลุ้นรางวัล"}
+  - {id: cashback, label: รับเงินคืน, when: member, open: {click: "#buttonFootercashback a"},
+     about: "รับยอดเสียคืน (แคชแบ็ก)"}
+  - {id: commission, label: คอมมิชชั่น, when: member, open: {click: "#buttonFootercommission a"},
+     about: "รับค่าคอมมิชชั่น"}
+  - {id: affiliate, label: ช่องทางรวย, when: member, open: {bv_modal: bv-modal-affiliate},
+     about: "ชวนเพื่อน แนะนำเพื่อนรับค่าแนะนำ"}
+  # กิจกรรม (เมนู กิจกรรม → Activity.vue:162-163 เปิด bv-modal-<key>) · modal โหลดข้อมูลเองตอน bv::modal::show
+  #   Ranking/index.vue:3,128 · Checkin.vue:3,281 · Randombox/index.vue:7,113 · Mission.vue:3,138 (key mission_reward → missionreward)
+  - {id: rank, label: Ranking, when: member, open: {bv_modal: bv-modal-ranking},
+     about: "แรงก์ (Ranking/VIP) เงื่อนไขอัปแรงก์และรางวัลแต่ละแรงก์"}
+  - {id: checkin, label: เช็คอิน, when: member, open: {bv_modal: bv-modal-checkin},
+     about: "เช็คอินรายวัน กดรับรางวัลเช็คอิน"}
+  - {id: randombox, label: กล่องสุ่ม, when: member, open: {bv_modal: bv-modal-randombox},
+     about: "เปิดกล่องสุ่มด้วยตั๋วที่มี"}
+  - {id: missions, label: ภารกิจ, when: member, open: {bv_modal: bv-modal-missionreward},
+     about: "ภารกิจ ดูเงื่อนไขและกดรับรางวัลภารกิจ"}
+  - {id: profile, label: ข้อมูลสมาชิก, when: member, open: {bv_modal: bv-modal-profile},
+     about: "ข้อมูลสมาชิก ยูสเซอร์ เบอร์โทร บัญชีธนาคารที่ผูกไว้"}
+  - {id: change_password, label: เปลี่ยนรหัสผ่าน, when: member, open: {bv_modal: bv-modal-changepassword},
+     about: "เปลี่ยนรหัสผ่านเข้าสู่ระบบ"}
+  - {id: register, label: สมัครสมาชิก, when: guest, open: {bv_modal: bv-modal-register},
+     about: "สมัครสมาชิกใหม่ (เบอร์โทร → OTP → รหัสผ่าน → บัญชีธนาคาร)"}
+  - {id: login, label: เข้าสู่ระบบ, when: guest, open: {bv_modal: bv-modal-login},
+     about: "เข้าสู่ระบบสำหรับคนที่เป็นสมาชิกแล้ว"}
+  - {id: forgot_password, label: ลืมรหัสผ่าน, when: guest, open: {bv_modal: bv-modal-forgot-password},
+     about: "ตั้งรหัสผ่านใหม่เมื่อลืมรหัสผ่าน"}
+  - {id: download_app, label: ดาวน์โหลดแอป, open: {bv_modal: bv-modal-download},
+     about: "ดาวน์โหลดแอปของเว็บ"}
+  - {id: guide, label: คู่มือการใช้งาน, open: {path: /guide},
+     about: "หน้าคู่มือการใช้งานเว็บ"}
+# ปุ่มถามต่อตั้งต้น — ใช้เมื่อคำตอบไม่ได้ปุ่มจากคำถามข้อมูล (ทักทาย ถามวิธีทำ ฯลฯ)
+follow_ups:
+  - {label: เครดิตคงเหลือ, ask: ตอนนี้เครดิตเหลือเท่าไหร่, when: member}
+  - {label: ถอนได้หรือยัง, ask: ตอนนี้ถอนได้หรือยัง, when: member}
+  - {label: สมัครยังไง, ask: สมัครสมาชิกยังไง, when: guest}
+  - {label: มีโปรอะไรบ้าง, ask: มีโปรโมชั่นอะไรบ้าง}
+  - {label: เว็บนี้ทำอะไรได้บ้าง}

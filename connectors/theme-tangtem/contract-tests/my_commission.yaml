@@ -1,0 +1,29 @@
+# response ตาม topupserie controller/commissionSelfStat.go:1786 CommissionSelfStatAll (model CommissionSTSelfStatAll)
+tool: my_commission
+cases:
+  - name: มีค่าคอม 1 ประเภท
+    username: somchai01
+    responses:
+      c:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: ตรวจสอบค่าคอมมิชชั่นสำเร็จ}
+          data:
+            commission_current: 12.5
+            commission_total: 42.5
+            commission_detail:
+              - {commission_previous: 30, commission_current: 12.5, commission_total: 42.5, type_game: SLOT, percent: 0.005, play: 8500, point_status: false, point: 0}
+              - {commission_previous: 0, commission_current: 0, commission_total: 0, type_game: CASINO, percent: 0.003, play: 0, point_status: false, point: 0}
+    expect:
+      status: ok
+      calls:
+        c: {path: /commission_all, body: {username: somchai01}}
+      fields: {ค่าคอมที่รับได้ตอนนี้: "42.50 บาท"}
+      table_rows: 1
+      table_cells: [[SLOT, "42.50", "0.5%"]]
+      model_context: {has_commission: true}
+      link: /
+  - name: ปิดกิจกรรม (HTTP 400 commissionNotActivate)
+    responses:
+      c: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: commissionNotActivate}, data: {commission_current: 0, commission_total: 0, commission_detail: null}}}
+    expect: {status: not_found}

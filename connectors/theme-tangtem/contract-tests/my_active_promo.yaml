@@ -1,0 +1,34 @@
+# response ตาม topupserie controller/bonus.go:1021 CheckBonus (envelope raw) + controller/withdraw.go:443 GetTurnover
+tool: my_active_promo
+cases:
+  - name: เลือกโปรไว้รอฝาก + เล่นโปรอื่นอยู่
+    username: somchai01
+    responses:
+      c:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 1, message: คุณมีโบนัสที่รอรับอยู่}
+          data: {bonus_name: โปรฝากแรก 50%, BonusID: 9, bonus_percent: 50, fix_deposit: 100, bonus_limit: 500, fix_multiple: 5}
+      t:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data: {turntotal: 3000, turnagent: 1200, turnover_slot: false, is_withdraw: false, message: ยังทำเทิร์นไม่ครบ, amount: 300, bonus_name: โปรสมาชิกใหม่}
+    expect:
+      status: ok
+      calls:
+        c: {path: /get/check_bonus, body: {username: somchai01}}
+        t: {path: /get/turnover, body: {username: somchai01}}
+      fields: {โปรที่เล่นอยู่: โปรสมาชิกใหม่, โปรที่เลือกไว้รอฝาก: โปรฝากแรก 50%, โบนัสของโปรที่รอฝาก: "50%", ฝากขั้นต่ำ: "100.00", เทิร์น: "5 เท่า"}
+      model_context: {has_pending_promo: true, has_playing_promo: true}
+      link: /
+  - name: ไม่ได้ติดโปร
+    responses:
+      c: {body: {status: {code: 200, message: ok}, message: {code: 0, message: ยังไม่ได้รับโบนัส}, data: null}}
+      t: {body: {status: {code: 200, message: ok}, message: {code: 0, message: depositNotFound}, data: {is_withdraw: false, message: ไม่พบรายการฝาก, amount: 10, bonus_name: ""}}}
+    expect: {status: not_found}
+  - name: ยูสใน body ไม่ตรง token (body ว่าง)
+    responses:
+      c: {status: 200, raw: ""}
+      t: {status: 200, raw: ""}
+    expect: {status: error}

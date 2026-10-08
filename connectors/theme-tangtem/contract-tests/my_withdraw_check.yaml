@@ -13,9 +13,30 @@ cases:
       status: ok
       calls:
         t: {path: /get/turnover, body: {username: somchai01}}
-      fields: {ถอนได้ตอนนี้: ไม่ใช่, ชื่อโปรโมชั่น: โปรสมาชิกใหม่, ข้อความจากระบบ: ยังทำเทิร์นไม่ครบ}
-      model_context: {can_withdraw_now: false, has_promotion: true}
+      fields: {ถอนได้ตอนนี้: ไม่ใช่, ชื่อโปรโมชั่น: โปรสมาชิกใหม่, ข้อความจากระบบ: ยังทำเทิร์นไม่ครบ, เครดิตปัจจุบัน: "300.00", ยอดเทิร์นที่ต้องถึง: "3,000.00", ยอดเล่นที่ทำแล้ว: "1,200.00", ยอดเทิร์นที่ขาดอีก: "1,800.00"}
+      no_fields: [เครดิตที่ขาดอีก]
+      model_context: {can_withdraw_now: false, has_promotion: true, has_turnover_target: true, turnover_counts_credit: false, turnover_not_reached: true}
       link: /
+  - name: เทิร์นนับจากเครดิต (turnover_slot) ยังไม่ถึง
+    responses:
+      t:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: สำเร็จ}
+          data: {turntotal: 1500, turnagent: 0, turnover_slot: true, is_withdraw: false, message: คุณไม่ผ่านเงื่อนไขการถอนเงิน ต้องมีเครดิตมากกว่า 1500, amount: 900, bonus_name: โปรฝากแรก}
+    expect:
+      status: ok
+      fields: {เครดิตปัจจุบัน: "900.00", ยอดเทิร์นที่ต้องถึง: "1,500.00", เครดิตที่ขาดอีก: "600.00"}
+      no_fields: [ยอดเล่นที่ทำแล้ว, ยอดเทิร์นที่ขาดอีก]
+      model_context: {turnover_counts_credit: true, turnover_not_reached: true}
+  - name: ไม่มีรายการฝาก (depositNotFound code 0)
+    responses:
+      t: {body: {status: {code: 200, message: ok}, message: {code: 0, message: ไม่พบรายการฝาก}, data: {turntotal: 0, turnagent: 0, turnover_slot: false, is_withdraw: false, message: ไม่สามารถตรวจสอบรายการฝากได้, amount: 50, bonus_name: ""}}}
+    expect:
+      status: ok
+      fields: {ถอนได้ตอนนี้: ไม่ใช่, เครดิตปัจจุบัน: "50.00"}
+      no_fields: [ยอดเทิร์นที่ต้องถึง]
+      model_context: {has_turnover_target: false, turnover_not_reached: false}
   - name: บัญชีธนาคารยังไม่ยืนยัน (HTTP 400)
     responses:
       t: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: บัญชียังไม่ได้รับการยืนยัน}, data: null}}

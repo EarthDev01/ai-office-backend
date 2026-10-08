@@ -24,7 +24,7 @@ import (
 //
 //	page-config       บอก widget ว่าจะยิง API หลังบ้านที่ไหน และอ่านสิทธิ์จากเส้นไหน
 //	browser-session   ออกตั๋วแชท (ใช้ token ของหน้า office ยืนยันตัวตน)
-//	chat              SSE: status / fetch / card / token / done / error
+//	chat              SSE: status / fetch / card / action / token / suggest / done / error
 //	chat/relay/:id    widget ส่งผลของคำสั่ง fetch กลับ
 type ChatHandler struct {
 	offices port.OfficeService
@@ -61,6 +61,10 @@ type pageConfig struct {
 	Service     connector.ServiceSource `json:"service"`
 	AuthScheme  string                  `json:"auth_scheme"`
 	Identity    *connector.IdentitySpec `json:"identity,omitempty"`
+	// PageActions = ปุ่มใต้คำตอบ · widget สั่งหน้าเว็บตาม id ที่ backend ส่งมาเท่านั้น (วิธีสั่งอยู่ที่นี่ ไม่ได้มาจากโมเดล)
+	PageActions []connector.PageAction `json:"page_actions,omitempty"`
+	// Guest = ผู้ที่ยังไม่ล็อกอินคุยได้ (widget ขึ้นปุ่มด้วย guest_id ของเบราว์เซอร์)
+	Guest bool `json:"guest,omitempty"`
 }
 
 // PageConfig — GET /api/ai/widget/page-config (office มาจาก Origin)
@@ -101,6 +105,8 @@ func (h *ChatHandler) PageConfig(c *gin.Context, office domain.Office) {
 		Service:     svc,
 		AuthScheme:  scheme,
 		Identity:    pa.Identity,
+		PageActions: conn.Host.PageActions,
+		Guest:       conn.Host.Guest != nil,
 	})
 }
 
@@ -144,7 +150,7 @@ func (h *ChatHandler) OpenSession(c *gin.Context, office domain.Office, caller d
 
 	t := domain.ChatTicket{
 		OfficeID: office.ID, ServiceID: b.ServiceID, AdminID: caller.AdminID, Username: caller.Username,
-		Level: caller.Level, Permissions: perms,
+		Level: caller.Level, Permissions: perms, Guest: caller.Guest,
 		Session: domain.SessionFingerprint(strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))),
 	}
 	tok, err := h.tickets.Issue(t)
@@ -197,7 +203,7 @@ func (h *ChatHandler) ConversationMessages(c *gin.Context, office domain.Office,
 	// ส่งเฉพาะสิ่งที่ผู้ใช้เคยเห็นในห้อง — ไม่มี tool_calls/usage/ผลตรวจ
 	out := make([]gin.H, 0, len(msgs))
 	for _, m := range msgs {
-		out = append(out, gin.H{"role": m.Role, "text": m.Text, "cards": m.Cards, "status": m.Status, "created_at": m.CreatedAt})
+		out = append(out, gin.H{"role": m.Role, "text": m.Text, "cards": m.Cards, "actions": m.Actions, "suggestions": m.Suggestions, "status": m.Status, "created_at": m.CreatedAt})
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", gin.H{"id": cv.ID, "title": cv.Title, "messages": out})
 }
@@ -301,6 +307,16 @@ type kindInfo struct {
 	Default bool   `json:"default"`
 	// SiteColors = หน้าเว็บชนิดนี้มีสีของแบรนด์ให้ widget อ่าน (เลือก "ใช้สีของเว็บ" ได้)
 	SiteColors bool `json:"site_colors"`
+	// Tools = คำถามของชนิดนี้ + แบบการ์ดตั้งต้น (คอนโซลใช้ทำตัวเลือก "แบบการ์ด" ของ domain)
+	Tools []kindTool `json:"tools"`
+}
+
+type kindTool struct {
+	Name  string `json:"name"`
+	Title string `json:"title"` // ชื่อการ์ด (ผู้ดูแลอ่านรู้เรื่องกว่าชื่อ tool)
+	Style string `json:"style"` // แบบตั้งต้นจาก connector
+	// Styles = แบบที่การ์ดนี้วาดได้ (stat ต้องมี fields · list/single ต้องมี table)
+	Styles []string `json:"styles"`
 }
 
 // ListKinds — GET /api/ai/admin/kinds · ชนิดหลังบ้านที่มี connector (ให้คอนโซลเลือกตอนตั้งค่า domain)
@@ -312,7 +328,26 @@ func ListKinds(c *gin.Context, conns connector.Set) {
 		if label == "" {
 			label = k
 		}
-		out = append(out, kindInfo{Kind: k, Label: label, Default: k == conns.Default, SiteColors: conn.Host.PageColors != nil})
+		tools := []kindTool{}
+		for _, t := range conn.Tools {
+			st := t.Card.Style
+			if st == "" {
+				st = "table"
+			}
+			styles := []string{}
+			if len(t.Card.Fields) > 0 {
+				styles = append(styles, "stat")
+			}
+			if t.Card.Table != nil {
+				styles = append(styles, "list")
+			}
+			styles = append(styles, "table")
+			if t.Card.Table != nil {
+				styles = append(styles, "single")
+			}
+			tools = append(tools, kindTool{Name: t.Name, Title: t.Card.Title, Style: st, Styles: styles})
+		}
+		out = append(out, kindInfo{Kind: k, Label: label, Default: k == conns.Default, SiteColors: conn.Host.PageColors != nil, Tools: tools})
 	}
 	ResData(c, http.StatusOK, "SUCCESS", "", out)
 }

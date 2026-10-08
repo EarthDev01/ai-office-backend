@@ -23,6 +23,7 @@ type chatClaims struct {
 	Level       int32    `json:"level"`
 	Permissions []string `json:"perms,omitempty"`
 	Session     string   `json:"sess,omitempty"`
+	Guest       bool     `json:"guest,omitempty"`
 }
 
 type chatTicketIssuer struct {
@@ -54,7 +55,7 @@ func (i *chatTicketIssuer) Issue(t domain.ChatTicket) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 		Office: t.OfficeID, Service: t.ServiceID, Username: t.Username,
-		Level: t.Level, Permissions: t.Permissions, Session: t.Session,
+		Level: t.Level, Permissions: t.Permissions, Session: t.Session, Guest: t.Guest,
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(i.secret)
 }
@@ -76,6 +77,6 @@ func (i *chatTicketIssuer) Verify(token string) (domain.ChatTicket, error) {
 	return domain.ChatTicket{
 		ID: cl.ID, OfficeID: cl.Office, ServiceID: cl.Service, AdminID: cl.Subject,
 		Username: cl.Username, Level: cl.Level, Permissions: cl.Permissions, Session: cl.Session,
-		ExpiresAt: cl.ExpiresAt.Time,
+		Guest: cl.Guest, ExpiresAt: cl.ExpiresAt.Time,
 	}, nil
 }

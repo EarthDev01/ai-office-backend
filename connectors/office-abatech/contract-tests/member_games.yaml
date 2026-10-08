@@ -1,0 +1,34 @@
+# POST /GetMemberTransectionGame → body ของ agent ตรง ๆ {status:{code}, data:{TransactionData[], SummaryAmountData}} (envelope raw)
+tool: member_games
+cases:
+  - name: วันนี้ แยกตามเกม (ตัดแถวที่เป็นศูนย์)
+    input: {username: abc123}
+    responses:
+      g:
+        body:
+          status: {code: 200, message: Success}
+          data:
+            SummaryAmountData: {BetAmount: 350, WinlossAmount: -120}
+            TransactionData:
+              - {GameListName: Sweet Bonanza, TransactionBetAmount: 100, TransactionSettleAmount: 0, UpdatedAt: 1790226000}
+              - {GameListName: Sweet Bonanza, TransactionBetAmount: 200, TransactionSettleAmount: 80, UpdatedAt: 1790229600}
+              - {GameListName: Baccarat, TransactionBetAmount: 50, TransactionSettleAmount: 0, UpdatedAt: 1790215200}
+              - {GameListName: Baccarat, TransactionBetAmount: 0, TransactionSettleAmount: 0, UpdatedAt: 1790215201}
+    expect:
+      status: ok
+      calls:
+        g: {path: /GetMemberTransectionGame/DEMO-SVC, body: {start_date: "2026-09-24 00:00", end_date: "2026-09-24 23:59", username: abc123}}
+      fields: {ยอดเดิมพันรวม: "350.00 บาท", แพ้/ชนะ: "-120.00 บาท", รายการเล่น: "3 รายการ", เล่นล่าสุด: "24/09/2026 13:00"}
+      table_rows: 2
+      table_cells:
+        - [Sweet Bonanza, "300.00", "2 รายการ"]
+        - [Baccarat, "50.00", "1 รายการ"]
+      model_context: {has_play: true}
+  - name: ช่วงวัน · ไม่มีรายการเล่น
+    input: {username: abc123, date_from: "2026-09-20"}
+    responses:
+      g: {body: {status: {code: 200}, data: {TransactionData: null, SummaryAmountData: {BetAmount: 0, WinlossAmount: 0}}}}
+    expect:
+      status: not_found
+      calls:
+        g: {body: {start_date: "2026-09-20 00:00", end_date: "2026-09-20 23:59", username: abc123}}

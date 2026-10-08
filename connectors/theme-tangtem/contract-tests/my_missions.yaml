@@ -1,0 +1,27 @@
+# response ตาม topupserie controller/missionReward.go:40 MissionReward (ไม่ส่ง reward_id) · model.MissionRewardList
+tool: my_missions
+cases:
+  - name: ภารกิจ 3 อัน รับได้ 1 (ซ่อนที่ปิดรางวัล)
+    username: somchai01
+    responses:
+      m:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            - {id: m1, title: ฝากครบ 1000, condition: deposit, condition_amount: 1000, amount: 1000, reward: 50, can_recieve: 1, start_date: "2026-10-01T00:00:00Z", end_date: "2026-10-31T16:59:59Z"}
+            - {id: m2, title: เล่นสล็อต 5000, condition: turnover-slot, condition_amount: 5000, amount: 1200, reward: 100, can_recieve: 0, start_date: "2026-10-01T00:00:00Z", end_date: "2026-10-31T16:59:59Z"}
+            - {id: m3, title: ภารกิจเก่า, condition: deposit, reward: 10, can_recieve: 3, start_date: "2026-10-01T00:00:00Z", end_date: "2026-10-31T16:59:59Z"}
+    expect:
+      status: ok
+      calls:
+        m: {path: /mission-reward, body: {username: somchai01}}
+      fields: {รับรางวัลได้: "1 ภารกิจ"}
+      table_rows: 2
+      table_cells: [[ฝากครบ 1000, "50", รับรางวัล, "31/10/2026"]]
+      model_context: {has_ready_mission: true}
+      link: /
+  - name: ปิดภารกิจ (HTTP 500 MissionDisable)
+    responses:
+      m: {status: 500, body: {status: {code: 500, message: server error}, message: {code: 1, message: MissionDisable}, data: null}}
+    expect: {status: not_found}

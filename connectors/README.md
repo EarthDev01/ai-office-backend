@@ -68,7 +68,27 @@ page-config / ตัวตน / tool ของ office นั้นใช้ conn
 - `token.key` มี `{key_from}` ได้ + `key_from: {source, key, default}` — เช่น `@nuxtjs/auth` เก็บที่ `auth._token.<strategy>` · widget ตัดคำนำหน้า `Bearer ` ให้เอง และถือ `"false"` = ออกจากระบบ
 - body ใช้ `{user.username}` = ยูสของผู้ที่ล็อกอิน (จากตั๋ว ไม่ใช่จากโมเดล) สำหรับ API ที่ตรวจว่า body ตรง token
 - tool ของผู้เล่นประกาศ `scope: office` (1 โดเมน = 1 แบรนด์ ไม่มี `{service}` ใน API)
-- `audience: player` → system prompt พูดกับสมาชิก ไม่ใช่แอดมิน
+- `audience: player` → system prompt พูดกับสมาชิก ไม่ใช่แอดมิน · การ์ดขึ้นเป็นข้อความในฟองแชท (ตารางเป็นรายการ ไม่มีลิงก์) · ไม่มีการ์ด "เมนูที่เกี่ยวข้อง" (ใช้ปุ่มแทน)
+- `guest: {daily_limit: 6}` → ผู้ที่ยังไม่ล็อกอินเห็นปุ่มด้วย (widget ส่ง `Authorization: Guest <guest_id>` · id สุ่มเก็บใน localStorage `ai-office:guest_id`) · ไม่เห็น tool ข้อมูลเลย · ถามได้วันละ `daily_limit` ข้อความต่อ guest_id (นับจากข้อความที่บันทึก ตามวันของ `timezone`) · ครบแล้วตอบเองไม่เรียก LLM + แนบปุ่ม `when: guest` · ใช้ได้เฉพาะ `audience: player`
+- `follow_ups` (host.yaml) → ปุ่มถามต่อตั้งต้น เมื่อคำตอบไม่ได้ปุ่มจาก tool ข้อมูล · `{label, ask?, when?: member|guest|any}` · ทุก connector ต้องมี (test บังคับ)
+- `page_actions` → ปุ่มใต้คำตอบ (built-in `show_button`) · โมเดลเลือกได้แค่ `id` · วิธีสั่งหน้าเว็บส่งผ่าน page-config ตาม id:
+
+```yaml
+page_actions:
+  - {id: promotion, label: ดูโปรโมชั่น, when: member, open: {bv_modal: bv-modal-promotion}, about: "หน้าต่างโปรโมชั่น..."}
+  - {id: deposit,   label: ฝากเงิน,    when: member, open: {click: "#buttonFooterdeposit a"}, about: "..."}
+  - {id: guide,     label: คู่มือการใช้งาน, open: {path: /guide}, about: "..."}
+```
+
+| field | ค่า |
+|---|---|
+| `id` | a-z 0-9 _ (ขึ้นต้นด้วยตัวอักษร) ไม่ซ้ำ |
+| `label` | ชื่อบนปุ่ม 1–30 ตัวอักษร (ใช้ชื่อเดียวกับเมนูของหน้าเว็บ) |
+| `about` | บอกโมเดลว่าปุ่มพาไปไหน (ไม่ส่งลงหน้าเว็บ) |
+| `when` | `member` ล็อกอินแล้ว · `guest` ยังไม่ล็อกอิน · `any` (ค่าเริ่มต้น) |
+| `open` | ตั้งอย่างเดียว: `bv_modal` (id modal ของ bootstrap-vue → `$nuxt.$bvModal.show`) · `click` (selector ปุ่มที่หน้ามีอยู่ — ได้เงื่อนไขเดิมของหน้า · ไม่มีปุ่มในหน้า = ไม่วาดปุ่ม) · `path` (หน้าในเว็บเดียวกัน → router ของหน้า) |
+
+กดปุ่มแล้ว widget ปิดกล่องแชทก่อน แล้วสั่งหน้าเว็บ · ทำไม่ได้ (เช่น หน้าไม่ใช่ Nuxt) = เปิดแชทกลับ + บอกให้กดเมนูเอง · ใช้ได้เฉพาะ `mode: browser`
 
 ## 1. `host.yaml`
 
@@ -116,6 +136,7 @@ tables:
     questions: [BQ-29]
     entries:
       - {code: 1, label: สำเร็จ, aliases: [โอนแล้ว], meaning: ..., next_action: ..., final: true}
+      - {code: 4, label: ยกเลิก, meaning: ..., final: true, tone: bad}   # tone = สีป้าย ok|wait|bad · ไม่ตั้ง: final → ok · นอกนั้น wait
 ```
 - ใช้ใน `format: "status:withdraw"` (ป้ายบนการ์ด) · `model_context type: labels` · built-in `explain_status`
 - code ที่ไม่มีในตาราง → แสดง "ไม่ทราบสถานะ (N)" + `unknown_message` (B-10 · ห้ามเดา)
@@ -192,20 +213,38 @@ HTTP 401/403/429 → unauthorized/denied/busy · HTTP อื่นนอก 2xx 
 - {name: by_bank, from: list, path: items, group_by: bank_code, field: amount}   # ได้ [{key, count, sum}]
 - {name: diff, expr: "today_total - yesterday_total"}
 - {name: x, from: c, path: a.b, default: 0}
+- {name: rows, from: b, paths: [bonus, ""]}        # ลองทีละ path ใช้ตัวแรกที่มีค่า ("" = ทั้งก้อน) · ใช้เมื่อรูปข้อมูลเปลี่ยนตามการตั้งค่าของหลังบ้าน · ห้ามคู่กับ path
 ```
+template วันที่: `{date:input.date_from|date:beginning}` — `beginning` = 2000-01-01 (ไม่ระบุวัน = ตั้งแต่สมัคร)
+
 expression: ตัวเลข · `'str'` · `true false null` · ชื่อ (`a`, `item.status`, `input.x`, `a[0]`) · `+ - * / %` `== != < <= > >=` `&& || !` · ฟังก์ชัน `len count empty sum(x,"f") min max abs round(x,n) coalesce contains in lower`
 
 ### 5.5 card (ค่าจากระบบตรง ๆ — ไม่ผ่านโมเดล)
 
 ```yaml
 card:
+  style: list                                        # stat | list | table (ค่าเริ่มต้น) | single — ผู้ดูแลเปลี่ยนต่อ domain ได้ในคอนโซล
   title: รายการถอนที่ยังไม่สำเร็จ
   fields: [{label: รวม, value: total, format: money, prefix: "", suffix: " บาท", when: "total > 0"}]
-  table: {rows: rows, max_rows: 20, columns: [{label: สถานะ, field: status, format: "status:withdraw"}, {label: ยอด, field: amount, format: money}]}
+  table: {rows: rows, max_rows: 20, columns: [{label: สถานะ, field: status, format: "status:withdraw"}, {label: ยอด, field: amount, format: money}, {label: ผู้ทำรายการ, field: operator_name, empty: ระบบอัตโนมัติ}]}
   note: ข้อความคงที่ใต้การ์ด
   link: {label: เปิดรายการถอน, path: "/withdraw"}      # บังคับ · path ในหลังบ้าน
+answer: "รายการฝากของ {input.username}"             # ประโยคตอบเมื่อการ์ดตอบครบ (ไม่ต้องให้ AI เขียน · เร็วขึ้น 1 รอบ) · ไม่ตั้ง = ชื่อการ์ด · llm = ให้ AI เขียน (ต้องตีความ)
+chain: true                                          # ผลมีรหัส/ยูสที่อาจต้องค้นต่อ — เฉพาะ tool แบบนี้ระบบถาม AI ว่าต้องดึงเพิ่มไหม
+keywords: [ฝาก]                                      # (หรือระดับไฟล์) คำที่บอกว่าคำถามเกี่ยว tool นี้ — คัด tool ก่อนส่งให้ AI · ไม่ตรงหมวดไหน = ส่งทั้งหมด
+follow_ups:                                          # ปุ่มถามต่อใต้คำตอบ ≤ 3 · {input.<ชื่อ>} เท่านั้น · input ที่ไม่ได้ส่ง = ไม่โชว์ปุ่มนั้น · ทุก tool ต้องมี (test บังคับ)
+  - {label: "รายการฝากของ {input.username}", ask: "รายการฝากวันนี้ของยูส {input.username}"}
 ```
-format: `text int number money percent ratio_percent datetime date bool status:<table>` (เวลาแสดงเป็นเวลาไทย)
+format: `text int number money percent ratio_percent datetime date bool status:<table>` (เวลาแสดงเป็นเวลาไทย) · `empty:` = ค่าว่างแสดงเป็นข้อความนี้
+
+| style | widget วาด | ต้องมี |
+|---|---|---|
+| `stat` | field แรกตัวใหญ่ · field ที่เหลือเป็นป้าย · ตาราง (ถ้ามี) ต่อท้ายแบบรายการ | fields |
+| `list` | แถวละรายการ: คอลัมน์ datetime ซ้าย · คอลัมน์ money แรกตัวใหญ่ · status เป็นป้ายสี · ที่เหลือบรรทัดเล็ก · fields เป็นสรุปบนหัว | table |
+| `table` | ตาราง · status เป็นป้ายสี | — |
+| `single` | แถวแรก: status เป็นหัว + ค่าที่เหลือ (รวม fields) เป็นช่อง 2 คอลัมน์ · แถวที่เหลือต่อท้ายแบบรายการ | table |
+
+การ์ดที่ไม่พบ/ผิดพลาด/ไม่มีสิทธิ์ใช้กรอบเดิมทุกแบบ · หน้าเว็บผู้เล่น (`audience: player`) วาดเป็นข้อความในฟองแชทเสมอ
 
 ### 5.6 model_context — สิ่งเดียวที่โมเดลเห็นจาก tool (B-4 · AC-14)
 
@@ -249,6 +288,7 @@ cases:
 | `lookup_menu` | ค้น `menus.yaml` (เมนู + guides) กรองตามสิทธิ์ · ได้การ์ด reference |
 | `explain_status` | อธิบาย `statuses.yaml` |
 | `host_facts` | ค้น `facts` ใน `host.yaml` |
+| `show_button` | แนบปุ่มใต้คำตอบจาก `page_actions` ที่ผู้ใช้คนนั้นใช้ได้ (มีเฉพาะ kind ที่ประกาศ) · SSE `action {id, label}` · เก็บในประวัติ (`actions`) |
 
 ## 8. เพิ่ม kind ใหม่
 

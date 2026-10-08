@@ -1,0 +1,681 @@
+# ข้อมูลรายยูสจากหน้า "ข้อมูลสมาชิก" (office-v10x src/views/member/_id.vue + แท็บ src/components/member/history/*)
+# ทุก call = endpoint อ่านอย่างเดียวที่หน้านั้นเรียกอยู่แล้ว (office-api-v10 e7babdd4 · ตรวจ 08/10/2026)
+# สิทธิ์: หน้า _id.vue กั้นด้วย MEMBER_INFO (+ แต่ละแท็บมี code ย่อย MEMBER_HISTORY_*) — permissions.yaml ยังไม่มี rule ของแท็บย่อย
+#   → ใช้ rule `member` (MEMBER_INFO) ซึ่งใกล้ที่สุด · office-api-v10 เส้นเหล่านี้ไม่ตรวจ code เอง (AuthRequiredDB อย่างเดียว)
+# PII: ไม่ประกาศ/ไม่ใช้ password · phone_number · bank_number · full_name · ยูสของเพื่อน (downline) — values เลือกเฉพาะ field ที่ประกาศ
+# ⚠️ ไม่ใช้ POST /member-transection-game-detail (member.go:70) — เป็นรายละเอียดของรอบเดียว (ต้องมี id/round_id/transaction_id จากตาราง)
+#    ไม่ใช่ยอดรวม · ยอดเล่น/แพ้ชนะของแท็บ "รายการเล่น" มาจาก POST /member-transection-gamev2 (member.go:64) แทน
+# ⚠️ ไม่ใช้ POST /member-turnover — ไม่ได้อยู่ในรอบนี้ · ไม่ใช้ GET /GetDepositStatementv2 กับ username (panic · ดู deposit.yaml)
+questions: [BQ-05, BQ-06]
+keywords: [ยูส, สมาชิก, ตลอดชีพ, ทั้งหมด, กำไร, เล่น, ยอดเล่น, แพ้ชนะ, แพ้, ชนะ, คืนยอดเสีย, ยอดเสีย, cashback, คอม, คอมมิชชั่น, แนะนำ, เพื่อน, ค่าแนะนำ, กิจกรรม, ค้างชำระ, ยอดค้าง, ฝาก, ถอน, 6 เดือน, หกเดือน]   # คัด tool ก่อนส่งให้โมเดล (ไม่ตรงหมวดไหนเลย = ส่งทุก tool)
+tools:
+  # GET /api/GetMemberAlltimebyUser/:service?username (route/member.go:31 · controller/member.go:1563-1597 GetMemberAlltimebyUser)
+  #   frontend: api-service/report/index.ts getMemberAlltimebyUser · _id.vue getReportSummary (ป้าย ยอดฝาก/ยอดถอน/กำไรตลอดชีพ)
+  #   aggregate report_active_user_day {username ตรงตัว} → data {deposit, withdraw, profit = deposit - withdraw} · ไม่พบ = ศูนย์ทั้งหมด (code 0)
+  - name: member_alltime
+    description: >-
+      ยอดฝาก ยอดถอน และกำไร (ฝากลบถอน) ตลอดชีพของสมาชิก 1 ยูส เหมือนป้าย ตลอดชีพ ในหน้าข้อมูลสมาชิก
+      · ใช้เมื่อถามว่ายูสนี้ฝาก/ถอนทั้งหมดเท่าไหร่ ตั้งแต่สมัคร · กำไรยังไม่หักโบนัส · ระบุช่วงวันไม่ได้ (ช่วงวันใช้ member_summary_range)
+    questions: [BQ-05]
+    permission: member   # _id.vue MEMBER_INFO (ป้ายบนหัวหน้าข้อมูลสมาชิก)
+    freshness: summary
+    answer: "ยอดฝาก ยอดถอน และกำไรตลอดชีพของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: a
+        method: GET
+        path: /GetMemberAlltimebyUser/{service}
+        query: {username: "{input.username}"}
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [deposit, withdraw, profit]
+          properties:
+            deposit: {type: number}
+            withdraw: {type: number}
+            profit: {type: number}
+    values:
+      - {name: dep, from: a, path: deposit}
+      - {name: wd, from: a, path: withdraw}
+      - {name: profit, from: a, path: profit}
+    not_found: {when: "dep == 0 && wd == 0", message: ไม่พบยอดฝากหรือถอนของยูสนี้ (ยูสอาจยังไม่เคยฝากถอน หรือพิมพ์ยูสไม่ตรงตัว)}
+    card:
+      style: stat
+      title: ยอดตลอดชีพของสมาชิก
+      fields:
+        - {label: ยอดฝากตลอดชีพ, value: dep, format: money, suffix: " บาท"}
+        - {label: ยอดถอนตลอดชีพ, value: wd, format: money, suffix: " บาท"}
+        - {label: กำไรตลอดชีพ (ฝากลบถอน), value: profit, format: money, suffix: " บาท"}
+      note: นับจากรายงานรายวันของระบบ (ตัวเดียวกับป้าย ตลอดชีพ ในหน้าข้อมูลสมาชิก) · ยังไม่หักโบนัส
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: member_profitable_for_web, type: bool, expr: "profit > 0"}
+      - {name: has_withdraw, type: bool, expr: "wd > 0"}
+    follow_ups:
+      - {label: "ยอด 6 เดือนของ {input.username}", ask: "ยูส {input.username} ช่วง 6 เดือนล่าสุดฝากถอนเท่าไหร่"}
+      - {label: "รายการเล่นของ {input.username}", ask: "ยูส {input.username} วันนี้เล่นไปเท่าไหร่ แพ้ชนะเท่าไหร่"}
+      - {label: "คืนยอดเสีย/คอมของ {input.username}", ask: "ยูส {input.username} มียอดคืนยอดเสียและค่าคอมสะสมเท่าไหร่"}
+
+  # GET /api/user-summaryv2/:service?start_date&end_date&username (route/member.go:32 · controller/member.go:1600-1641 MemberSummaryV2)
+  #   frontend: getReportUserSummaryv2 · _id.vue getReportSummary ส่ง start_date = วันนี้ลบ 6 เดือน · end_date = วันนี้ (YYYY-MM-DD)
+  #   report_active_user_day {username, date $gte start $lte end (string)} → data {deposit, withdraw, profit} · ไม่พบ = ศูนย์
+  - name: member_summary_range
+    description: >-
+      ยอดฝาก ยอดถอน และกำไร (ฝากลบถอน) ของสมาชิก 1 ยูส ในช่วงวันที่ถาม
+      · ใช้เมื่อถามว่ายูสนี้ช่วงนี้/เดือนนี้/6 เดือนฝากถอนเท่าไหร่ · ไม่ระบุวัน = ประมาณ 6 เดือนล่าสุด (เหมือนป้าย 6 เดือน ในหน้าข้อมูลสมาชิก)
+    questions: [BQ-05]
+    permission: member   # _id.vue MEMBER_INFO (ป้าย 6 เดือน)
+    freshness: summary
+    answer: "ยอดฝาก ยอดถอน และกำไรของยูส {input.username} ในช่วงที่ถามแสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = ย้อนหลังประมาณ 6 เดือน)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: s
+        method: GET
+        path: /user-summaryv2/{service}
+        query:
+          start_date: "{date:input.date_from|date:today-182}"
+          end_date: "{date:input.date_to|date:today}"
+          username: "{input.username}"
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [deposit, withdraw, profit]
+          properties:
+            deposit: {type: number}
+            withdraw: {type: number}
+            profit: {type: number}
+    values:
+      - {name: dep, from: s, path: deposit}
+      - {name: wd, from: s, path: withdraw}
+      - {name: profit, from: s, path: profit}
+    not_found: {when: "dep == 0 && wd == 0", message: ไม่พบยอดฝากหรือถอนของยูสนี้ในช่วงวันที่ถาม}
+    card:
+      style: stat
+      title: ยอดฝากถอนของสมาชิกตามช่วงวัน
+      fields:
+        - {label: ยอดฝาก, value: dep, format: money, suffix: " บาท"}
+        - {label: ยอดถอน, value: wd, format: money, suffix: " บาท"}
+        - {label: กำไร (ฝากลบถอน), value: profit, format: money, suffix: " บาท"}
+      note: นับจากรายงานรายวันของระบบ ตามช่วงวันที่ถาม (ไม่ระบุ = ย้อนหลังประมาณหกเดือน) · ยังไม่หักโบนัส
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: member_profitable_for_web, type: bool, expr: "profit > 0"}
+      - {name: has_withdraw, type: bool, expr: "wd > 0"}
+    follow_ups:
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+      - {label: "รายการฝากทุกสถานะของ {input.username}", ask: "รายการฝากทุกสถานะของยูส {input.username}"}
+
+  # GET /api/GetDepositStatement/:service (route/deposit.go:17 · controller/deposit.go:45-100 GetDepositStatement)
+  #   frontend: api-service/deposit/index.ts getDepositStatement · history/HistoryDeposit.vue (แท็บ ฝาก · MEMBER_HISTORY_DEPOSIT)
+  #   query: username (FilterField = ตรงตัว) · range_dt=YYYY-MM-DD HH:mm:ss~... · sort · order · limit · page · status (เท่ากับ)
+  #   response ResponseV2 {code, data[] DepositStatement, count, summary = ผลรวม amount ทุกแถวที่ตรง (ทุกสถานะ · deposit.go:85-99)}
+  #   ⚠️ DB error → code 0 + data [] + count 0 (ไม่มี summary) = เห็นเป็น "ไม่พบ" · ใช้ v1 เพราะมี $and (v2 + username panic)
+  - name: member_deposits
+    description: >-
+      รายการฝากของสมาชิก 1 ยูส ทุกสถานะ ในช่วงวันที่ถาม (ล่าสุดก่อน) พร้อมยอดฝากสำเร็จ จำนวนรายการ และยอดรวมทุกสถานะ
+      · ใช้เมื่อถามว่ายูสนี้เดือนนี้/ช่วงนี้ฝากอะไรบ้าง ฝากกี่ครั้ง · ไม่ระบุวัน = ตั้งแต่สมัคร
+    questions: [BQ-06]
+    permission: member   # แท็บ ฝาก ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_DEPOSIT · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "รายการฝากของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = ตั้งแต่สมัคร)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: l
+        method: GET
+        path: /GetDepositStatement/{service}
+        query: &dq
+          username: "{input.username}"
+          range_dt: "{datetime:input.date_from|datetime:beginning}~{datetime_end:input.date_to|datetime_end:today}"
+          sort: datetime
+          order: "-1"
+          limit: "50"
+          page: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema: &dsch
+          type: object
+          required: [code, data]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            summary: {type: number}
+            data:
+              type: array
+              items:
+                type: object
+                required: [amount, datetime, status]
+                properties:
+                  amount: {type: number}
+                  datetime: {type: string}
+                  status: {type: integer}
+                  channel: {type: string}
+                  bonus_name: {type: string}
+                  bonus: {type: number}
+                  operator_name: {type: string}
+      - id: ok
+        method: GET
+        path: /GetDepositStatement/{service}
+        query:
+          <<: *dq
+          status: "1"
+          limit: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema: *dsch
+    values:
+      - {name: rows, from: l, path: data}
+      - {name: all_count, from: l, path: count, default: 0}
+      - {name: all_sum, from: l, path: summary, default: 0}
+      - {name: fetched, from: l, path: data, agg: count}
+      - {name: ok_count, from: ok, path: count, default: 0}
+      - {name: ok_sum, from: ok, path: summary, default: 0}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการฝากของยูสนี้ในช่วงวันที่ถาม (ยูสต้องพิมพ์ตรงตัว)}
+    card:
+      style: list
+      title: รายการฝากของสมาชิก
+      fields:
+        - {label: ยอดฝากสำเร็จ, value: ok_sum, format: money, suffix: " บาท"}
+        - {label: ฝากสำเร็จ, value: ok_count, format: int, suffix: " รายการ"}
+        - {label: รายการทั้งหมด (ทุกสถานะ), value: all_count, format: int, suffix: " รายการ"}
+        - {label: ยอดรวมทุกสถานะ, value: all_sum, format: money, suffix: " บาท", when: "all_count > ok_count"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: วันที่, field: datetime, format: datetime}
+          - {label: ยอดฝาก, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:deposit"}
+          - {label: ช่องทาง, field: channel}
+          - {label: โบนัส, field: bonus_name, empty: ไม่รับโบนัส}
+          - {label: ผู้ดำเนินการ, field: operator_name, empty: ระบบอัตโนมัติ}
+      note: แสดงสูงสุดยี่สิบรายการล่าสุด ยอดและจำนวนด้านบนนับทั้งช่วง ดูทั้งหมดได้ที่แท็บ ฝาก ในหน้าข้อมูลสมาชิก
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:deposit"}
+      - {name: has_unsuccessful, type: bool, expr: "all_count > ok_count"}
+      - {name: may_have_more, type: bool, expr: "all_count > fetched"}
+    follow_ups:
+      - {label: "รายการถอนทุกสถานะของ {input.username}", ask: "รายการถอนทุกสถานะของยูส {input.username}"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+
+  # GET /api/GetWithdrawStatement/:service (route/withdraw.go:17 · controller/withdraw.go:37-79 GetWithdrawStatement)
+  #   frontend: api-service/withdraw/index.ts getWithdrawStatement · history/HistoryWithdraw.vue (แท็บ ถอน · MEMBER_HISTORY_WITHDRAW)
+  #   query เหมือนฝาก (FilterAndSortV2 · username ตรงตัว) · response {code, data[] WithdrawStatement, count = ทุกสถานะ,
+  #   summary = ผลรวม amount เฉพาะ status 1 (withdraw.go:68-77)} · DB error → code 0 + data [] + count 0
+  - name: member_withdraws
+    description: >-
+      รายการถอนของสมาชิก 1 ยูส ทุกสถานะ ในช่วงวันที่ถาม (ล่าสุดก่อน) พร้อมยอดถอนสำเร็จและจำนวนรายการ
+      · ใช้เมื่อถามว่ายูสนี้เดือนนี้/ช่วงนี้ถอนอะไรบ้าง ถอนกี่ครั้ง · ไม่ระบุวัน = ตั้งแต่สมัคร
+    questions: [BQ-06]
+    permission: member   # แท็บ ถอน ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_WITHDRAW · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "รายการถอนของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = ตั้งแต่สมัคร)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: l
+        method: GET
+        path: /GetWithdrawStatement/{service}
+        query: &wq
+          username: "{input.username}"
+          range_dt: "{datetime:input.date_from|datetime:beginning}~{datetime_end:input.date_to|datetime_end:today}"
+          sort: datetime
+          order: "-1"
+          limit: "50"
+          page: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema: &wsch
+          type: object
+          required: [code, data]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            summary: {type: number}
+            data:
+              type: array
+              items:
+                type: object
+                required: [amount, datetime, status]
+                properties:
+                  amount: {type: number}
+                  datetime: {type: string}
+                  status: {type: integer}
+                  bank_code: {type: string}
+                  operator_name: {type: string}
+      - id: ok
+        method: GET
+        path: /GetWithdrawStatement/{service}
+        query:
+          <<: *wq
+          status: "1"
+          limit: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema: *wsch
+    values:
+      - {name: rows, from: l, path: data}
+      - {name: all_count, from: l, path: count, default: 0}
+      - {name: ok_sum, from: l, path: summary, default: 0}
+      - {name: fetched, from: l, path: data, agg: count}
+      - {name: ok_count, from: ok, path: count, default: 0}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการถอนของยูสนี้ในช่วงวันที่ถาม (ยูสต้องพิมพ์ตรงตัว)}
+    card:
+      style: list
+      title: รายการถอนของสมาชิก
+      fields:
+        - {label: ยอดถอนสำเร็จ, value: ok_sum, format: money, suffix: " บาท"}
+        - {label: ถอนสำเร็จ, value: ok_count, format: int, suffix: " รายการ"}
+        - {label: รายการทั้งหมด (ทุกสถานะ), value: all_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: วันที่, field: datetime, format: datetime}
+          - {label: ยอดถอน, field: amount, format: money}
+          - {label: สถานะ, field: status, format: "status:withdraw"}
+          - {label: ธนาคาร, field: bank_code}
+          - {label: ผู้ดำเนินการ, field: operator_name, empty: ระบบอัตโนมัติ}
+      note: แสดงสูงสุดยี่สิบรายการล่าสุด ยอดและจำนวนด้านบนนับทั้งช่วง ดูทั้งหมดได้ที่แท็บ ถอน ในหน้าข้อมูลสมาชิก
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: statuses, type: labels, from: rows, pluck: status, format: "status:withdraw"}
+      - {name: has_unsuccessful, type: bool, expr: "all_count > ok_count"}
+      - {name: may_have_more, type: bool, expr: "all_count > fetched"}
+    follow_ups:
+      - {label: "รายการฝากทุกสถานะของ {input.username}", ask: "รายการฝากทุกสถานะของยูส {input.username}"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+      - {label: "ยอดค้างชำระของ {input.username}", ask: "ยูส {input.username} มียอดค้างชำระไหม"}
+
+  # POST /api/member-transection-gamev2/:service (route/member.go:64 · controller/member.go:3597-3801 GetMemberTransectionGameV2)
+  #   frontend: memberTransectionGameV2 · history/HistoryPlaylist.vue getDataGame (แท็บ รายการเล่น · MEMBER_HISTORY_GAME)
+  #   body {username, start_date/end_date "YYYY-MM-DD HH:mm:ss", page, limit, order, game_type "ALL"} → ยิง GET {APIURL}/seamless/transaction ของระบบเกม
+  #   อ่านอย่างเดียว (ไม่เขียน DB) · มี rate limit ต่อพนักงาน 300 ครั้ง/60 วิ (นับใน Redis ใช้โควตาเดียวกับหน้าจอ)
+  #   response {code, data {SummaryAmountData {BetAmount, RefundAmount, WinAmount, WinlossAmount}, TransactionData[]}, count = paginate.total}
+  #   ป้ายในหน้า: ยอดเล่น = BetAmount · แพ้ / ชนะ = WinlossAmount (HistoryPlaylist.vue:2163-2164)
+  #   ⚠️ ไม่ใช้ /member-transection-game-detail (route member.go:70 · controller 4120) — POST ไปที่ /getdetail ของระบบเกมเพื่อดูรอบเดียว ต้องมี id รอบจากตาราง
+  - name: member_games
+    description: >-
+      ยอดเล่นและยอดแพ้ชนะของสมาชิก 1 ยูส ในวันหรือช่วงวันที่ถาม (ทุกประเภทเกม จากระบบเกม เหมือนป้ายในแท็บ รายการเล่น)
+      · ใช้เมื่อถามว่ายูสนี้เล่นไปเท่าไหร่ แพ้ชนะเท่าไหร่ · ไม่ระบุวัน = วันนี้ · ช่วงยาวมากอาจช้า
+    questions: [BQ-05]
+    permission: member   # แท็บ รายการเล่น ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_GAME · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "ยอดเล่นและแพ้ชนะของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = วันนี้)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = เท่ากับวันแรก)}
+    calls:
+      - id: g
+        method: POST
+        path: /member-transection-gamev2/{service}
+        body:
+          username: "{input.username}"
+          start_date: "{datetime:input.date_from|datetime:today}"
+          end_date: "{datetime_end:input.date_to|datetime_end:input.date_from|datetime_end:today}"
+          page: 1
+          limit: 1
+          order: "-1"
+          game_type: ALL
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: object
+              required: [SummaryAmountData]
+              properties:
+                SummaryAmountData:
+                  type: object
+                  required: [BetAmount, WinlossAmount]
+                  properties:
+                    BetAmount: {type: number}
+                    WinlossAmount: {type: number}
+    values:
+      - {name: bet, from: g, path: data.SummaryAmountData.BetAmount, default: 0}
+      - {name: winloss, from: g, path: data.SummaryAmountData.WinlossAmount, default: 0}
+      - {name: tx_count, from: g, path: count, default: 0}
+    not_found: {when: "tx_count == 0 && bet == 0", message: ไม่พบรายการเล่นของยูสนี้ในช่วงวันที่ถาม}
+    card:
+      style: stat
+      title: ยอดเล่นของสมาชิก
+      fields:
+        - {label: ยอดเล่น, value: bet, format: money, suffix: " บาท"}
+        - {label: แพ้ / ชนะ, value: winloss, format: money, suffix: " บาท"}
+        - {label: จำนวนรายการเล่น, value: tx_count, format: int, suffix: " รายการ"}
+      note: ตัวเลขจากระบบเกมตามช่วงวันที่ถาม ทุกประเภทเกม (ค่าแพ้ / ชนะ แสดงตามที่ระบบเกมส่งมา เหมือนป้ายในแท็บ รายการเล่น)
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: has_play, type: bool, expr: "bet > 0"}
+    follow_ups:
+      - {label: "คืนยอดเสีย/คอมของ {input.username}", ask: "ยูส {input.username} มียอดคืนยอดเสียและค่าคอมสะสมเท่าไหร่"}
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+
+  # GET /api/GetMemberTotalCommissionCashback/:service?username (route/member.go:34 → controller/member.go:2116-2158 GetMemberTotalCommissionCashbackV3)
+  #   frontend: report/index.ts getMemberTotalCommissionCashback · _id.vue onGetMemberTotalCommissionCashback (การ์ด Cashback / Commission)
+  #   ยิง GET {config_system.database_config.system_url}/api/external/external-cashback-commission ของระบบหน้าบ้าน (ไม่เขียน DB ฝั่ง office)
+  #   data ResponseTotal {commission {all, bcr, slot, lotto, fishing, sport, table}, cashback {...}} = ยอดสะสมที่ระบบคำนวณอยู่ (ยังไม่จ่าย)
+  #   ระบบหน้าบ้านไม่ตอบ / แปลงไม่ได้ → code 1 (หน้าจอแสดง "-")
+  - name: member_cashback_commission
+    description: >-
+      ยอดคืนยอดเสีย (Cashback) และค่าคอมมิชชั่นสะสมของสมาชิก 1 ยูส ที่ระบบคำนวณอยู่ตอนนี้ เหมือนการ์ด Cashback / Commission ในหน้าข้อมูลสมาชิก
+      · ใช้เมื่อถามว่ายูสนี้ได้คืนยอดเสีย/คอมเท่าไหร่ · ระบุช่วงวันไม่ได้
+    questions: [BQ-05]
+    permission: member   # _id.vue MEMBER_INFO (การ์ด Cashback / Commission บนหัวหน้า)
+    freshness: summary
+    answer: "ยอดคืนยอดเสียและค่าคอมสะสมของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: c
+        method: GET
+        path: /GetMemberTotalCommissionCashback/{service}
+        query: {username: "{input.username}"}
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [commission, cashback]
+          properties:
+            commission: &dividend
+              type: object
+              required: [all]
+              properties:
+                all: {type: number}
+                bcr: {type: number}
+                slot: {type: number}
+                lotto: {type: number}
+                fishing: {type: number}
+                sport: {type: number}
+                table: {type: number}
+            cashback: *dividend
+    values:
+      - {name: cb_all, from: c, path: cashback.all}
+      - {name: cm_all, from: c, path: commission.all}
+      - {name: cb_bcr, from: c, path: cashback.bcr, default: 0}
+      - {name: cb_slot, from: c, path: cashback.slot, default: 0}
+      - {name: cm_bcr, from: c, path: commission.bcr, default: 0}
+      - {name: cm_slot, from: c, path: commission.slot, default: 0}
+    card:
+      style: stat
+      title: คืนยอดเสียและค่าคอมสะสมของสมาชิก
+      fields:
+        - {label: คืนยอดเสียสะสม (Cashback), value: cb_all, format: money, suffix: " บาท"}
+        - {label: ค่าคอมสะสม (Commission), value: cm_all, format: money, suffix: " บาท"}
+        - {label: Cashback คาสิโน, value: cb_bcr, format: money, when: "cb_bcr != 0"}
+        - {label: Cashback สล็อต, value: cb_slot, format: money, when: "cb_slot != 0"}
+        - {label: Commission คาสิโน, value: cm_bcr, format: money, when: "cm_bcr != 0"}
+        - {label: Commission สล็อต, value: cm_slot, format: money, when: "cm_slot != 0"}
+      note: ยอดสะสมที่ระบบคำนวณอยู่ ณ ตอนนี้ (ตัวเดียวกับการ์ด Cashback / Commission ในหน้าข้อมูลสมาชิก) แยกตามประเภทเกมอื่นดูได้ที่หน้านั้น
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: has_cashback, type: bool, expr: "cb_all > 0"}
+      - {name: has_commission, type: bool, expr: "cm_all > 0"}
+    follow_ups:
+      - {label: "รายการเล่นของ {input.username}", ask: "ยูส {input.username} วันนี้เล่นไปเท่าไหร่ แพ้ชนะเท่าไหร่"}
+      - {label: "แนะนำเพื่อนของ {input.username}", ask: "ยูส {input.username} มีเพื่อนกี่คน ได้ค่าแนะนำเท่าไหร่"}
+
+  # GET /api/aff-member-parent-byusername-count/:service?username (route/statement.go:52 · controller/member.go:4635-4648)
+  #   frontend: members/index.ts getAffStatementAmount · history/HistoryAffiliate.vue getCountAff (ป้าย "N คน")
+  #   นับ member_affiliated {parent_username: username} (ทุกชั้น) → {code 0, data null, count} · DB error ถูกกลืนเป็น 0
+  # GET /api/referral-income-affiliate/:service?username&limit&page (route/member.go:73 · controller/member.go:5877-6045 GetReferralIncomeAffiliate)
+  #   frontend: getAffStatementIncome · HistoryAffiliate.vue (แท็บ refer_affiliate_all · ยอดรวม = sum af_summary ของหน้าที่ดึง)
+  #   statement_affiliate_day group ตามเพื่อน → data[] {username (ยูสเพื่อน — ไม่ประกาศ/ไม่แสดง), level, deposit, turnover, winloss,
+  #   af_deposit, af_turnover, af_winloss, af_summary}, count = จำนวนเพื่อนที่มียอด · ไม่มีตัวกรองวัน (ตลอดชีพ)
+  - name: member_affiliate
+    description: >-
+      แนะนำเพื่อนของสมาชิก 1 ยูส: จำนวนเพื่อนที่สมัครใต้ยูสนี้ (ทุกชั้น) จำนวนเพื่อนที่สร้างรายได้ และค่าแนะนำรวม (ยอดฝาก ยอดเล่น ยอดเสีย)
+      · ใช้เมื่อถามว่ายูสนี้มีเพื่อนกี่คน ได้ค่าแนะนำเท่าไหร่ · นับตลอดชีพ ระบุช่วงวันไม่ได้ · ไม่แสดงรายชื่อเพื่อน
+    questions: [BQ-05]
+    permission: member   # แท็บ แนะนำเพื่อน ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_AFF · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "จำนวนเพื่อนและค่าแนะนำของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+    calls:
+      - id: n
+        method: GET
+        path: /aff-member-parent-byusername-count/{service}
+        query: {username: "{input.username}"}
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema:
+          type: object
+          required: [code, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+      - id: r
+        method: GET
+        path: /referral-income-affiliate/{service}
+        query:
+          username: "{input.username}"
+          sort: af_summary
+          order: "-1"
+          limit: "500"
+          page: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 25000
+        schema:
+          type: object
+          required: [code, data, count]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  af_deposit: {type: number}
+                  af_turnover: {type: number}
+                  af_winloss: {type: number}
+                  af_summary: {type: number}
+    values:
+      - {name: friends, from: n, path: count}
+      - {name: earning_friends, from: r, path: count}
+      - {name: fetched, from: r, path: data, agg: count}
+      - {name: reward_all, from: r, path: data, agg: sum, field: af_summary, default: 0}
+      - {name: reward_dep, from: r, path: data, agg: sum, field: af_deposit, default: 0}
+      - {name: reward_turn, from: r, path: data, agg: sum, field: af_turnover, default: 0}
+      - {name: reward_loss, from: r, path: data, agg: sum, field: af_winloss, default: 0}
+    not_found: {when: "friends == 0 && earning_friends == 0", message: ยูสนี้ยังไม่มีเพื่อนที่สมัครผ่านลิงก์แนะนำ}
+    card:
+      style: stat
+      title: แนะนำเพื่อนของสมาชิก
+      fields:
+        - {label: ค่าแนะนำรวม, value: reward_all, format: money, suffix: " บาท"}
+        - {label: เพื่อนทั้งหมด (ทุกชั้น), value: friends, format: int, suffix: " คน"}
+        - {label: เพื่อนที่สร้างรายได้, value: earning_friends, format: int, suffix: " คน"}
+        - {label: จากยอดฝาก, value: reward_dep, format: money, when: "reward_dep != 0"}
+        - {label: จากยอดเล่น, value: reward_turn, format: money, when: "reward_turn != 0"}
+        - {label: จากยอดเสีย, value: reward_loss, format: money, when: "reward_loss != 0"}
+      note: ค่าแนะนำรวมตลอดชีพตามที่ระบบคำนวณรายวัน (ตัวเดียวกับแท็บ แนะนำเพื่อน) · ไม่แสดงรายชื่อเพื่อน ดูได้ที่หน้าข้อมูลสมาชิก
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: has_friends, type: bool, expr: "friends > 0"}
+      - {name: has_reward, type: bool, expr: "reward_all > 0"}
+      - {name: counted_partially, type: bool, expr: "earning_friends > fetched"}
+    follow_ups:
+      - {label: "คืนยอดเสีย/คอมของ {input.username}", ask: "ยูส {input.username} มียอดคืนยอดเสียและค่าคอมสะสมเท่าไหร่"}
+      - {label: "กิจกรรมของ {input.username}", ask: "ยูส {input.username} รับกิจกรรมอะไรไปบ้าง"}
+
+  # GET /api/eventstatement-list-byusername/:service (route/wallet.go:22 · controller/wallet.go:76-97 GetEventStatementListByUser)
+  #   frontend: members/index.ts getEventStatementListByUsername · history/HistoryEvent.vue แท็บ ภาพรวมกิจกรรม (MEMBER_HISTORY_EVENT)
+  #   query username (ตรงตัว) · range_dt · sort · order · limit · page → event_statement · response {code, data[] EventStatement, count (นับได้ไม่เกินราวพันรายการ)}
+  #   คอลัมน์ในหน้า: วันที่ทำรายการ · กิจกรรม (bonus_name) · ยอดทำรายการ (amount) · ก่อนรับ · รายละเอียด (comment — ไม่ใช้)
+  - name: member_events
+    description: >-
+      รายการกิจกรรม/รางวัลที่สมาชิก 1 ยูส ได้รับ (กงล้อ กล่องสุ่ม เช็คอิน คูปอง ฯลฯ ตามแท็บ ภาพรวมกิจกรรม) ในช่วงวันที่ถาม ล่าสุดก่อน
+      · ใช้เมื่อถามว่ายูสนี้รับกิจกรรมอะไรไปบ้าง ได้เท่าไหร่ · ไม่ระบุวัน = ตั้งแต่สมัคร
+    questions: [BQ-05]
+    permission: member   # แท็บ กิจกรรม ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_EVENT · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "รายการกิจกรรมของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของช่วง (ไม่ระบุ = ตั้งแต่สมัคร)}
+      date_to: {type: date, description: วันสุดท้ายของช่วง รวมทั้งวัน (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: e
+        method: GET
+        path: /eventstatement-list-byusername/{service}
+        query:
+          username: "{input.username}"
+          range_dt: "{datetime:input.date_from|datetime:beginning}~{datetime_end:input.date_to|datetime_end:today}"
+          sort: datetime
+          order: "-1"
+          limit: "50"
+          page: "1"
+        envelope: raw
+        cache_ttl: 30
+        timeout_ms: 20000
+        schema:
+          type: object
+          required: [code, data]
+          properties:
+            code: {type: integer}
+            count: {type: integer}
+            data:
+              type: array
+              items:
+                type: object
+                required: [datetime, amount]
+                properties:
+                  datetime: {type: string}
+                  bonus_name: {type: string}
+                  type_name: {type: string}
+                  amount: {type: number}
+    values:
+      - {name: rows, from: e, path: data}
+      - {name: server_count, from: e, path: count, default: 0}
+      - {name: fetched, from: e, path: data, agg: count}
+      - {name: fetched_sum, from: e, path: data, agg: sum, field: amount, default: 0}
+    not_found: {when: "empty(rows)", message: ไม่พบรายการกิจกรรมของยูสนี้ในช่วงวันที่ถาม}
+    card:
+      style: list
+      title: กิจกรรมที่สมาชิกได้รับ
+      fields:
+        - {label: พบ, value: server_count, format: int, suffix: " รายการ"}
+        - {label: ยอดรวม, value: fetched_sum, format: money, suffix: " บาท", when: "server_count <= fetched"}
+        - {label: ยอดรวมเฉพาะรายการล่าสุดที่ดึงมา, value: fetched_sum, format: money, suffix: " บาท", when: "server_count > fetched"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: วันที่, field: datetime, format: datetime}
+          - {label: ยอด, field: amount, format: money}
+          - {label: กิจกรรม, field: bonus_name}
+          - {label: ประเภท, field: type_name}
+      note: แสดงสูงสุดยี่สิบรายการล่าสุด ดูทั้งหมดได้ที่แท็บ กิจกรรม ในหน้าข้อมูลสมาชิก
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: may_have_more, type: bool, expr: "server_count > fetched"}
+    follow_ups:
+      - {label: "แนะนำเพื่อนของ {input.username}", ask: "ยูส {input.username} มีเพื่อนกี่คน ได้ค่าแนะนำเท่าไหร่"}
+      - {label: "รายการเล่นของ {input.username}", ask: "ยูส {input.username} วันนี้เล่นไปเท่าไหร่ แพ้ชนะเท่าไหร่"}
+
+  # GET /api/member-overdue-list/:service (route/member.go:59 · controller/member.go:3500-3514 GetMemberOverDueList)
+  #   frontend: members/index.ts getMemberOverdueList · history/HistoryOverdue.vue (แท็บ ยอดค้างชำระ · MEMBER_HISTORY_OVERDUE)
+  #   member_overdue {username ตรงตัว, range_dt, ...} → data[] MemberOverdue {datetime, amount, balance (คงเหลือหลังรายการ), type_action add|delete, operator_name, comment, is_check}
+  #   ยอดค้างปัจจุบัน = balance ของแถว is_check=1 (SaveMemberOverDue member.go:3453 ตั้งแถวใหม่ is_check=1 และล้างแถวเก่าเป็น 0)
+  - name: member_overdue
+    description: >-
+      ยอดค้างชำระของสมาชิก 1 ยูส: ยอดค้างคงเหลือตอนนี้ และประวัติการเพิ่ม/ลดยอดค้างในช่วงวันที่ถาม
+      · ใช้เมื่อถามว่ายูสนี้มียอดค้างไหม ค้างเท่าไหร่ · ไม่ระบุวัน = ประวัติตั้งแต่สมัคร
+    questions: [BQ-05]
+    permission: member   # แท็บ ยอดค้างชำระ ในหน้าข้อมูลสมาชิก (MEMBER_INFO + MEMBER_HISTORY_OVERDUE · ยังไม่มี rule แท็บย่อย)
+    freshness: summary
+    answer: "ยอดค้างชำระของยูส {input.username} แสดงในการ์ดแล้ว"
+    input:
+      username: {type: string, required: true, description: ยูสเซอร์เนมของสมาชิก ตรงตัว, pattern: "^[A-Za-z0-9_.@-]{2,50}$"}
+      date_from: {type: date, description: วันแรกของประวัติ (ไม่ระบุ = ตั้งแต่สมัคร)}
+      date_to: {type: date, description: วันสุดท้ายของประวัติ รวมทั้งวัน (ไม่ระบุ = วันนี้)}
+    calls:
+      - id: cur
+        method: GET
+        path: /member-overdue-list/{service}
+        query:
+          username: "{input.username}"
+          is_check: "1"
+          sort: datetime
+          order: "-1"
+          limit: "1"
+          page: "1"
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema: &osch
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [datetime, amount, balance]
+            properties:
+              datetime: {type: string}
+              amount: {type: number}
+              balance: {type: number}
+              type_action: {type: string}
+              operator_name: {type: string}
+      - id: h
+        method: GET
+        path: /member-overdue-list/{service}
+        query:
+          username: "{input.username}"
+          range_dt: "{datetime:input.date_from|datetime:beginning}~{datetime_end:input.date_to|datetime_end:today}"
+          sort: datetime
+          order: "-1"
+          limit: "50"
+          page: "1"
+        cache_ttl: 30
+        timeout_ms: 15000
+        schema: *osch
+    values:
+      - {name: balance, from: cur, path: "", agg: first, field: balance, default: 0}
+      - {name: rows, from: h, path: ""}
+      - {name: history_count, expr: "len(rows)"}
+    not_found: {when: "balance == 0 && empty(rows)", message: ยูสนี้ไม่มียอดค้างชำระ และไม่มีประวัติยอดค้างในช่วงวันที่ถาม}
+    card:
+      style: list
+      title: ยอดค้างชำระของสมาชิก
+      fields:
+        - {label: ยอดค้างคงเหลือ, value: balance, format: money, suffix: " บาท"}
+        - {label: ประวัติในช่วงที่ถาม, value: history_count, format: int, suffix: " รายการ"}
+      table:
+        rows: rows
+        max_rows: 20
+        columns:
+          - {label: วันที่, field: datetime, format: datetime}
+          - {label: จำนวน, field: amount, format: money}
+          - {label: คงเหลือ, field: balance, format: money}
+          - {label: ประเภท (add เพิ่ม / delete ลด), field: type_action}
+          - {label: แก้ไขโดย, field: operator_name, empty: "—"}
+      note: ยอดค้างคงเหลือคือยอดหลังรายการล่าสุด · ไม่แสดงรายละเอียดที่พนักงานพิมพ์ ดูได้ที่แท็บ ยอดค้างชำระ ในหน้าข้อมูลสมาชิก
+      link: {label: เปิดข้อมูลสมาชิก, path: "/member/{input.username}"}
+    model_context:
+      - {name: has_overdue, type: bool, expr: "balance > 0"}
+    follow_ups:
+      - {label: "ยอดตลอดชีพของ {input.username}", ask: "ยูส {input.username} ฝากถอนตลอดชีพเท่าไหร่"}
+      - {label: "รายการถอนทุกสถานะของ {input.username}", ask: "รายการถอนทุกสถานะของยูส {input.username}"}

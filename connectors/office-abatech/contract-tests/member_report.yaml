@@ -1,0 +1,42 @@
+# POST /report-user-online {byfilter, date(regex), username} → {code, msg, payload[] | null}
+# countDeposit/countWithdraw เป็น 0 เสมอ (decode ไม่ตรง key) → ไม่ใช้
+tool: member_report
+cases:
+  - name: ไม่ระบุ = เดือนนี้ แยกรายวัน
+    input: {username: abc123}
+    responses:
+      r:
+        body:
+          code: 0
+          msg: Success
+          payload:
+            - {date: "2026-09-02", countDeposit: 0, deposit: 1000, bonus: 100, withdraw: 0, countWithdraw: 0, newMember: false, profit: 0, active: 1}
+            - {date: "2026-09-01", countDeposit: 0, deposit: 500, bonus: 0, withdraw: 800, countWithdraw: 0, newMember: false, profit: 0, active: 1}
+    expect:
+      status: ok
+      calls:
+        r: {path: /report-user-online/DEMO-SVC, body: {byfilter: null, date: "2026-09", username: abc123}}
+      fields: {ยอดฝากรวม: "1,500.00 บาท", ยอดถอนรวม: "800.00 บาท", โบนัสรวม: "100.00 บาท", ฝากลบถอน: "700.00 บาท"}
+      table_rows: 2
+      table_cells:
+        - ["2026-09-01", "500.00", "800.00", "0.00"]
+        - ["2026-09-02", "1,000.00", "0.00", "100.00"]
+      model_context: {net_positive: true}
+  - name: วันเดียวแยกรายชั่วโมง
+    input: {username: abc123, date: "2026-09-20", period: day}
+    responses:
+      r: {body: {code: 0, msg: Success, payload: [{date: "2026-09-20-13", deposit: 200, bonus: 0, withdraw: 0}]}}
+    expect:
+      status: ok
+      calls:
+        r: {body: {byfilter: day, date: "2026-09-20", username: abc123}}
+      table_cells:
+        - ["2026-09-20-13", "200.00", "0.00", "0.00"]
+  - name: ระบุเดือน · ไม่มีรายงาน
+    input: {username: abc123, month: "2026-08"}
+    responses:
+      r: {body: {code: 0, msg: Success, payload: null}}
+    expect:
+      status: not_found
+      calls:
+        r: {body: {byfilter: null, date: "2026-08", username: abc123}}

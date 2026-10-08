@@ -1,0 +1,45 @@
+# response ตาม topupserie controller/cashbackSelfStat.go:34 CashbackSelfStat (game manual) + :86 CashbackAllSelfStat
+tool: my_cashback
+cases:
+  - name: เว็บไม่ใช่ agent (ใช้ /cashback manual)
+    username: somchai01
+    responses:
+      one:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data: {cashback_previous: 20, cashback_current: 105.5, cashback_total: 125.5, type_game: MANUAL, bonus_name: คืนยอดเสีย, percent: 0.05, detail: "", point_status: false, point: 0}
+      all: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: invalidData}, data: {cashback_current: 0, cashback_total: 0, cashback_detail: null}}}
+    expect:
+      status: ok
+      calls:
+        one: {path: /cashback, body: {username: somchai01, game: manual}}
+        all: {path: /cashback_all, body: {username: somchai01}}
+      fields: {ยอดที่รับได้ตอนนี้: "125.50 บาท", ยอดรอบนี้: "105.50", ยอดสะสมก่อนหน้า: "20.00", อัตราคืน: "5.0%"}
+      model_context: {has_cashback: true}
+      link: /
+  - name: เว็บแบบ agent (ใช้ /cashback_all)
+    responses:
+      one: {body: {status: {code: 200, message: ok}, message: {code: 1, message: invalidData}, data: null}}
+      all:
+        body:
+          status: {code: 200, message: ok}
+          message: {code: 0, message: success}
+          data:
+            cashback_current: 80
+            cashback_total: 80
+            cashback_detail:
+              - {winloss: 1000, percent: 0.05, cashback: 50, cashback_current: 50, cashback_cut_off: 0, type_game: SLOT}
+              - {winloss: 600, percent: 0.05, cashback: 30, cashback_current: 30, cashback_cut_off: 0, type_game: CASINO}
+    expect:
+      status: ok
+      fields: {ยอดที่รับได้ตอนนี้: "80.00 บาท"}
+      no_fields: [ยอดรอบนี้, อัตราคืน]
+      table_rows: 2
+      table_cells: [[SLOT, "50.00", "5.0%"]]
+      model_context: {has_cashback: true}
+  - name: ยังไม่ถึงวันรับ / ปิดกิจกรรม (ทั้งสองเส้นไม่ให้ยอด)
+    responses:
+      one: {body: {status: {code: 200, message: ok}, message: {code: 1, message: ยอดเสียของคุณสามารถรับได้ใน วันจันทร์}, data: {cashback_total: 0}}}
+      all: {status: 400, body: {status: {code: 400, message: invalid data}, message: {code: 1, message: invalidData}, data: null}}
+    expect: {status: not_found}
